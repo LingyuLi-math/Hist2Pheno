@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Data & large artifacts (not tracked — use local paths or LFS)
+data/
+*.h5ad
+*.zarr
+*.pth
+*.pt
+*.tif
+*.qptiff
+*.tar.gz
+
+# Logs & temp
+*.log
+.tmp/
