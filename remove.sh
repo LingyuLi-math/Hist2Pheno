@@ -1,0 +1,1 @@
+cp -r /home/lingyu/ssd2/Python/Collaborate/esccAI/code  /home/lingyu/ssd2/Python/Hist2Pheno/

@@ -1,23 +1,44 @@
-### AL ###
-#Template for AL projects for Dynamics 365 Business Central
-#launch.json folder
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+
+# Jupyter
+.ipynb_checkpoints/
+
+# BEGIN AUTO-IGNORED FILES > 100 MiB (managed by ignore_large_files.py)
+code/CODEX_escc/NCRT_train_validate_cv.ipynb
+code/CODEX_escc/NCRT_train_validate_cv256_3.ipynb
+code/CODEX_escc/NCRT_train_validate_cv_label012.ipynb
+code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all.ipynb
+code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all_260705.ipynb
+# END AUTO-IGNORED FILES
+
+# IDE / OS
+.idea/
 .vscode/
-#Cache folder
-.alcache/
-#Symbols folder
-.alpackages/
-#Snapshots folder
-.snapshots/
-#Testing Output folder
-.output/
-#Extension App-file
-*.app
-#Rapid Application Development File
-rad.json
-#Translation Base-file
-*.g.xlf
-#License-files
-*.bclicense
-*.flf
-#Test results file
-TestResults.xml
+.DS_Store
+*.swp
+
+# Data & large artifacts (not tracked — use local paths or LFS)
+code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
+data/
+manuscript/
+*.h5ad
+*.zarr
+*.pth
+*.pt
+*.tif
+*.qptiff
+*.tar.gz
+
+# Logs & temp
+*.log
+.tmp/
+
+*.bin
+*.safetensors
