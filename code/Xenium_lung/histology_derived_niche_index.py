@@ -2131,10 +2131,27 @@ def batch_analyze_ari_fri(
 ##############################################
 ## 2026-07-03: Cross-dataset cohort analysis
 ##############################################
+# Xenium-lung compatibility alias. Canonical source is
+# ``plotting_palettes.clinical_group_order(pan_organ=...)``.
 DEFAULT_CLINICAL_GROUP_ORDER: dict[str, tuple[str, ...]] = {
     "Status": ("Control", "Disease"),
     "Sample_Affect_Pairing": ("Unaffected", "Less_Affected", "More_Affected"),
 }
+
+
+def _resolve_clinical_group_order(
+    pan_organ: str | None = None,
+    group_order: Mapping[str, Sequence[str]] | None = None,
+) -> dict[str, tuple[str, ...]]:
+    """Organ-specific clinical x-axis order (``xenium_lung`` / ``codex_hcc``)."""
+    import sys
+
+    pkg_dir = Path(__file__).resolve().parents[1] / "Hist2Pheno_pkg"
+    if str(pkg_dir) not in sys.path:
+        sys.path.insert(0, str(pkg_dir))
+    from plotting_palettes import clinical_group_order
+
+    return clinical_group_order(pan_organ or "xenium_lung", extra=group_order)
 
 
 def _build_sample_color_map(sample_ids: Sequence[str]) -> dict[str, tuple[float, float, float, float]]:
@@ -2321,6 +2338,7 @@ def test_q4_by_clinical_groups(
     q4_col: str = "Q4_percent",
     sample_col: str = "Sample",
     clinical_columns: Sequence[str] = DEFAULT_Q4_CLINICAL_COLUMNS,
+    pan_organ: str | None = "xenium_lung",
     min_group_size: int = 2,
     alternative: Literal["two-sided", "less", "greater"] = "two-sided",
 ) -> pd.DataFrame:
@@ -2335,6 +2353,7 @@ def test_q4_by_clinical_groups(
     """
     from scipy.stats import kruskal, mannwhitneyu
 
+    order_map = _resolve_clinical_group_order(pan_organ)
     rows = []
     for group_col in clinical_columns:
         if group_col not in df.columns or q4_col not in df.columns:
@@ -2342,7 +2361,7 @@ def test_q4_by_clinical_groups(
         sub = df.dropna(subset=[group_col, q4_col]).copy()
         sub[group_col] = sub[group_col].astype(str)
         present = sub[group_col].unique().tolist()
-        preset = [g for g in DEFAULT_CLINICAL_GROUP_ORDER.get(group_col, ()) if g in present]
+        preset = [g for g in order_map.get(group_col, ()) if g in present]
         rest = sorted(g for g in present if g not in preset)
         label_order = preset + rest
         groups = []
@@ -2403,6 +2422,7 @@ def plot_q4_clinical_comparison(
     q4_col: str = "Q4_percent",
     sample_col: str = "Sample",
     clinical_columns: Sequence[str] = DEFAULT_Q4_CLINICAL_COLUMNS,
+    pan_organ: str | None = "xenium_lung",
     group_order: Mapping[str, Sequence[str]] | None = None,
     figsize: tuple[float, float] | None = None,
     y_annotation_pad: float = 0.22,
@@ -2446,9 +2466,7 @@ def plot_q4_clinical_comparison(
 
     fig, axes = plt.subplots(1, len(cols), figsize=figsize, squeeze=False)
     stats_lookup = {row["clinical_variable"]: row for _, row in stats_summary.iterrows()}
-    order_map = dict(DEFAULT_CLINICAL_GROUP_ORDER)
-    if group_order:
-        order_map.update(group_order)
+    order_map = _resolve_clinical_group_order(pan_organ, group_order)
 
     if ylabel is None:
         if q4_col == "active_niche_burden":
@@ -5200,11 +5218,11 @@ def load_stardist_all_label_final_ct_lineage(
 STARDIST_ALL_LABEL_TIER_ORDER: tuple[str, ...] = ("l2", "l1", "l12", "l3", "l4")
 
 _STARDIST_TIER_SPATIAL_SCHEMES: dict[str, str] = {
-    "l2": "xenium_ct",
-    "l1": "xenium_lineage",
-    "l12": "xenium_auto",
-    "l3": "xenium_auto",
-    "l4": "xenium_auto",
+    "l2": "xenium_lung_fine",
+    "l1": "xenium_lung_coarse",
+    "l12": "xenium_lung_intermediate",
+    "l3": "xenium_lung_CNiche",
+    "l4": "xenium_lung_TNiche",
 }
 
 _STARDIST_TIER_DISPLAY: dict[str, str] = {
@@ -5312,51 +5330,16 @@ def _heanno_stardist_tier_color_overrides(
     class_names: Sequence[str],
     tier: str,
 ) -> dict[str, tuple[float, float, float, float]] | None:
-    """
-    HE-annotation spatial palettes (``plot_HEanno_spatial_labels.NICHE_PALETTES``).
-
-    Only imports long-stable symbols from ``plot_HEanno_spatial_labels`` so stale
-    notebook caches do not break spatial plotting.
-    """
+    """Resolve the canonical package palette for one StarDist tier."""
     import sys
     from pathlib import Path
 
-    mod_dir = Path(__file__).resolve().parent
-    if str(mod_dir) not in sys.path:
-        sys.path.insert(0, str(mod_dir))
-    from plot_HEanno_spatial_labels import (  # noqa: WPS433
-        CNICHE_COLORS,
-        SUBLINEAGE_COLORS,
-        TNICHE_COLORS,
-        _hex_to_rgba,
-        xenium_final_ct_rgba_overrides,
-        xenium_lineage_rgba_overrides,
-    )
+    pkg_dir = Path(__file__).resolve().parents[1] / "Hist2Pheno_pkg"
+    if str(pkg_dir) not in sys.path:
+        sys.path.insert(0, str(pkg_dir))
+    from plotting_palettes import stardist_tier_rgba_overrides  # noqa: WPS433
 
-    tier_key = str(tier).lower()
-    names = [str(x) for x in class_names]
-    if tier_key == "l1":
-        overrides = xenium_lineage_rgba_overrides(names)
-    elif tier_key == "l2":
-        canonical = _load_global_l2_class_names() or list(class_names)
-        overrides = xenium_final_ct_rgba_overrides(names, canonical_labels=canonical)
-    elif tier_key == "l12":
-        overrides = {
-            lb: _hex_to_rgba(SUBLINEAGE_COLORS[lb])
-            for lb in names
-            if lb in SUBLINEAGE_COLORS
-        }
-    elif tier_key == "l3":
-        overrides = {
-            lb: _hex_to_rgba(CNICHE_COLORS[lb]) for lb in names if lb in CNICHE_COLORS
-        }
-    elif tier_key == "l4":
-        overrides = {
-            lb: _hex_to_rgba(TNICHE_COLORS[lb]) for lb in names if lb in TNICHE_COLORS
-        }
-    else:
-        return None
-    return overrides or None
+    return stardist_tier_rgba_overrides(class_names, tier)
 
 ########################################################
 ## 2026.07.05 LLY: plot the predicted cell type spatial distribution from the label h5ad [Incomplete_Cases]
@@ -5682,7 +5665,9 @@ def _plot_stardist_tier_data_spatial_maps(
             class_names=class_names,
             coords=coords,
             color_overrides=color_overrides,
-            spatial_color_scheme=_STARDIST_TIER_SPATIAL_SCHEMES.get(tier, "xenium_auto"),
+            spatial_color_scheme=_STARDIST_TIER_SPATIAL_SCHEMES.get(
+                tier, "xenium_lung_fine"
+            ),
             spatial_point_size=spatial_point_size,
             fig_size=fig_size,
             save_path_pred=tier_save_path,
@@ -5713,9 +5698,9 @@ def plot_stardist_all_label_spatial_tiers(
     Uses ``Hist2Pheno_pkg.plot.plot_tier_spatial_distribution`` — the same helper
     as ``plot_stardist_spatial_extra`` in ``Lung_train_validate_cv_UNIlabel.py``.
 
-    Colors match HE-annotation GT spatial maps via ``plot_HEanno_spatial_labels``
-    (``LINEAGE_COLORS``, ``SUBLINEAGE_COLORS``, ``CNICHE_COLORS``, ``TNICHE_COLORS``,
-    tab20 for ``final_CT``).
+    Colors match HE-annotation GT spatial maps through the canonical
+    ``plotting_palettes`` registry (lineage, sublineage, CNiche, TNiche, and
+    stable ``final_CT`` colors).
 
     When ``save_path`` is set, writes one file per tier under a subdirectory:
 
@@ -5962,7 +5947,7 @@ def plot_predicted_l2_spatial(
     coord_x: str = "coord_x",
     coord_y: str = "coord_y",
     class_names: Sequence[str] | None = None,
-    spatial_color_scheme: str = "xenium_ct",
+    spatial_color_scheme: str = "xenium_lung_fine",
     highlight_index_members: bool = True,
     highlight_cell_types: Sequence[str] | None = None,
     other_label: str = INDEX_HIGHLIGHT_OTHER_LABEL,
@@ -5982,7 +5967,7 @@ def plot_predicted_l2_spatial(
     cell types keep their training colors; all other predicted types are grouped
     as ``other`` and drawn in light gray underneath.
 
-    Colors for highlighted types match ``Hist2Pheno_pkg/plot.py`` (``xenium_ct``).
+    Colors for highlighted types use the canonical Xenium lung fine palette.
     """
     import matplotlib.pyplot as plt
 
@@ -6010,11 +5995,16 @@ def plot_predicted_l2_spatial(
         display_col = label_col
 
     canonical = [str(x) for x in class_names] if class_names is not None else None
-    scheme = (spatial_color_scheme or "xenium_ct").lower()
+    scheme = (spatial_color_scheme or "xenium_lung_fine").lower()
     color_map: dict[str, tuple[float, float, float, float]] = {}
     if highlight_index_members:
         color_map[other_label] = other_color
-    if canonical is not None and scheme in ("xenium", "xenium_auto", "xenium_ct", "xenium_lineage"):
+    xenium_schemes = {
+        "xenium_lung_fine", "xenium_lung_intermediate", "xenium_lung_coarse",
+        "xenium_lung_cniche", "xenium_lung_tniche",
+        "xenium", "xenium_auto", "xenium_ct", "xenium_lineage",
+    }
+    if canonical is not None and scheme in xenium_schemes:
         overrides = plot_mod.build_xenium_spatial_color_overrides(
             canonical,
             spatial_color_scheme=scheme,

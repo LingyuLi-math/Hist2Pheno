@@ -209,6 +209,185 @@ macro-F1 只有 0.1144，差距很大；模型效果判断必须以 CV 指标为
 
 ## Changelog
 
+### 2026-08-14 — HCC histology-derived niche indices (TLS / SRI / TNI)
+
+- Added `code/CODEX_hcc/hcc_histology_derived_niche_index.py`: HCC Level-2
+  counterparts of the Xenium lung TLS / ARI / FRI workflow.
+  - **TLS**: B + CD4 T + CD8 T + DC (abundance and spatial geometric mean).
+  - **SRI** (stromal remodeling, lung ARI analog): Fibroblasts / epithelium
+    (INOS+ and INOS-).
+  - **TNI** (TME niche, lung FRI analog): geometric co-localization of
+    fibroblasts × M2-like macrophages × endothelium, relative to epithelium.
+- Spatial scores use `spatial_HE` from
+  `{matched_he}_matched_features_stardist.h5ad`. Default radius is 75 μm with
+  `DEFAULT_HCC_UM_PER_HE_PIXEL=0.5` (override when a calibrated HE scale exists).
+- Cohort tests use `pan_organ="codex_hcc"` clinical keys: Response, diagnosis,
+  treatment (`matched_he` join).
+- Notebook: `code/CODEX_hcc/HCC_histology_derived_niche_index.ipynb` (setup →
+  abundance → spatial TLS → SRI/TNI maps → hierarchical Q4 → 36-region clinical
+  comparison). Run §1–§5 first; §6 loads all annotated regions.
+
+#### HCC niche-index 结果解释
+
+图和统计可以按设计复现，但**不要读成“发现了独立的活性 TME 生物标志物”**。
+两张图回答的问题不同，能站得住的结论比表面看起来窄。
+
+指数定义：
+
+```text
+SRI_spatial = Fib_local / Epi_local
+TNI_spatial = (Fib_local × M2_local × Endo_local)^(1/3) / Epi_local
+active_niche_burden = mean(√(SRI_i × TNI_i))   # 全核、无阈值
+Q4 = SRI ≥ p95 且 TNI ≥ p95                    # 单切片用该片切点；cohort 用全局切点
+```
+
+**单切片层次图**（demo：`awy-98938_aligned_0d535a74`）
+
+- **可以这么说：** 高 SRI 与高 TNI 的细胞核在组织里聚成灶（红 Q4 约 3%），周围常有橙 Q2 / 蓝 Q3，看起来像基质–上皮交界的梯度。作图和四分位划分本身没有算错。读组织坐标图比读 ρ 更有用：Q4 是否成团、是否落在基质带，而不是均匀撒在整张片子上。
+- Spearman ρ ≈ 0.88 **主要是公式重叠，不是两个独立生物学过程被“发现”高度相关。**
+  SRI 与 TNI 共用成纤维 / 上皮。上皮低或成纤维高时，两个指数会一起升高，LOWESS
+  从 Q1 走向 Q4 在数学上几乎是必然的。TNI 真正多出来的信息是 **M2 与内皮是否在同一邻域共定位**；那一部分才值得当“活性 niche”，而不是 ρ 本身。
+- 单切片 Q4 ≈ 3% **主要由 95 分位切法决定**，不是组织里“天然只有 3% niche”。
+  若 SRI 与 TNI 完全独立，Q4 大约是 0.25%；相关很强时会接近 5%。约 3% 落在这个区间里，说明切法在工作，不能单独当生物学发现。
+
+**Cohort 临床箱线图**（36 个 annotated region）
+
+指标是 `active_niche_burden`（不是单切片 local Q4%）。检验为双侧 Mann–Whitney
+（两组）或 Kruskal–Wallis（三组以上），`pan_organ="codex_hcc"`。
+
+- **可以这么说：** 在 **region 水平**下，Responder 的 burden 高于 Non-responder
+  （示例运行约 p = 0.0075）。Pre/Post 与 treatment（List A / List B）没有差别，
+  这两格读成 ns 是对的。
+- **不能说成可靠的治疗反应 biomarker。** 主要限制：
+  1. **伪重复。** 36 个点来自大约 10 个病人（每人 3–4 张 HE）。检验把每张片子当成独立样本，p 值会偏小。应先按 `patient_id` 聚合再测，或做混合效应。
+  2. **方向与“免疫抑制 niche”的朴素预期相反。** TNI 是 CAF + M2 + 内皮 / 上皮，通常更像促血管/免疫抑制微环境，文献里常连着更差的 ICI 反应。这里 Responder 更高，可能是：上皮更少（分母小把两个指数一起抬高）、取样部位、Pre/Post 混杂，或少数高负担 outlier 在拉 Responder 的上尾。需要看去掉 outlier、以及 SRI 单独 vs TNI 单独是否仍显著。
+  3. **n 很小，也没有外队列。** 显著只说明这 36 张片子上有关联，不能当预测标志物。
+
+**读法对照**
+
+| 结果 | 是否“算对” | 合理读法 |
+|------|------------|----------|
+| 单切片 Q1→Q4 空间成团 | 对 | 高 SRI+TNI 细胞在局部成灶 |
+| ρ ≈ 0.88 | 对，但预期内 | 共享 Fib/Epi，不能当独立验证 |
+| 单切片 Q4 ≈ 3% | 对，但是切法产物 | 不要解释成 niche 的真实面积分数 |
+| Responder burden 更高 | 检验对，解释要保守 | region 水平有关联；先按病人聚合，再解释生物学 |
+
+下一步更有信息量的检查已写进 notebook **§7**（`HCC_histology_derived_niche_index.ipynb`）：
+按 `patient_id` 平均后再测 Response，并并排画 SRI-only、TNI-only、`Epi_local`、以及不含上皮分母的 TNI numerator `(Fib×M2×Endo)^(1/3)`。
+Helpers：`summarize_hcc_source_metrics`、`aggregate_hcc_metrics_by_patient`、
+`test_hcc_response_source_metrics`、`plot_hcc_response_source_grid`。
+若 SRI/TNI 显著而 Epi 更低、numerator 不显著，则更像上皮偏低造成的比值膨胀；若 numerator 仍显著而 Epi 相近，才更支持基质/M2/内皮共定位。Region 显著而 patient 不显著，说明关联经不起伪重复校正。
+
+**§7 一次运行（10 个病人，5 Responder / 5 Non-responder）：**
+
+| 指标 | Region p | Patient p | 中位方向 |
+|------|----------|-----------|----------|
+| SRI (Fib/Epi) | 0.008 | 0.008 | Responder 更高 |
+| TNI (geomean/Epi) | 0.008 | 0.008 | Responder 更高 |
+| Epi_local | 0.013 | 0.151 (ns) | Responder 更低（方向仍在） |
+| TNI numerator | 0.261 (ns) | 0.690 (ns) | 两组几乎重叠 |
+
+Patient 水平 SRI/TNI 的 U=25（5 vs 5 的最大秩和）是完全秩分离，不是偶然的“刚好显著”。numerator 始终不显著，说明 **Fib×M2×Endo 共定位本身并不随 Response 升高**。Region 上 Epi 更低可以解释比值升高；合成病人后 Epi 失去显著性（n=10 功效不足），但比值仍把病人完全分开。更稳妥的读法：§6 的 Responder burden 升高主要是 **上皮邻域概率偏低把 SRI/TNI 分母抬高**，不是活性 CAF/M2/血管 niche 更强。n=10 不能当 biomarker。
+
+### 2026-08-13 — Shared plotting and palette architecture
+
+- HCC palette values are now canonical in
+  `code/Hist2Pheno_pkg/plotting_palettes.py`.
+- HCC plotting uses the explicit `codex_hcc_fine`,
+  `codex_hcc_intermediate`, and `codex_hcc_coarse` schemes.
+- Generic count transforms, bar plots, and stacked-composition plots moved to
+  `code/Hist2Pheno_pkg/plotting_utils.py`.
+- `s4769_plot.py` remains the HCC compatibility/report wrapper: it preserves
+  historical imports and HCC defaults while owning HCC paths, Excel I/O,
+  acquisition labels, and report orchestration.
+- Active HCC CLI and notebook paths can use `pan_organ="codex_hcc"` to select
+  canonical fine/intermediate/coarse schemes without repeating per-call scheme
+  strings. Explicit `codex_hcc_*` schemes are still supported and override
+  `pan_organ` when provided.
+- Palette resolution and representative HCC spatial, count-bar, composition,
+  and compatibility-import paths were validated after the refactor.
+
+### 2026-08-12 — Build all-StarDist UNI h5ad files
+
+Added `code/CODEX_hcc/transer_embedding_label_h5ad.py`, the HCC counterpart of
+the Xenium lung transfer script. It supports four explicit steps:
+
+1. `he_h5ad`: labeled CODEX HE cells → `{MATCHED_HE}_matched_features.h5ad`
+2. `stardist_csv`: transfer CODEX labels to matched StarDist nuclei
+3. `stardist_h5ad`: labeled StarDist subset → `{MATCHED_HE}_matched_features_stardist.h5ad`
+4. `stardist_all_h5ad`: all raw StarDist nuclei with available UNI embeddings
+   → `{MATCHED_HE}_all_features_stardist.h5ad`
+
+The fourth output is unlabeled. Its `obs` preserves the raw StarDist columns,
+including `centroid_x`, `centroid_y`, and `probability`; `obsm["spatial"]` and
+`obsm["spatial_HE"]` contain the StarDist centroid coordinates. Rows in `X`,
+`obs`, and `obsm` remain aligned.
+
+#### Build one `_all_features_stardist.h5ad`
+
+Prerequisites:
+
+- Raw StarDist CSV:
+  `data/CODEX/HCC/StarDist_Segment/{MATCHED_HE}/{MATCHED_HE}_Float_prob0.01_nms_0.3.csv`
+- StarDist UNI embeddings:
+  `data/CODEX/HCC/Michael_data_transfer/s4769/HE/{MATCHED_HE}/project_all_UNI/ImgEmbeddings_all_stardist/sc_pth_16_16/*.pth`
+- Embedding filenames must start with `sc_{MATCHED_HE}_`.
+
+If the StarDist embeddings do not exist yet, extract them first:
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+conda activate SeededNTM
+
+COORD=stardist HE_KEY=awy-98938_aligned_0d535a74 \
+  bash code/CODEX_hcc/demo_GT_feature_extraction_Single.sh stardist
+```
+
+Check the inputs and planned output without writing:
+
+```bash
+conda run --no-capture-output -n SeededNTM python -u \
+  code/CODEX_hcc/transer_embedding_label_h5ad.py \
+  --sample awy-98938_aligned_0d535a74 \
+  --steps stardist_all_h5ad \
+  --dry-run
+```
+
+Build the file:
+
+```bash
+conda run --no-capture-output -n SeededNTM python -u \
+  code/CODEX_hcc/transer_embedding_label_h5ad.py \
+  --sample awy-98938_aligned_0d535a74 \
+  --steps stardist_all_h5ad \
+  --match-tolerance 1.0
+```
+
+Output:
+
+```text
+data/CODEX/HCC/Michael_data_transfer/s4769/HE/
+  awy-98938_aligned_0d535a74/
+    awy-98938_aligned_0d535a74_all_features_stardist.h5ad
+```
+
+Omit `--sample` to process all mapped on-disk HCC regions. Use
+`--force-rebuild` only when a valid cached h5ad must be replaced. The script
+validates the source CSV identity, source row count, required `obs`/`obsm`
+fields, unique cell IDs, and float32 feature matrix before reusing a cache.
+Run `python code/CODEX_hcc/transer_embedding_label_h5ad.py --help` for the
+optional `--cases-root`, `--stardist-root`, and `--therapy-model` overrides.
+
+### 2026-08-12 — Shared UNI-label CV helpers
+
+Updated:
+
+- Canonical shared helpers moved to
+  `code/Hist2Pheno_pkg/uni_label_cv_helpers.py`.
+- `code/Xenium_lung/xenium_uni_nb_helpers.py` remains as a quiet compatibility
+  shim, so existing HCC scripts and notebooks importing the old path continue
+  to work. New code should import `uni_label_cv_helpers` directly.
+
 ### 2026-08-12 — HCC preprocess CSVs + StarDist CSV source + one-shot h5ad
 
 Updated:

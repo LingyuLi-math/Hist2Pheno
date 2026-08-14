@@ -25,6 +25,7 @@ conda run -n SeededNTM python code/Xenium_lung/plot_HEanno_spatial_labels.py \
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -33,6 +34,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
+_PKG_DIR = Path(__file__).resolve().parent.parent / "Hist2Pheno_pkg"
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
+from plotting_palettes import (  # noqa: E402
+    CNICHE_COLORS,
+    DEFAULT_L2_CLASS_NAMES_CSV,
+    LINEAGE_COLORS,
+    NICHE_PALETTES,
+    SUBLINEAGE_COLORS,
+    TNICHE_COLORS,
+    Cell_Type_COLORS,
+    _hex_to_rgba,
+    load_global_l2_class_names,
+    niche_palette_rgba_overrides,
+    resolve_xenium_spatial_color_overrides,
+    stardist_tier_rgba_overrides,
+    xenium_final_ct_rgba_overrides,
+    xenium_lineage_rgba_overrides,
+)
+from plotting_utils import (  # noqa: E402
+    _format_cell_count_label,
+    _niche_order,
+    _plot_spatial_categorical,
+    format_cell_count_label,
+    plot_final_ct_by_lineage as _plot_final_ct_by_lineage,
+)
 
 DEFAULT_FIGURES_DIR = Path(
     "/home/lingyu/ssd2/Python/Hist2Pheno/data/Xemium/weiqin/"
@@ -45,224 +73,6 @@ DEFAULT_LABELS_HE_PATH = (
 )
 
 
-
-Cell_Type_COLORS = {
-    "AT1": "#1f77b4",
-    "AT2": "#aec7e8",
-    "Activated Fibrotic FBs": "#ff7f0e",
-    "Adventitial FBs": "#ffbb78",
-    "Alveolar FBs": "#2ca02c",
-    "Alveolar Macrophages": "#98df8a",
-    "Arteriole": "#d62728",
-    "B cells": "#ff9896",
-    "Basal": "#9467bd",
-    "Basophils": "#c5b0d5",
-    "CD4+ T-cells": "#8c564b",
-    "CD8+ T-cells": "#c49c94",
-    "Capillary": "#e377c2",
-    "Goblet": "#f7b6d2",
-    "Inflammatory FBs": "#7f7f7f",
-    "Interstitial Macrophages": "#c7c7c7",
-    "KRT5-/KRT17+": "#bcbd22",
-    "Langerhans cells": "#dbdb8d",
-    "Lymphatic": "#17becf",
-    "Macrophages - IFN-activated": "#9edae5",
-    "Mast": "#393b79",
-    "Mesothelial": "#5254a3",
-    "Migratory DCs": "#6b6ecf",
-    "Monocytes/MDMs": "#9c9ede",
-    "Multiciliated": "#637939",
-    "Myofibroblasts": "#8ca252",
-    "NK/NKT": "#b5cf6b",
-    "Neutrophils": "#cedb9c",
-    "PNEC": "#8c6d31",
-    "Plasma": "#bd9e39",
-    "Proliferating AT2": "#e7ba52",
-    "Proliferating Airway": "#e7cb94",
-    "Proliferating B cells": "#843c39",
-    "Proliferating FBs": "#ad494a",
-    "Proliferating Myeloid": "#d6616b",
-    "Proliferating NK/NKT": "#e7969c",
-    "Proliferating T-cells": "#7b4173",
-    "RASC": "#a55194",
-    "SMCs/Pericytes": "#ce6dbd",
-    "SPP1+ Macrophages": "#de9ed6",
-    "Secretory": "#1f77b4",
-    "Subpleural FBs": "#aec7e8",
-    "Transitional AT2": "#ff7f0e",
-    "Tregs": "#ffbb78",
-    "Venous": "#2ca02c",
-    "cDCs": "#98df8a",
-    "pDCs": "#d62728",
-}
-
-
-CNICHE_COLORS = {
-    "C1": "#003399", "C2": "#666633", "C3": "#CC0033", "C4": "#99CC66",
-    "C5": "#9999FF", "C6": "#66CCCC", "C7": "#FF9966", "C8": "#993366",
-    "C9": "#996633", "C10": "#000000", "C11": "#66CCFF", "C12": "#CCCC00",
-}
-TNICHE_COLORS = {
-    "T1": "#99FFCC", "T2": "#000000", "T3": "#808000", "T4": "#FFCC99",
-    "T5": "#33CC33", "T6": "#993300", "T7": "#003300", "T8": "#0066CC",
-    "T9": "#FF99FF", "T10": "#CC0066", "T11": "#330033", "T12": "#99CC00",
-}
-LINEAGE_COLORS = {
-    "Epithelial": "#8103fb",
-    "Immune": "#2adddc",
-    "Endothelial": "#d4df8a",
-    "Mesenchymal": "#f80505",
-}
-SUBLINEAGE_COLORS = {
-    "Alveolar": "#FF7F0E",
-    "Airway": "#1F77B4",
-    "Myeloid": "#9467BD",
-    "Lymphoid": "#8C564B",
-    "Endothelial": LINEAGE_COLORS["Endothelial"],
-    "Mesenchymal": LINEAGE_COLORS["Mesenchymal"],
-}
-NICHE_PALETTES = {
-    "CNiche": CNICHE_COLORS,
-    "TNiche": TNICHE_COLORS,
-    "final_lineage": LINEAGE_COLORS,
-    "final_sublineage": SUBLINEAGE_COLORS,
-    "final_CT": Cell_Type_COLORS,
-}
-
-
-def _hex_to_rgba(hex_color: str, alpha: float = 1.0) -> tuple[float, float, float, float]:
-    h = hex_color.lstrip("#")
-    return (
-        int(h[0:2], 16) / 255.0,
-        int(h[2:4], 16) / 255.0,
-        int(h[4:6], 16) / 255.0,
-        float(alpha),
-    )
-
-
-def xenium_lineage_rgba_overrides(labels) -> dict[str, tuple[float, float, float, float]]:
-    """RGBA overrides for ``final_lineage`` / 4-class lineage (same as GT spatial maps)."""
-    out = {}
-    for lb in labels:
-        key = str(lb)
-        if key in LINEAGE_COLORS:
-            out[key] = _hex_to_rgba(LINEAGE_COLORS[key])
-    return out
-
-
-def xenium_final_ct_rgba_overrides(
-    labels,
-    canonical_labels=None,
-) -> dict[str, tuple[float, float, float, float]]:
-    """RGBA overrides for ``final_CT`` / L2 cell types (``Cell_Type_COLORS`` tab20+tab20b).
-
-    When ``canonical_labels`` is given (e.g. training ``class_names``), all labels in that
-    universe receive a fixed color; unknown names fall back to tab20+tab20b by sort order.
-    """
-    import matplotlib.pyplot as plt
-
-    if canonical_labels is not None:
-        universe = sorted({str(x) for x in canonical_labels})
-    else:
-        universe = sorted({str(x) for x in labels})
-    out: dict[str, tuple[float, float, float, float]] = {}
-    missing: list[str] = []
-    for name in universe:
-        if name in Cell_Type_COLORS:
-            out[name] = _hex_to_rgba(Cell_Type_COLORS[name])
-        else:
-            missing.append(name)
-    if missing:
-        colors_tab20 = plt.cm.tab20(np.linspace(0, 1, 20))
-        colors_tab20b = plt.cm.tab20b(np.linspace(0, 1, 20))
-        pool = np.vstack([colors_tab20, colors_tab20b])
-        for i, name in enumerate(missing):
-            rgba = pool[i % len(pool)]
-            out[name] = (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]))
-    return out
-
-
-DEFAULT_L2_CLASS_NAMES_CSV = (
-    Path(__file__).resolve().parents[2]
-    / "data/Xemium/weiqin/SpatialPF-NGenetics/Spatial-PF-Processed/Data/result_all_spatial"
-    / "validation_external_stardist_matched_AUROC_all_samples_class_names.csv"
-)
-
-
-def load_global_l2_class_names(
-    csv_path: str | Path | None = None,
-) -> list[str]:
-    """Global training ``final_CT`` class list (47 classes) for stable L2 spatial colors."""
-    path = Path(csv_path or DEFAULT_L2_CLASS_NAMES_CSV).expanduser()
-    if not path.is_file():
-        return []
-    df = pd.read_csv(path)
-    name_col = "final_CT" if "final_CT" in df.columns else df.columns[-1]
-    if "class_index" in df.columns:
-        df = df.sort_values("class_index")
-    return [str(x) for x in df[name_col].tolist()]
-
-
-def resolve_xenium_spatial_color_overrides(
-    unique_labels,
-    *,
-    tier: str = "auto",
-    canonical_labels=None,
-) -> dict[str, tuple[float, float, float, float]] | None:
-    """
-    tier: ``lineage`` | ``ct`` | ``auto`` (lineage if all labels are in LINEAGE_COLORS else CT).
-    """
-    labels = [str(x) for x in unique_labels]
-    if tier == "lineage" or (
-        tier == "auto" and labels and set(labels) <= set(LINEAGE_COLORS.keys())
-    ):
-        overrides = xenium_lineage_rgba_overrides(labels)
-        return overrides or None
-    return xenium_final_ct_rgba_overrides(labels, canonical_labels=canonical_labels) or None
-
-
-def niche_palette_rgba_overrides(
-    labels,
-    palette: dict[str, str],
-) -> dict[str, tuple[float, float, float, float]]:
-    out: dict[str, tuple[float, float, float, float]] = {}
-    for lb in labels:
-        key = str(lb)
-        if key in palette:
-            out[key] = _hex_to_rgba(palette[key])
-    return out
-
-
-_STARDIST_TIER_PALETTES: dict[str, dict[str, str]] = {
-    "l12": SUBLINEAGE_COLORS,
-    "l3": CNICHE_COLORS,
-    "l4": TNICHE_COLORS,
-}
-
-
-def stardist_tier_rgba_overrides(
-    class_names,
-    tier: str,
-) -> dict[str, tuple[float, float, float, float]] | None:
-    """
-    RGBA overrides for StarDist five-head spatial plots.
-
-    Uses the same palettes as HE-annotation GT maps (``NICHE_PALETTES``):
-    L1 ``final_lineage``, L2 ``final_CT`` (tab20), L12 ``final_sublineage``,
-    L3 ``CNiche``, L4 ``TNiche``.
-    """
-    tier = str(tier).lower()
-    names = [str(x) for x in class_names]
-    if tier == "l1":
-        overrides = xenium_lineage_rgba_overrides(names)
-    elif tier == "l2":
-        canonical = load_global_l2_class_names() or list(class_names)
-        overrides = xenium_final_ct_rgba_overrides(names, canonical_labels=canonical)
-    elif tier in _STARDIST_TIER_PALETTES:
-        overrides = niche_palette_rgba_overrides(names, _STARDIST_TIER_PALETTES[tier])
-    else:
-        return None
-    return overrides or None
 
 DEFAULT_SPATIAL_COLS = [
     "CNiche",
@@ -284,67 +94,6 @@ LINEAGE_BAR_CMAPS = {
 }
 
 
-def _niche_order(labels, prefix):
-    del prefix  # kept for API compatibility with notebook helper
-    return sorted(labels, key=lambda x: int(str(x)[1:]) if str(x)[1:].isdigit() else 999)
-
-
-def _plot_spatial_categorical(ax, sub, col, palette=None, canonical_ct_labels=None):
-    if palette is None and col == "final_CT":
-        labels = sorted(sub[col].astype(str).unique())
-        canonical = canonical_ct_labels or load_global_l2_class_names() or labels
-        overrides = xenium_final_ct_rgba_overrides(labels, canonical_labels=canonical)
-        if overrides:
-            palette = {k: (v[0], v[1], v[2]) for k, v in overrides.items()}
-
-    if palette is not None:
-        if col in ("CNiche", "TNiche"):
-            labels = _niche_order(sub[col].astype(str).unique(), col[0])
-        else:
-            labels = sorted(sub[col].astype(str).unique())
-        hue_order = [lb for lb in labels if lb in palette]
-        sns.scatterplot(
-            data=sub,
-            x="x_centroid",
-            y="y_centroid",
-            hue=col,
-            hue_order=hue_order,
-            palette={k: palette[k] for k in hue_order},
-            s=2,
-            alpha=0.7,
-            ax=ax,
-            linewidth=0,
-        )
-    else:
-        sns.scatterplot(
-            data=sub,
-            x="x_centroid",
-            y="y_centroid",
-            hue=col,
-            s=2,
-            alpha=0.7,
-            ax=ax,
-            palette="tab20",
-            linewidth=0,
-        )
-    ax.set_title(col, fontsize=11)
-    ax.set_aspect("equal")
-    ax.grid(False)
-    ax.legend(
-        title=col,
-        bbox_to_anchor=(1.02, 1),
-        loc="upper left",
-        fontsize=6,
-        markerscale=3,
-    )
-
-
-def _format_cell_count_label(n: int) -> str:
-    if n >= 1000:
-        return f"{n / 1000:.1f}k"
-    return str(int(n))
-
-
 def plot_final_ct_by_lineage(
     df: pd.DataFrame,
     *,
@@ -358,79 +107,20 @@ def plot_final_ct_by_lineage(
     skip_if_exists: bool = False,
     show: bool = True,
 ) -> plt.Figure | None:
-    """Bar plots of final_CT counts within each final_lineage (2x2 panels).
-
-    Always renders and shows the figure in the notebook. If ``save_path`` is set,
-    saves to disk only when the file is missing or ``skip_if_exists`` is False.
-
-    In Jupyter, use ``show=True`` (default) and do not rely on the return value,
-    otherwise the figure is displayed twice (``plt.show()`` + cell output).
-    """
-    if lineage_col not in df.columns or ct_col not in df.columns:
-        raise KeyError(f"DataFrame needs {lineage_col!r} and {ct_col!r}")
-
-    plot_df = df.dropna(subset=[lineage_col, ct_col]).copy()
-    order = lineage_order or LINEAGE_PANEL_ORDER
-    present = set(plot_df[lineage_col].astype(str))
-    panels = [lb for lb in order if lb in present]
-    extra = sorted(present - set(panels))
-    panels = panels + extra
-    if not panels:
-        raise ValueError(f"No rows with valid {lineage_col}/{ct_col}")
-
-    n_panels = len(panels)
-    nrows = 2 if n_panels > 2 else 1
-    ncols = 2 if n_panels > 1 else 1
-    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
-    axes_flat = np.atleast_1d(axes).flatten()
-
-    for ax, lineage in zip(axes_flat, panels):
-        sub = plot_df.loc[plot_df[lineage_col].astype(str) == lineage]
-        counts = sub[ct_col].value_counts().sort_values(ascending=False)
-        cmap_name = LINEAGE_BAR_CMAPS.get(lineage, "viridis")
-        colors = sns.color_palette(cmap_name, n_colors=len(counts))
-        x = range(len(counts))
-        bars = ax.bar(x, counts.values, color=colors, edgecolor="none")
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(counts.index, rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel("Number of cells")
-        # ax.set_title(lineage, fontsize=13, fontweight="bold")
-        ax.set_title(lineage, fontsize=13)
-        ax.set_ylim(0, counts.max() * 1.12 if len(counts) else 1)
-        for bar, val in zip(bars, counts.values):
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bar.get_height(),
-                _format_cell_count_label(int(val)),
-                ha="center",
-                va="bottom",
-                fontsize=7,
-            )
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-    for ax in axes_flat[len(panels) :]:
-        ax.set_visible(False)
-
-    if title:
-        fig.suptitle(title, fontsize=14, y=1.02)
-    fig.tight_layout()
-
-    if save_path is not None:
-        out = Path(save_path)
-        should_save = not (skip_if_exists and out.is_file())
-        if should_save:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out, dpi=dpi, bbox_inches="tight")
-            print(f"Saved: {out}")
-        else:
-            print(f"Skip save, using existing: {out}")
-
-    if show:
-        plt.show()
-        plt.close(fig)
-        return None
-    return fig
+    """Compatibility wrapper preserving the legacy Xenium panel defaults."""
+    return _plot_final_ct_by_lineage(
+        df,
+        lineage_col=lineage_col,
+        ct_col=ct_col,
+        lineage_order=lineage_order or LINEAGE_PANEL_ORDER,
+        lineage_cmaps=LINEAGE_BAR_CMAPS,
+        title=title,
+        figsize=figsize,
+        dpi=dpi,
+        save_path=save_path,
+        skip_if_exists=skip_if_exists,
+        show=show,
+    )
 
 
 def _resolve_save_path(dataset_select: str, save_path: str | Path | None) -> Path:

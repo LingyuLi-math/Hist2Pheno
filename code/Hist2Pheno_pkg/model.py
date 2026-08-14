@@ -2915,7 +2915,7 @@ def run_group_kfold_cv_with_oof_report(
             if child_to_parent[int(l2)] == -1:
                 child_to_parent[int(l2)] = int(l1)
         oof["val_labels_level1"] = np.array(
-            [child_to_parent[int(p)] for p in oof["val_preds"]], dtype=np.int64
+            [child_to_parent[int(y)] for y in oof["val_labels"]], dtype=np.int64
         )
         oof["val_preds_level1"] = np.array(
             [child_to_parent[int(p)] for p in oof["val_preds"]], dtype=np.int64

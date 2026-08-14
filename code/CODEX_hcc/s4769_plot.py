@@ -1,60 +1,47 @@
-"""Bar charts for s4769 CODEX cell-type distributions."""
+## 2026.08.13, add plotting and report wrappers for the s4769 CODEX HCC dataset
+## 2026.08.14, add box-plot for clinical for the StarDist macro AUROC by clinical groups
+
+
+
+"""Plotting and report wrappers for the s4769 CODEX HCC dataset."""
 
 from __future__ import annotations
 
 import re
+import sys
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal
 
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
-import seaborn as sns
 
+_PKG_DIR = Path(__file__).resolve().parent.parent / "Hist2Pheno_pkg"
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
 
+from plotting_palettes import (  # noqa: E402
+    DEFAULT_CELLTYPE_FILTER,
+    Cell_Type_COLORS_CODEX_hcc_level0,
+    Cell_Type_COLORS_CODEX_hcc_level1,
+    Cell_Type_COLORS_CODEX_hcc_level2,
+)
+from plotting_utils import (  # noqa: E402
+    _format_cell_count_label,
+    _yaxis_k_formatter,
+    celltype_counts_from_df,
+    format_cell_count_label,
+    plot_celltype_count_bars as _plot_celltype_count_bars,
+    plot_celltype_proportions_stacked as _plot_celltype_proportions_stacked,
+    pooled_celltype_counts,
+)
 
-
-######################################################
-## 2026.08.10 define the color for CODEX_hcc dataset
-######################################################
 DEFAULT_CELLTYPE_XLSX = (
     Path(__file__).resolve().parents[2]
     / "data/CODEX/HCC/Michael_data_transfer/s4769/HE/s4769_he_mapping_updated_Visium.xlsx"
 )
-DEFAULT_CELLTYPE_FILTER = ("Unknown", "Stroma Uncharacterized")
 
-# Fixed colors following the supplied HCC paper legend. Keys use the exact
-# normalized ``celltype_level2`` labels in the Excel sheet / annotation CSVs.
-Cell_Type_COLORS_CODEX_hcc_level2 = {
-    "Epithelium (INOS+)": "#17becf",
-    "Epithelium (INOS-)": "#1f77b4",
-    "Fibroblasts": "#98df8a",
-    "Endothelial cells": "#2ca02c",
-    "CD4 T cells": "#ff7f0e",
-    "CD8 T cells": "#ffbb78",
-    "Macrophages": "#d62728",
-    "Macrophages M2-like": "#ff9896",
-    "Neutrophils": "#e377c2",
-    "B cells": "#f7b6d2",
-    "Dendritic cells": "#8c564b",
-    "INFg+": "#c49c94",
-}
-
-Cell_Type_COLORS_CODEX_hcc_level1 = {
-    "Stromal": "#98df8a",
-    "T cells": "#ff7f0e",
-    "Myeloid": "#d62728",
-    "Endothelial": "#2ca02c",
-    "Epithelial": "#1f77b4",
-    "B cells": "#f7b6d2",
-}
-
-Cell_Type_COLORS_CODEX_hcc_level0 = {
-    "Stromal": "#98df8a",
-    "Immune": "#d62728",
-    "Endothelial": "#2ca02c",
-    "Epithelial": "#1f77b4",
-}
 
 def load_hcc_celltypes(
     xlsx_path: str | Path = DEFAULT_CELLTYPE_XLSX,
@@ -67,17 +54,11 @@ def load_hcc_celltypes(
     df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
     if celltype_col not in df.columns:
         raise KeyError(f"{sheet_name!r} sheet missing column {celltype_col!r}")
-
-    excluded = {str(x).strip() for x in (celltype_filter or ())}
+    excluded = {str(value).strip() for value in (celltype_filter or ())}
     celltypes = (
-        df[celltype_col]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .drop_duplicates()
+        df[celltype_col].dropna().astype(str).str.strip().drop_duplicates()
     )
     celltypes = [name for name in celltypes if name and name not in excluded]
-
     missing_colors = sorted(set(celltypes) - set(Cell_Type_COLORS_CODEX_hcc_level2))
     extra_colors = sorted(set(Cell_Type_COLORS_CODEX_hcc_level2) - set(celltypes))
     if missing_colors or extra_colors:
@@ -91,68 +72,13 @@ def load_hcc_celltypes(
 def hcc_celltype_color_map(
     xlsx_path: str | Path = DEFAULT_CELLTYPE_XLSX,
 ) -> dict[str, str]:
-    """Return the validated one-to-one color mapping for the 12 retained types."""
+    """Return the validated one-to-one color mapping for the retained types."""
     celltypes = load_hcc_celltypes(xlsx_path)
     return {name: Cell_Type_COLORS_CODEX_hcc_level2[name] for name in celltypes}
 
-######################################################
-
-
-def _format_cell_count_label(n: int | float) -> str:
-    n = int(n)
-    if n >= 1000:
-        text = f"{n / 1000:.1f}k"
-        if text.endswith(".0k"):
-            return f"{int(n / 1000)}k"
-        return text
-    return str(n)
-
-
-def _yaxis_k_formatter() -> mticker.FuncFormatter:
-    def _fmt(x: float, _pos: int) -> str:
-        if x == 0:
-            return "0K"
-        if x >= 1000:
-            return f"{int(round(x / 1000))}K"
-        return str(int(x))
-
-    return mticker.FuncFormatter(_fmt)
-
-
-def celltype_counts_from_df(
-    df: pd.DataFrame,
-    *,
-    celltype_col: str = "celltype",
-    exclude_unknown: bool = True,
-) -> pd.Series:
-    """Return cell-type counts for one acquisition DataFrame."""
-    if celltype_col not in df.columns:
-        raise KeyError(f"DataFrame needs {celltype_col!r}")
-    counts = df[celltype_col].value_counts()
-    if exclude_unknown and "Unknown" in counts.index:
-        counts = counts.drop("Unknown")
-    return counts.sort_values(ascending=False)
-
-
-def pooled_celltype_counts(
-    cells_by_acq: dict[str, pd.DataFrame],
-    *,
-    celltype_col: str = "celltype",
-    exclude_unknown: bool = True,
-) -> pd.Series:
-    """Sum cell-type counts across all acquisitions."""
-    parts = []
-    for df in cells_by_acq.values():
-        parts.append(celltype_counts_from_df(
-            df, celltype_col=celltype_col, exclude_unknown=exclude_unknown
-        ))
-    if not parts:
-        return pd.Series(dtype=int)
-    table = pd.concat(parts, axis=1).fillna(0)
-    return table.sum(axis=1).astype(int).sort_values(ascending=False)
-
 
 def _panel_title(acq_id: str, mapping_df: pd.DataFrame | None) -> str:
+    """Return the HCC region display label for one acquisition."""
     if mapping_df is not None and not mapping_df.empty:
         rows = mapping_df[
             mapping_df["CODEX_ACQUISITION_ID"].astype(str) == str(acq_id)
@@ -161,82 +87,15 @@ def _panel_title(acq_id: str, mapping_df: pd.DataFrame | None) -> str:
             label = rows.iloc[0].get("CODEX_REGION_DISPLAY_LABEL")
             if pd.notna(label) and str(label).strip():
                 return str(label).strip()
-    m = re.search(r"reg(\d+)", str(acq_id), flags=re.IGNORECASE)
-    if m:
-        return f"reg{m.group(1)}"
-    return str(acq_id)
+    match = re.search(r"reg(\d+)", str(acq_id), flags=re.IGNORECASE)
+    return f"reg{match.group(1)}" if match else str(acq_id)
 
 
-def plot_celltype_count_bars(
-    counts: pd.Series,
-    *,
-    title: str | None = None,
-    ax: plt.Axes | None = None,
-    cmap_name: str = "Greens",
-    ylabel: str = "Number of cells",
-    figsize: tuple[float, float] = (12, 5),
-    save_path: str | Path | None = None,
-    show: bool = True,
-    dpi: int = 150,
-    celltype_colors: dict[str, str] | None = Cell_Type_COLORS_CODEX_hcc_level2,
-) -> plt.Figure | None:
-    """Bar chart using fixed HCC cell-type colors, with cmap fallback."""
-    counts = counts.sort_values(ascending=False)
-    if counts.empty:
-        raise ValueError("No cell-type counts to plot")
-
-    created_fig = ax is None
-    if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
-    else:
-        fig = ax.figure
-
-    fallback_colors = sns.color_palette(cmap_name, n_colors=len(counts))
-    colors = [
-        celltype_colors.get(str(name).strip(), fallback)
-        if celltype_colors is not None
-        else fallback
-        for name, fallback in zip(counts.index, fallback_colors)
-    ]
-    x = np.arange(len(counts))
-    bars = ax.bar(x, counts.values, color=colors, width=0.92, edgecolor="none")
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(counts.index, rotation=45, ha="right")
-    ax.set_ylabel(ylabel)
-    if title:
-        ax.set_title(title)
-
-    ymax = float(counts.max())
-    ax.set_ylim(0, ymax * 1.12 if ymax else 1)
-    ax.yaxis.set_major_formatter(_yaxis_k_formatter())
-
-    for bar, val in zip(bars, counts.values):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height(),
-            _format_cell_count_label(val),
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            # fontweight="bold",
-        )
-
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    if created_fig:
-        fig.tight_layout()
-        if save_path is not None:
-            out = Path(save_path)
-            out.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out, dpi=dpi, bbox_inches="tight")
-            print(f"Saved: {out}")
-        if show:
-            plt.show()
-            plt.close(fig)
-            return None
-    return fig
+def plot_celltype_count_bars(counts: pd.Series, **kwargs) -> plt.Figure | None:
+    """Compatibility wrapper using the legacy HCC palette and green fallback."""
+    kwargs.setdefault("cmap_name", "Greens")
+    kwargs.setdefault("celltype_colors", Cell_Type_COLORS_CODEX_hcc_level2)
+    return _plot_celltype_count_bars(counts, **kwargs)
 
 
 def plot_all_acq_celltype_distributions(
@@ -253,49 +112,45 @@ def plot_all_acq_celltype_distributions(
     dpi: int = 150,
     suptitle: str | None = "s4769 CODEX cell-type distribution (36 regions)",
 ) -> plt.Figure | None:
-    """One bar chart per acquisition, arranged in a grid."""
+    """Plot one HCC cell-type count panel per acquisition."""
     if not cells_by_acq:
         raise ValueError("cells_by_acq is empty")
-
-    acq_ids = list(cells_by_acq.keys())
+    acq_ids = list(cells_by_acq)
     n_panels = len(acq_ids)
     n_cols = min(n_cols, n_panels)
     n_rows = int(np.ceil(n_panels / n_cols))
-
-    fig_w = figsize_per_panel[0] * n_cols
-    fig_h = figsize_per_panel[1] * n_rows
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(fig_w, fig_h))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(figsize_per_panel[0] * n_cols, figsize_per_panel[1] * n_rows),
+    )
     axes_flat = np.atleast_1d(axes).flatten()
-
     for ax, acq_id in zip(axes_flat, acq_ids):
         counts = celltype_counts_from_df(
             cells_by_acq[acq_id],
             celltype_col=celltype_col,
             exclude_unknown=exclude_unknown,
         )
-        plot_celltype_count_bars(
+        _plot_celltype_count_bars(
             counts,
             title=_panel_title(acq_id, mapping_df),
             ax=ax,
             cmap_name=cmap_name,
+            celltype_colors=Cell_Type_COLORS_CODEX_hcc_level2,
             show=False,
         )
         ax.tick_params(axis="x", labelsize=6)
         ax.tick_params(axis="y", labelsize=7)
-
     for ax in axes_flat[n_panels:]:
         ax.set_visible(False)
-
     if suptitle:
         fig.suptitle(suptitle, fontsize=14, y=1.01)
     fig.tight_layout()
-
     if save_path is not None:
         out = Path(save_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(out, dpi=dpi, bbox_inches="tight")
         print(f"Saved: {out}")
-
     if show:
         plt.show()
         plt.close(fig)
@@ -311,290 +166,159 @@ def plot_pooled_celltype_distribution(
     title: str = "s4769 pooled cell-type distribution (36 regions, excl. Unknown)",
     **kwargs,
 ) -> plt.Figure | None:
-    """Single bar chart pooling all acquisitions."""
+    """Plot one HCC bar chart pooling all acquisitions."""
     counts = pooled_celltype_counts(
         cells_by_acq,
         celltype_col=celltype_col,
         exclude_unknown=exclude_unknown,
     )
-    return plot_celltype_count_bars(counts, title=title, **kwargs)
+    kwargs.setdefault("cmap_name", "Greens")
+    kwargs.setdefault("celltype_colors", Cell_Type_COLORS_CODEX_hcc_level2)
+    return _plot_celltype_count_bars(counts, title=title, **kwargs)
 
-######################################################
-# 2026.08.10 LLY, add the celltype_colors parameter
-# 2026.08.11 LLY, add condition parameter
-######################################################
+
 def plot_celltype_proportions_stacked(
     celltype_counts: pd.DataFrame,
-    *,
-    celltype_order: list[str] | tuple[str, ...] | None = None,
-    sample_order: list[str] | tuple[str, ...] | None = None,
-
-    # 2026.08.11 condition parameter
-    condition_df: pd.DataFrame | None = None,
-    condition: str | None = None,
-    sample_id_col: str = "CODEX_ACQUISITION_ID",
-    condition_order: list[str] | tuple[str, ...] | None = None,
-    condition_gap: float = 1.0,
-    condition_line_y: float = -0.62,
-    condition_label_y: float = -0.68,
-    bottom_margin: float = 0.42,
-
-    celltype_colors: dict[str, str] = Cell_Type_COLORS_CODEX_hcc_level2,
-    title: str = "s4769 CODEX cell-type composition by acquisition",
-    ylabel: str = "Cell proportion (%)",
-    xlabel: str = "CODEX acquisition",
-    figsize: tuple[float, float] | None = None,
-    legend_title: str = "Cell type",
-    legend_ncol: int = 1,
-    rotation: int = 90,
-
-    # 2026.08.10 LLY, adjust the fontsize of the plot
-    xtick_fontsize: int = 10,
-    ytick_fontsize: int = 10,
-    label_fontsize: int = 12,
-    title_fontsize: int = 14,
-    legend_fontsize: int = 10,
-    legend_title_fontsize: int = 11,
-
-    # 2026.08.10 LLY, add the show_shading, shading_alpha, bar_width, bar_alpha parameter   
-    show_shading: bool = True,
-    shading_alpha: float = 0.28,
-    bar_width: float = 0.72,
-    bar_alpha: float = 0.90,
-
-    dpi: int = 300,
-    save_path: str | Path | None = None,
-    show: bool = True,
+    **kwargs,
 ) -> plt.Figure | None:
-    """Plot 100%-stacked bars with optional ribbons and clinical grouping.
+    """Compatibility wrapper preserving the legacy HCC stacked-plot defaults."""
+    kwargs.setdefault("sample_id_col", "CODEX_ACQUISITION_ID")
+    kwargs.setdefault("celltype_colors", Cell_Type_COLORS_CODEX_hcc_level2)
+    kwargs.setdefault("title", "s4769 CODEX cell-type composition by acquisition")
+    kwargs.setdefault("xlabel", "CODEX acquisition")
+    return _plot_celltype_proportions_stacked(celltype_counts, **kwargs)
 
-    The translucent ribbons connect the lower/upper boundaries of each cell type
-    between neighboring bars. When ``condition`` is supplied, acquisitions are
-    grouped by ``condition_df[condition]`` and ribbons do not cross group boundaries.
+
+
+#####################################################
+# 2026.08.14 StarDist macro AUROC by clinical groups
+# 2026.08.14 HCC clinical + StarDist AUROC helpers
+#####################################################
+HCC_STARDIST_CLINICAL_COLUMNS: tuple[str, ...] = ("Response", "diagnosis", "treatment")
+HCC_STARDIST_MACRO_AUROC_TIERS: tuple[str, ...] = ("l2", "l12", "l1")
+HCC_CLINICAL_RENAME: dict[str, str] = {
+    "MATCHED_HE": "matched_he",
+    "CODEX_ACQUISITION_ID": "region_id",
+    "CODEX_REGION_DISPLAY_LABEL": "region_label",
+}
+HCC_CLINICAL_OVERVIEW_COLS: tuple[str, ...] = (
+    "matched_he",
+    "region_id",
+    "region_label",
+    "patient_id",
+    "diagnosis",
+    "Response",
+    "treatment",
+    "tissue_type",
+    "tissue_subtype",
+    "Visium",
+    "Annotation",
+)
+HCC_CLINICAL_COUNT_COLS: tuple[str, ...] = (
+    "diagnosis",
+    "Response",
+    "treatment",
+    "tissue_type",
+    "tissue_subtype",
+    "Visium",
+    "Annotation",
+)
+
+
+def load_hcc_clinical_info(
+    xlsx_path: str | Path,
+    *,
+    sheet_name: str = "Clinical_info",
+    aligned_only: bool = True,
+    annotated_only: bool = True,
+    show_overview: bool = True,
+) -> pd.DataFrame:
+    """Load s4769 clinical rows from the Visium mapping workbook.
+
+    Filters to ``ALIGNED=='Y'`` and (by default) ``Annotation=='Y'``.
     """
-    if celltype_counts.empty:
-        raise ValueError("celltype_counts is empty")
-    if not 0 < bar_width <= 1:
-        raise ValueError("bar_width must be in (0, 1]")
-    if not 0 <= shading_alpha <= 1 or not 0 <= bar_alpha <= 1:
-        raise ValueError("shading_alpha and bar_alpha must be in [0, 1]")
-    if condition_gap < 0:
-        raise ValueError("condition_gap must be >= 0")
-    if not 0 < bottom_margin < 1:
-        raise ValueError("bottom_margin must be in (0, 1)")
+    clinical_raw = pd.read_excel(xlsx_path, sheet_name=sheet_name)
+    clinical = clinical_raw.copy()
+    if aligned_only and "ALIGNED" in clinical.columns:
+        clinical = clinical[clinical["ALIGNED"].astype(str).str.upper().eq("Y")]
+    if annotated_only and "Annotation" in clinical.columns:
+        clinical = clinical[clinical["Annotation"].astype(str).str.upper().eq("Y")]
+    clinical = clinical.rename(columns=HCC_CLINICAL_RENAME).copy()
 
-    counts = celltype_counts.drop(index="_TOTAL_", errors="ignore").copy()
-    counts.index = counts.index.astype(str).str.strip()
-    if counts.index.has_duplicates:
-        counts = counts.groupby(level=0, sort=False).sum()
-
-    order = list(celltype_order or celltype_colors.keys())
-    unexpected = sorted(set(counts.index) - set(order))
-    if unexpected:
-        raise ValueError(
-            "celltype_counts contains types outside the 12-color mapping: "
-            f"{unexpected}. Apply celltype_filter first."
-        )
-    counts = counts.reindex(order, fill_value=0)
-
-    samples = list(sample_order or counts.columns)
-    missing_samples = sorted(set(samples) - set(counts.columns))
-    if missing_samples:
-        raise KeyError(f"sample_order contains unknown columns: {missing_samples}")
- 
-    ######################################################
-    # 2026.08.11 condition parameter
-    sample_conditions: dict[str, str] | None = None
-    condition_values: list[str] | None = None
-    if condition is not None:
-        if condition_df is None:
-            raise ValueError("condition_df is required when condition is set")
-        required = {sample_id_col, condition}
-        missing_cols = required - set(condition_df.columns)
-        if missing_cols:
-            raise KeyError(f"condition_df missing columns: {sorted(missing_cols)}")
-
-        clinical = condition_df[[sample_id_col, condition]].dropna().copy()
-        clinical[sample_id_col] = clinical[sample_id_col].astype(str).str.strip()
-        clinical[condition] = clinical[condition].astype(str).str.strip()
-        conflicts = clinical.groupby(sample_id_col)[condition].nunique()
-        conflicts = conflicts[conflicts > 1]
-        if not conflicts.empty:
-            raise ValueError(
-                f"Samples map to multiple {condition!r} values: {conflicts.index.tolist()}"
-            )
-        sample_conditions = (
-            clinical.drop_duplicates(sample_id_col)
-            .set_index(sample_id_col)[condition]
-            .to_dict()
-        )
-        missing_condition = [sample for sample in samples if sample not in sample_conditions]
-        if missing_condition:
-            raise KeyError(
-                f"No {condition!r} metadata for acquisitions: {missing_condition}"
-            )
-
-        groups = list(condition_order or pd.unique([sample_conditions[s] for s in samples]))
-        unknown_groups = sorted(set(sample_conditions[s] for s in samples) - set(groups))
-        if unknown_groups:
-            raise ValueError(
-                f"condition_order omits {condition!r} values: {unknown_groups}"
-            )
-        group_rank = {group: rank for rank, group in enumerate(groups)}
-        original_rank = {sample: rank for rank, sample in enumerate(samples)}
-        samples = sorted(
-            samples,
-            key=lambda sample: (
-                group_rank[sample_conditions[sample]],
-                original_rank[sample],
-            ),
-        )
-        condition_values = [sample_conditions[sample] for sample in samples]
-    ######################################################
-    counts = counts.loc[:, samples].apply(pd.to_numeric, errors="coerce").fillna(0)
-
-    totals = counts.sum(axis=0)
-    if (totals <= 0).any():
-        bad = totals.index[totals <= 0].tolist()
-        raise ValueError(f"Acquisitions with zero retained cells: {bad}")
-    proportions = counts.divide(totals, axis=1) * 100.0
-
-    if figsize is None:
-        figsize = (max(12.0, 0.38 * len(samples)), 6.0)
-    fig, ax = plt.subplots(figsize=figsize)
-    x = np.arange(len(samples), dtype=float)
-    if condition_values is not None:
-        offset = 0.0
-        for i in range(1, len(samples)):
-            if condition_values[i] != condition_values[i - 1]:
-                offset += condition_gap
-            x[i] += offset
-    bottom = np.zeros(len(samples), dtype=float)
-
-    for celltype in order:
-        values = proportions.loc[celltype].to_numpy(dtype=float)
-        top = bottom + values
-        color = celltype_colors[celltype]
-
-        if show_shading and len(samples) > 1:
-            for i in range(len(samples) - 1):
-                if (
-                    condition_values is not None
-                    and condition_values[i] != condition_values[i + 1]
-                ):
-                    continue
-                connector_x = [
-                    x[i] + bar_width / 2,
-                    x[i + 1] - bar_width / 2,
-                ]
-                ax.fill_between(
-                    connector_x,
-                    [bottom[i], bottom[i + 1]],
-                    [top[i], top[i + 1]],
-                    color=color,
-                    alpha=shading_alpha,
-                    linewidth=0,
-                    zorder=1,
-                )
-
-        ax.bar(
-            x,
-            values,
-            bottom=bottom,
-            width=bar_width,
-            color=color,
-            alpha=bar_alpha,
-            edgecolor="#666666",
-            linewidth=0.45,
-            label=celltype,
-            zorder=2,
-        )
-        bottom = top
-
-    # 2026.08.10 LLY, adjust the fontsize of the plot
-    ax.set_xticks(x)
-    ax.set_xticklabels(
-        samples,
-        rotation=rotation,
-        ha="center",
-        fontsize=xtick_fontsize,
-    )
-    ax.tick_params(axis="y", labelsize=ytick_fontsize)
-    ax.set_xlim(x[0] - 0.6, x[-1] + 0.6)
-    ax.set_ylim(0, 100)
-    ax.set_yticks([0, 25, 50, 75, 100])
-    ax.set_ylabel(ylabel, fontsize=label_fontsize)
-    ax.set_xlabel(xlabel, fontsize=label_fontsize)
-    ax.set_title(title, fontsize=title_fontsize)
+    print("Clinical sheet rows:", len(clinical_raw))
+    print("Retained rows      :", len(clinical))
+    if show_overview:
+        display_fn = None
+        try:
+            from IPython.display import display as display_fn  # type: ignore
+        except ImportError:
+            pass
+        show_cols = [c for c in HCC_CLINICAL_OVERVIEW_COLS if c in clinical.columns]
+        preview = clinical[show_cols].head(12) if show_cols else clinical.head(12)
+        if display_fn is not None:
+            display_fn(preview)
+        else:
+            print(preview.to_string(index=False))
+        for col in HCC_CLINICAL_COUNT_COLS:
+            if col not in clinical.columns:
+                continue
+            print(f"\n{col}")
+            counts = clinical[col].value_counts(dropna=False)
+            if display_fn is not None:
+                display_fn(counts)
+            else:
+                print(counts.to_string())
+    return clinical
 
 
-    ######################################################
-    # 2026.08.11 condition parameter
-    if condition_values is not None:
-        group_start = 0
-        for i in range(1, len(samples) + 1):
-            at_end = i == len(samples)
-            group_changed = not at_end and condition_values[i] != condition_values[i - 1]
-            if at_end or group_changed:
-                group_end = i - 1
-                left = x[group_start] - bar_width / 2
-                right = x[group_end] + bar_width / 2
-                ax.plot(
-                    [left, right],
-                    [condition_line_y, condition_line_y],
-                    transform=ax.get_xaxis_transform(),
-                    color="#333333",
-                    linewidth=1.2,
-                    clip_on=False,
-                )
-                ax.text(
-                    (left + right) / 2,
-                    condition_label_y,
-                    condition_values[group_start],
-                    transform=ax.get_xaxis_transform(),
-                    ha="center",
-                    va="top",
-                    fontsize=label_fontsize,
-                    clip_on=False,
-                )
-                if not at_end:
-                    ax.axvline(
-                        (x[group_end] + x[i]) / 2,
-                        color="#bdbdbd",
-                        linewidth=0.8,
-                        zorder=0,
-                    )
-                group_start = i
+def plot_stardist_macro_auroc_by_clinical(
+    merged_auc: pd.DataFrame,
+    *,
+    tiers: Sequence[str] = HCC_STARDIST_MACRO_AUROC_TIERS,
+    clinical_columns: Sequence[str] = HCC_STARDIST_CLINICAL_COLUMNS,
+    sample_col: str = "matched_he",
+    pan_organ: str = "codex_hcc",
+    method: Literal["rank", "parametric"] = "rank",
+    alternative: Literal["two-sided", "less", "greater"] = "two-sided",
+    figsize: tuple[float, float] = (15.0, 5.0),
+    legend_ncol: int = 2,
+    show: bool = True,
+    save_dir: str | Path | None = None,
+) -> dict:
+    """HCC wrapper around ``uni_label_cv_helpers.plot_stardist_macro_auroc_by_clinical``."""
+    from uni_label_cv_helpers import plot_stardist_macro_auroc_by_clinical as _plot
 
-    ######################################################
-    
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    # 2026.08.10 LLY, adjust the fontsize of the legend
-    ax.legend(
-        title=legend_title,
-        bbox_to_anchor=(1.01, 1.0),
-        loc="upper left",
-        frameon=False,
-        ncol=legend_ncol,
-        fontsize=legend_fontsize,
-        title_fontsize=legend_title_fontsize,
+    return _plot(
+        merged_auc,
+        tiers=tiers,
+        clinical_columns=clinical_columns,
+        sample_col=sample_col,
+        pan_organ=pan_organ,
+        method=method,
+        alternative=alternative,
+        figsize=figsize,
+        legend_ncol=legend_ncol,
+        show=show,
+        save_dir=save_dir,
     )
 
 
-    fig.tight_layout()
-    if condition_values is not None:
-        fig.subplots_adjust(bottom=bottom_margin)
+def analyze_hcc_stardist_macro_auroc_by_clinical(
+    stardist_result_root,
+    clinical_info: pd.DataFrame,
+    **kwargs,
+) -> dict:
+    """One-shot HCC clinical AUROC comparison (table + merge + plot)."""
+    from uni_label_cv_helpers import analyze_stardist_macro_auroc_by_clinical as _analyze
 
-    if save_path is not None:
-        out = Path(save_path)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out, dpi=dpi, bbox_inches="tight")
-        print(f"Saved: {out}")
-    if show:
-        plt.show()
-        plt.close(fig)
-        return None
-    return fig
-######################################################
+    kwargs.setdefault("tiers", HCC_STARDIST_MACRO_AUROC_TIERS)
+    kwargs.setdefault("clinical_columns", HCC_STARDIST_CLINICAL_COLUMNS)
+    kwargs.setdefault("clinical_key", "matched_he")
+    kwargs.setdefault("pan_organ", "codex_hcc")
+    kwargs.setdefault("layout", "pooled_stardist")
+    kwargs.setdefault("figsize", (15.0, 5.0))
+    kwargs.setdefault("legend_ncol", 2)
+    return _analyze(stardist_result_root, clinical_info, **kwargs)
+
+
+# End of s4769 compatibility wrappers.

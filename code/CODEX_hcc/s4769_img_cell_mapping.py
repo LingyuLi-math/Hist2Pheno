@@ -22,14 +22,11 @@ S4769_SAMPLE = "s4769"
 DEFAULT_HE_MAPPING_XLSX = "HE/s4769_he_mapping_updated_Visium.xlsx"
 DEFAULT_HE_MAPPING_SHEET = "Clinical_info"
 DEFAULT_CELLTYPE_SHEET = "Celltype"
-DEFAULT_CELLTYPE_FILTER = ("Unknown", "Stroma Uncharacterized")
 
-_XENIUM_DIR = Path(__file__).resolve().parent.parent / "Xenium_lung"
-if str(_XENIUM_DIR) not in sys.path:
-    sys.path.insert(0, str(_XENIUM_DIR))
-from plot_HEanno_spatial_labels import (  # type: ignore[import-not-found]  # noqa: E402
-    xenium_final_ct_rgba_overrides,
-)
+_PKG_DIR = Path(__file__).resolve().parent.parent / "Hist2Pheno_pkg"
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
+from plotting_palettes import DEFAULT_CELLTYPE_FILTER, resolve_palette  # noqa: E402
 
 _he_rgb_cache: dict[str, np.ndarray] = {}
 
@@ -816,7 +813,11 @@ def plot_codex_spatial(
     dpi: int = 200,
     point_size: float = 3,
 ) -> None:
-    color_overrides = xenium_final_ct_rgba_overrides(cells_df["celltype"].unique())
+    color_overrides = resolve_palette(
+        cells_df["celltype"].unique(),
+        dataset="codex_hcc",
+        tier="fine",
+    )
     fig, ax = plt.subplots(figsize=(12, 10))
 
     if he_rgb_bg is not None:

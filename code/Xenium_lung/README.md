@@ -2,7 +2,24 @@
 
 本目录包含 **GSE250346 肺纤维化 Xenium 数据集**（Weiqin 预处理版）的分析流水线：从 Xenium / H&E 空间坐标对齐、UNI 特征提取、五层细胞类型预测，到基于组织学预测概率的 **cell niche 指数**（TLS、FRI、ARI 等）。
 
-核心建模与可视化依赖 [`../Hist2Pheno_pkg/`](../Hist2Pheno_pkg/)（`base.py` / `model.py` / `plot.py`），本目录脚本负责 Xenium lung 特有的路径、样本映射与批处理封装。
+核心建模与可视化依赖 [`../Hist2Pheno_pkg/`](../Hist2Pheno_pkg/)（详见 [package README](../Hist2Pheno_pkg/README.md)），本目录脚本负责 Xenium lung 特有的路径、样本映射与批处理封装。
+
+## Changelog
+
+### 2026-08-13 — Shared plotting and palette architecture
+
+- Xenium palette data and resolvers are now canonical in
+  `../Hist2Pheno_pkg/plotting_palettes.py`.
+- Generic DataFrame transforms and reusable bar, composition, and lineage-panel
+  helpers moved to `../Hist2Pheno_pkg/plotting_utils.py`.
+- `plot_HEanno_spatial_labels.py` keeps Xenium-specific paths, file I/O, CLI,
+  report orchestration, and compatibility re-exports for historical imports.
+- Package modules no longer dynamically import the `Xenium_lung` directory;
+  dependency direction is now dataset module → `Hist2Pheno_pkg` only.
+- Xenium palette/tier resolution, stable L2 colors, representative spatial and
+  generic plotting paths, and compatibility imports were validated.
+- Active pipelines now use explicit five-tier Xenium lung scheme IDs; legacy
+  scheme IDs remain accepted by the package resolver.
 
 ---
 
@@ -113,6 +130,23 @@ result_all_spatial/
 | L12 | Level 1-1-2 | `class_names_level12` |
 | L3 | CNiche（C1–C12） | `class_names_level3` |
 | L4 | TNiche（T1–T12） | `class_names_level4` |
+
+### Canonical plotting schemes
+
+| Annotation / head | Scheme |
+|-------------------|--------|
+| `final_CT` / L2 | `xenium_lung_fine` |
+| `final_sublineage` / L12 | `xenium_lung_intermediate` |
+| `final_lineage` / L1 | `xenium_lung_coarse` |
+| `CNiche` / L3 | `xenium_lung_CNiche` |
+| `TNiche` / L4 | `xenium_lung_TNiche` |
+
+Scheme matching is case-insensitive. The older `xenium`, `xenium_auto`,
+`xenium_ct`, and `xenium_lineage` spellings remain compatibility aliases, but
+active scripts and notebooks use the explicit canonical names.
+
+Plotting APIs also accept `pan_organ="xenium_lung"` so callers can omit
+per-call scheme strings while retaining the same five-tier defaults.
 
 ---
 
@@ -292,7 +326,9 @@ conda run --no-capture-output -n SeededNTM python -u \
 
 **脚本：** [`Lung_train_validate_cv_UNIlabel.py`](Lung_train_validate_cv_UNIlabel.py)
 
-**辅助模块：** [`xenium_uni_nb_helpers.py`](xenium_uni_nb_helpers.py)
+**共享辅助模块：** [`../Hist2Pheno_pkg/uni_label_cv_helpers.py`](../Hist2Pheno_pkg/uni_label_cv_helpers.py)（canonical）
+
+旧路径 [`xenium_uni_nb_helpers.py`](xenium_uni_nb_helpers.py) 仅作为兼容 shim 保留，静默 re-export 共享模块；新代码应直接 import `uni_label_cv_helpers`。
 
 #### 模式 A：Per-sample（每个样本独立训练）
 
@@ -412,6 +448,9 @@ hdni.summarize_cross_dataset_spatial_fri_ari(samples=[...])
 | `base.py` | 坐标匹配、`match_hist2cell_h5ad`、`match_celltype2stardist`、五头 MLP 定义、`build_spatial_neighbor_index`、embedding 加载 |
 | `model.py` | 分层 CV 训练、`train_model_cv`、`evaluate_and_plot_on_all_data`、spatial fusion 前向 |
 | `plot.py` | 混淆矩阵、ROC、空间 cell type 图、`mlp_collect_five_head_softmax_probs` |
+| `plotting_palettes.py` | Canonical Xenium/CODEX ESCC/HCC palette registry, tier normalization, and color resolvers (`ncrt` aliases `codex_escc`) |
+| `plotting_utils.py` | Generic count/composition transforms and reusable bar, stacked, and lineage-panel plots |
+| `uni_label_cv_helpers.py` | 跨数据集 UNI-label CV、内部验证与 StarDist 分层预测的共享辅助函数（canonical） |
 
 Xenium lung 脚本在 `Hist2Pheno_pkg` 之上增加：
 

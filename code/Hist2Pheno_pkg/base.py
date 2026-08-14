@@ -1,5 +1,5 @@
 ## 2026.08.11 LLY, add function for CODEX_HCC dataset
-
+## 2026.08.12 LLY, add function for visualize_roi_cells and visualize_all_rois_with_he
 
 
 # Import necessary libraries
@@ -3263,6 +3263,7 @@ def evaluate(model, loader, device, scaler=None, spatial_ctx=None):
 
 ######################################
 # 2026.02.26 LLY Evaluate and plot on all data
+# 2026.08.13, add pan_organ for CODEX ESCC and Xenium Lung dataset
 ######################################
 import os
 import numpy as np
@@ -3299,7 +3300,8 @@ def evaluate_and_plot_on_all_data(
     spatial_figsize=(12, 10),
     spatial_point_size=0.6,
     spatial_plot_mode="pred_true_l2",
-    spatial_color_scheme="ncrt",
+    spatial_color_scheme="codex_escc",
+    pan_organ=None,
     class_names_level1=None,
     y_level1_f=None,
     y_level1_encoded_f=None,
@@ -3350,7 +3352,12 @@ def evaluate_and_plot_on_all_data(
         has_head = hasattr(model, "forward_heads") and callable(getattr(model, "forward_heads"))
         row_offset = int(row_start)
         with torch.no_grad():
-            for x, _ in tqdm(loader, desc="Predicting (L2+L1 heads)"):
+
+            # 2026.08.12 LLY, add function for visualize_roi_cells and visualize_all_rois_with_he
+            for batch in tqdm(loader, desc="Predicting (L2+L1 heads)"):
+                # Spatial loaders also include a global-index tensor.
+                x = batch[0]
+
                 x = x.to(device, non_blocking=True)
                 neighbor_x = _neighbor_x_for_batch(X_full_t, nbr_idx_t, row_offset, x)
                 row_offset += x.shape[0]
@@ -3590,14 +3597,30 @@ def evaluate_and_plot_on_all_data(
 
     all_preds_l1 = None
 
+    ###############################################################
+    # 2026.08.13, adjust _spatial_scheme_for_tier for CODEX ESCC and Xenium Lung dataset
+    ###############################################################
     def _spatial_scheme_for_tier(tier):
-        sch = (spatial_color_scheme or "ncrt").lower()
-        if sch in ("ncrt", "xenium_lineage", "xenium_ct"):
-            return sch
-        if sch in ("xenium", "xenium_auto"):
-            return "xenium_lineage" if tier == "l1" else "xenium_ct"
-        return sch
+        from plotting_palettes import is_known_scheme, scheme_for_pan_organ
 
+        sch_in = spatial_color_scheme or "codex_escc"
+        sch_key = str(sch_in).strip().lower()
+        # When pan_organ is set, treat the legacy ESCC default as implicit.
+        if pan_organ is not None and sch_key in ("codex_escc", "ncrt"):
+            sch_key = ""
+
+        if sch_key and is_known_scheme(sch_key) and sch_key not in ("xenium", "xenium_auto", "codex_hcc"):
+            return sch_key
+        if sch_key in ("xenium", "xenium_auto"):
+            return scheme_for_pan_organ("xenium_lung", head=tier)
+        if sch_key == "codex_hcc":
+            # Ensure L12 routes to the intermediate palette for HCC.
+            return scheme_for_pan_organ("codex_hcc", head=tier)
+        if pan_organ is not None:
+            return scheme_for_pan_organ(pan_organ, head=tier)
+        return sch_key or "codex_escc"
+    ###############################################################
+    
     # Predict on all data
     if has_labels:
         # Evaluate on all data (with labels)
@@ -3697,7 +3720,13 @@ def evaluate_and_plot_on_all_data(
             row_offset = 0
 
             with torch.no_grad():
-                for x, _ in tqdm(all_loader, desc="Predicting"):
+
+                # 2026.08.12 LLY, add function for visualize_roi_cells and visualize_all_rois_with_he
+                for batch in tqdm(all_loader, desc="Predicting"):
+                    # Standard loaders yield (x, y); spatial loaders additionally
+                    # yield global indices used to gather neighbor embeddings.
+                    x = batch[0]
+
                     x = x.to(device, non_blocking=True)
                     neighbor_x = _neighbor_x_for_batch(X_full_t, nbr_idx_t, row_offset, x)
                     row_offset += x.shape[0]
@@ -3902,22 +3931,13 @@ def evaluate_and_plot_on_all_data(
 
         l2_scheme = _spatial_scheme_for_tier("l2")
         l2_color_overrides = None
-        if l2_scheme != "ncrt":
+        if l2_scheme not in ("codex_escc", "ncrt"):
             try:
-                import sys
-                from pathlib import Path as _Path
+                from plotting_palettes import resolve_palette
 
-                _xdir = _Path(__file__).resolve().parent.parent / "Xenium_lung"
-                if _xdir.is_dir() and str(_xdir) not in sys.path:
-                    sys.path.insert(0, str(_xdir))
-                from plot_HEanno_spatial_labels import (
-                    resolve_xenium_spatial_color_overrides,
-                )
-
-                tier = "ct" if l2_scheme == "xenium_ct" else "auto"
-                l2_color_overrides = resolve_xenium_spatial_color_overrides(
+                l2_color_overrides = resolve_palette(
                     class_names,
-                    tier=tier,
+                    scheme=l2_scheme,
                     canonical_labels=class_names,
                 )
             except Exception as exc:
@@ -3978,6 +3998,20 @@ def evaluate_and_plot_on_all_data(
             })
             if y_level1_f is not None and len(y_level1_f) == len(all_preds):
                 pred_df_l1["true_celltype"] = np.asarray(y_level1_f)[idx_l1]
+            l1_scheme = _spatial_scheme_for_tier("l1")
+            l1_color_overrides = None
+            if l1_scheme in ("codex_escc", "ncrt"):
+                try:
+                    from plotting_palettes import resolve_palette
+
+                    l1_color_overrides = resolve_palette(
+                        class_names_level1,
+                        scheme=l1_scheme,
+                        tier="celltype_level1",
+                        canonical_labels=class_names_level1,
+                    )
+                except Exception as exc:
+                    print(f"  ⚠ Could not build CODEX ESCC L1 spatial colors: {exc}")
             print(f"\nPlotting spatial distribution of PREDICTED level1 (lineage)...")
             plot_celltype_spatial_distribution(
                 pred_df_l1,
@@ -3989,7 +4023,8 @@ def evaluate_and_plot_on_all_data(
                 s=spatial_point_size,
                 format="jpg",
                 save_path=celltype_pred_level1_dir,
-                spatial_color_scheme=_spatial_scheme_for_tier("l1"),
+                color_overrides=l1_color_overrides,
+                spatial_color_scheme=l1_scheme,
                 title=spatial_title_pred_l1 or "Predicted level1 spatial distribution",
             )
             if (
@@ -4006,7 +4041,8 @@ def evaluate_and_plot_on_all_data(
                     s=spatial_point_size,
                     format="jpg",
                     save_path=celltype_true_level1_dir,
-                    spatial_color_scheme=_spatial_scheme_for_tier("l1"),
+                    color_overrides=l1_color_overrides,
+                    spatial_color_scheme=l1_scheme,
                     title=spatial_title_true_l1 or "True level1 spatial distribution",
                 )
         elif plot_l1_pred:

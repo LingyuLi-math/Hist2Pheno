@@ -8,7 +8,7 @@ This repository contains:
 
 | Path | Description |
 |------|-------------|
-| [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) | Core library — `base.py`, `model.py`, `plot.py` |
+| [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) | Core library — modeling, shared plotting/palettes, and UNI-label CV helpers ([package README](code/Hist2Pheno_pkg/README.md)) |
 | [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) | Per-cell UNI/HIPT embedding extraction from H&E (Xenium + CODEX HCC) |
 | [`code/Xenium_lung/`](code/Xenium_lung/) | **GSE250346 lung fibrosis Xenium** pipeline — Complete + Incomplete cohorts ([README](code/Xenium_lung/README.md)) |
 | [`code/CODEX_hcc/`](code/CODEX_hcc/) | **CODEX HCC s4769** pipeline — Visium-aligned HE, GT + StarDist UNI features ([README](code/CODEX_hcc/README.md)) |
@@ -199,6 +199,18 @@ Env overrides for batch extraction: `ACQ_ID`, `HE_KEY`, `STARDIST_ROOT`, `SKIP_I
 - **`base.py`** — coordinate matching, AnnData / NPZ builders, spatial kNN index, five-head MLP architectures, embedding I/O
 - **`model.py`** — stratified / LOGO cross-validation training, spatial-context fusion, checkpoint selection
 - **`plot.py`** — confusion matrices, ROC, spatial cell-type maps, five-head softmax collection
+- **[`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py)** — canonical dataset-aware palette registry and resolvers
+- **[`plotting_utils.py`](code/Hist2Pheno_pkg/plotting_utils.py)** — reusable bar/composition transforms and plots
+- **[`uni_label_cv_helpers.py`](code/Hist2Pheno_pkg/uni_label_cv_helpers.py)** — canonical shared UNI-label CV, internal-validation, and StarDist-tier helpers
+
+See the **[`Hist2Pheno_pkg` README](code/Hist2Pheno_pkg/README.md)** for the full module index, plotting API, tier mappings, and extension policy.
+
+Canonical plotting dataset IDs are `codex_escc`, `xenium_lung`, and
+`codex_hcc`. The historical `ncrt` plotting ID remains a fully
+backward-compatible alias of `codex_escc`; NCRT cohort terminology and
+identifiers are unchanged.
+
+The former Xenium path [`code/Xenium_lung/xenium_uni_nb_helpers.py`](code/Xenium_lung/xenium_uni_nb_helpers.py) is a compatibility shim that quietly re-exports the shared module. New code should import `uni_label_cv_helpers` directly.
 
 ### Five prediction heads
 

@@ -9,6 +9,8 @@ build/
 
 # Jupyter
 .ipynb_checkpoints/
+ignore_large_files.py/
+remove.sh/
 
 # BEGIN AUTO-IGNORED FILES > 100 MiB (managed by ignore_large_files.py)
 code/CODEX_escc/NCRT_train_validate_cv.ipynb
@@ -25,9 +27,12 @@ code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all_260705.ipynb
 *.swp
 
 # Data & large artifacts (not tracked — use local paths or LFS)
+__pycache__/
 code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
 data/
 manuscript/
+tools/
+code_git0725/
 *.h5ad
 *.zarr
 *.pth

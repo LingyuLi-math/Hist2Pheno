@@ -22,20 +22,23 @@
   # 单样本全流程（默认开 spatial）
   conda run --no-capture-output -n SeededNTM python -u code/CODEX_hcc/HCC_train_validate_cv_UNIlabel.py \
     --sample awy-98938_aligned_0d535a74
-
   # 全部 36 个样本（per-sample）
   conda run --no-capture-output -n SeededNTM python -u code/CODEX_hcc/HCC_train_validate_cv_UNIlabel.py
-
   # 跨数据集 + lung 同款 spatial
   conda run --no-capture-output -n SeededNTM python -u code/CODEX_hcc/HCC_train_validate_cv_UNIlabel.py \
     --mode cross-dataset \
     --use-spatial-context --spatial-k 8 --spatial-mode mean \
     --pooled-save-result result_all_spatial
 
-5_HCC_train_validate_cv_UNIlabel_all.ipynb
-  # Cross-dataset notebook (36 regions); shows L2 / L12 / L1 prediction results
-  # Twin of code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all.ipynb
-  # Open in Jupyter (SeededNTM): code/CODEX_hcc/HCC_train_validate_cv_UNIlabel_all.ipynb
-  # Outputs: data/CODEX/HCC/Michael_data_transfer/s4769/result_all_spatial/
-  #   - internal: conf_matrix_level{2,1,12}.pdf
-  #   - stardist/{MATCHED_HE}/: celltype_pred_stardist_level{2,1,12}.jpg + ROC
+5_transer_embedding_label_h5ad.py
+  # transfer the all stardist embedding and label to h5ad file for downstream analysis
+  conda run --no-capture-output -n SeededNTM python -u \
+    code/CODEX_hcc/transer_embedding_label_h5ad.py \
+    --steps stardist_all_h5ad
+
+6_HCC_train_validate_cv_UNIlabel_all.ipynb
+  # obtain the StarDist macro AUROC by clinical groups
+
+7_Pred_statistic_visual_hcc_all.ipynb 
+  # See the prediction difference between clinical groups
+

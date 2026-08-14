@@ -24,6 +24,9 @@
 #   --ablation-tag D_emph_L2_spatial_bs4096
 
 
+## 2026.08.13, add pan_organ for CODEX ESCC and Xenium Lung dataset
+
+
 #!/usr/bin/env python3
 """
 CODEX HCC: stratified K-fold HCE training + HE internal validation + StarDist external validation.
@@ -90,9 +93,8 @@ from sklearn.preprocessing import StandardScaler
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PKG_DIR = _REPO_ROOT / "code" / "Hist2Pheno_pkg"
-_XENIUM_DIR = _REPO_ROOT / "code" / "Xenium_lung"
 _CODEX_HCC_DIR = _REPO_ROOT / "code" / "CODEX_hcc"
-for _p in (_PKG_DIR, _XENIUM_DIR, _CODEX_HCC_DIR):
+for _p in (_PKG_DIR, _CODEX_HCC_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -141,7 +143,7 @@ from plot import (  # noqa: E402
     plot_per_class_f1,
     plot_tier_spatial_distribution,
 )
-from xenium_uni_nb_helpers import (  # noqa: E402
+from uni_label_cv_helpers import (  # noqa: E402
     build_insample_tier_metrics,
     save_stardist_external_validation_metrics,
     plot_stardist_roc_from_auroc_csv,
@@ -178,6 +180,9 @@ DEFAULT_ABLATION_TAG = "D_emph_L2"
 DEFAULT_VAL_SELECTION_METRIC = "three_tier_auc_sum"
 DEFAULT_CV_SELECTION_METRIC = "three_tier_auc_sum"
 DEFAULT_SAVE_RESULT = "result"
+
+# Canonical organ selector for shared plotting APIs.
+PAN_ORGAN = "codex_hcc"
 DEFAULT_PER_SAMPLE_SAVE_RESULT = "result"
 DEFAULT_POOLED_SAVE_RESULT = "result_all"
 DEFAULT_SPATIAL_K = 8
@@ -896,7 +901,7 @@ def step_he_validate(ctx: RunContext) -> None:
         celltype_pred_dir=rf("celltype_valid_level2"),
         celltype_true_dir=rf("celltype_true_level2"),
         spatial_plot_mode="pred_true_l2",
-        spatial_color_scheme="xenium_ct",
+        pan_organ=PAN_ORGAN,
         spatial_title_pred_l2=f"{ctx.therapy_data} predicted level2",
         spatial_title_true_l2=f"{ctx.therapy_data} ground truth level2",
     )
@@ -910,7 +915,7 @@ def step_he_validate(ctx: RunContext) -> None:
         plot_celltype_spatial_distribution=plot_celltype_spatial_distribution,
         save_path_pred=rf("celltype_valid_level1"),
         save_path_true=rf("celltype_true_level1"),
-        spatial_color_scheme="xenium_lineage",
+        pan_organ=PAN_ORGAN,
         X_coords_matched=g.get("X_coords_plot"),
         y_level1_f=cv_data["y_level1_f"],
         spatial_title_pred_l1=f"{ctx.therapy_data} predicted level1",
@@ -924,6 +929,7 @@ def step_he_validate(ctx: RunContext) -> None:
         g.get("X_coords_plot"),
         cv_data,
         g,
+        pan_organ=PAN_ORGAN,
     )
 
 
@@ -1041,7 +1047,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
             y_level1_f=g["y_star_level1"],
             celltype_pred_dir=rf("stardist_pred_level2"),
             spatial_plot_mode="pred_true_l2",
-            spatial_color_scheme="xenium_ct",
+            pan_organ=PAN_ORGAN,
             spatial_title_pred_l2=f"{ctx.therapy_data} StarDist pred level2",
             spatial_title_true_l2=f"{ctx.therapy_data} ground truth level2",
         )
@@ -1065,7 +1071,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
         y_level1_encoded_f=g["y_level1_encoded_f"],
         plot_celltype_spatial_distribution=plot_celltype_spatial_distribution,
         save_path_pred=rf("stardist_pred_level1"),
-        spatial_color_scheme="xenium_lineage",
+        pan_organ=PAN_ORGAN,
         X_coords_matched=g["X_coords_star"],
         y_level1_f=g["y_star_level1"],
         spatial_title_pred_l1=f"{ctx.therapy_data} StarDist pred level1",
@@ -1085,6 +1091,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
             star_heads,
             cv_data,
             g,
+            pan_organ=PAN_ORGAN,
         )
     else:
         print("  Skip L12/L3/L4 StarDist spatial: not five-head.", flush=True)
@@ -1115,7 +1122,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
                 max_curves=len(class_names_star),
                 save_path=rf("roc_stardist_level2"),
                 title="StarDist Level2 ROC",
-                roc_color_scheme="xenium_ct",
+                pan_organ=PAN_ORGAN,
             )
             plot_level1_roc_from_level2_scores(
                 g["matched_features_stardist_path"],
@@ -1127,7 +1134,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
                 figsize=(3.0, 3.0),
                 save_path=rf("roc_stardist_level1"),
                 title="StarDist Level1 ROC from L2 probs",
-                roc_color_scheme="xenium_lineage",
+                pan_organ=PAN_ORGAN,
                 y_level1_f=y_l1_roc,
             )
             if hasattr(model_star, "level12_head") and probs_heads is not None:
@@ -1142,6 +1149,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
                     cv_data,
                     len(y_v),
                     g,
+                    pan_organ=PAN_ORGAN,
                 )
 
     print("[StarDist] external metrics CSV", flush=True)
@@ -1199,7 +1207,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
             class_names_star,
             save_path=rf("roc_stardist_level2_from_AUROC_csv"),
             title="StarDist Level2 ROC (from AUROC CSV)",
-            roc_color_scheme="xenium_ct",
+            pan_organ=PAN_ORGAN,
         )
         if roc_info_l2_csv:
             print(
@@ -1333,6 +1341,7 @@ def step_pooled_he_validate(ctx: PooledRunContext) -> None:
         val_preds,
         val_probs_l2=g.get("val_probs_l2"),
         title_prefix="Cross-dataset OOF Level2",
+        pan_organ=PAN_ORGAN,
     )
     save_pooled_internal_validation_metrics(
         rf("validation_internal_metrics"),
@@ -1465,7 +1474,7 @@ def step_pooled_stardist_one_sample(
             y_level1_f=star["y_star_level1"],
             celltype_pred_dir=rf("stardist_pred_level2"),
             spatial_plot_mode="pred_true_l2",
-            spatial_color_scheme="xenium_ct",
+            pan_organ=PAN_ORGAN,
             spatial_title_pred_l2=f"{sample} StarDist pred level2",
             spatial_title_true_l2=f"{sample} ground truth level2",
             neighbor_index=neighbor_index,
@@ -1481,7 +1490,7 @@ def step_pooled_stardist_one_sample(
                 max_curves=len(class_names),
                 save_path=rf("roc_stardist_level2"),
                 title=f"{sample} StarDist Level2 ROC",
-                roc_color_scheme="xenium_ct",
+                pan_organ=PAN_ORGAN,
             )
             if roc_info is not None:
                 macro_auc = float(roc_info.get("macro_auc", float("nan")))
@@ -1503,7 +1512,7 @@ def step_pooled_stardist_one_sample(
             y_level1_encoded_f=cv_data["y_level1_encoded_f"],
             plot_celltype_spatial_distribution=plot_celltype_spatial_distribution,
             save_path_pred=rf("stardist_pred_level1"),
-            spatial_color_scheme="xenium_lineage",
+            pan_organ=PAN_ORGAN,
             X_coords_matched=star["X_coords_star"],
             y_level1_f=star["y_star_level1"],
             spatial_title_pred_l1=f"{sample} StarDist pred level1",
@@ -1524,7 +1533,7 @@ def step_pooled_stardist_one_sample(
                 figsize=(3.0, 3.0),
                 save_path=rf("roc_stardist_level1"),
                 title=f"{sample} StarDist Level1 ROC from L2 probs",
-                roc_color_scheme="xenium_lineage",
+                pan_organ=PAN_ORGAN,
                 y_level1_f=y_l1_roc,
             )
         if probs_l2 is not None:
@@ -1570,6 +1579,7 @@ def step_pooled_stardist_one_sample(
                 cv_data,
                 g_star,
                 tiers=extra_tiers,
+                pan_organ=PAN_ORGAN,
             )
             if np.any(valid):
                 y_v = y_roc[:m][valid]
@@ -1582,6 +1592,7 @@ def step_pooled_stardist_one_sample(
                     len(y_v),
                     g_star,
                     tiers=extra_tiers,
+                    pan_organ=PAN_ORGAN,
                 )
             for tier in extra_tiers:
                 try:
@@ -1686,7 +1697,9 @@ def _load_sample_stardist_all_arrays(
     all_h5ad = root / sample / f"{sample}_all_features_stardist.h5ad"
     if not all_h5ad.is_file():
         raise FileNotFoundError(
-            f"{all_h5ad} not found. Run transer_embedding_label_h5ad.py --steps stardist_all_h5ad."
+            f"{all_h5ad} not found. Run "
+            "code/CODEX_hcc/transer_embedding_label_h5ad.py "
+            f"--sample {sample} --steps stardist_all_h5ad."
         )
     adata = ad.read_h5ad(all_h5ad)
     spatial = adata.obsm.get("spatial")

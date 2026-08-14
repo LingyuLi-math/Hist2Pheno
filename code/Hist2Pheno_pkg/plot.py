@@ -1,3 +1,6 @@
+## 2026.08.13, add function for visualize_celltype_spatial_distribution_all on HCC dataset
+## 2026.08.13, adjust the code to fit pan_organ and scheme_for_pan_organ and resolve_effective_scheme for CODEX ESCC and Xenium Lung dataset
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
@@ -5,6 +8,48 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import glob
+
+
+## 2026.08.13, add plotting_palettes for HCC dataset
+from plotting_palettes import (
+    LINEAGE_COLORS,
+    _LEVEL0_SPATIAL_DISTINCT_RGBA,
+    _LEVEL01_SPATIAL_DISTINCT_RGBA,
+    _LEVEL1_SPATIAL_DISTINCT_RGBA,
+    _LEVEL12_SPATIAL_DISTINCT_RGBA,
+    _NCRT_FINE_CELLTYPE_ORDER,
+    build_ncrt_spatial_color_map,
+    ncrt_roc_color_overrides,
+    is_known_scheme,
+    normalize_color_rgba,
+    normalize_tier,
+    resolve_palette,
+    resolve_roc_colors,
+    resolve_effective_scheme,
+)
+from plotting_utils import (
+    celltype_counts_from_df,
+    format_cell_count_label,
+    plot_celltype_count_bars,
+    plot_celltype_proportions_stacked,
+    plot_final_ct_by_lineage,
+    pooled_celltype_counts,
+)
+
+def _head_for_celltype_col(celltype_col: str, *, pan_organ: str) -> str:
+    """Map a column/tier hint to a five-head key (l2/l1/l12/l3/l4)."""
+    tier = normalize_tier(celltype_col, dataset=pan_organ)
+    if tier == "fine":
+        return "l2"
+    if tier in ("lineage", "coarse"):
+        return "l1"
+    if tier == "intermediate":
+        return "l12"
+    if tier == "cniche":
+        return "l3"
+    # ESCC "lineage_bucket" or Xenium "tniche" are both the level4 head slot.
+    return "l4"
+
 
 
 ## for AI edit
@@ -214,152 +259,27 @@ def visualize_all_celltype_distributions(base_path='Collaborate/esccAI/data/code
     print(f"\nAll visualizations completed! PDF files are saved in: {base_path}")
 
 
-# Level0 spatial (coarse compartment; codex_meta_celltype_level012.csv).
-_LEVEL0_SPATIAL_DISTINCT_RGBA = {
-    "Immune": (82/255, 182/255, 174/255, 1.0),     # #52B6AE
-    "Stromal": (240/255, 180/255, 70/255, 1.0),    # #F0B446
-    "Tumor": (255/255, 248/255, 0/255, 1.0),       # #FFF800
-    "Epithelial": (114/255, 9/255, 101/255, 1.0),  # #720965
-}
-
-# Level01 spatial (lineage bucket: B / T / Stromal / Myeloid / Tumor / Epithelial).
-_LEVEL01_SPATIAL_DISTINCT_RGBA = {
-    "B": (234/255, 107/255, 168/255, 1.0),         # #EA6BA8
-    "T": (47/255, 14/255, 181/255, 1.0),           # #2F0EB5
-    "Stromal": (240/255, 180/255, 70/255, 1.0),    # #F0B446
-    "Myeloid": (82/255, 182/255, 174/255, 1.0),    # #52B6AE, same as level1 Myeloid
-    "Immune": (82/255, 182/255, 174/255, 1.0),     # legacy alias for older level012 CSVs
-    "Tumor": (255/255, 248/255, 0/255, 1.0),       # #FFF800
-    "Epithelial": (114/255, 9/255, 101/255, 1.0),  # #720965
-}
-
-# Level1 spatial / summary (user hex → RGBA in [0,1] for matplotlib).
-_LEVEL1_SPATIAL_DISTINCT_RGBA = {
-    "Epithelial": (114/255, 9/255, 101/255, 1.0),  # #720965
-    "Tumor": (255/255, 248/255, 0/255, 1.0),       # #FFF800
-    "Stromal": (240/255, 180/255, 70/255, 1.0),    # #F0B446
-    "Myeloid": (82/255, 182/255, 174/255, 1.0),    # #52B6AE
-    "CD8+T": (47/255, 14/255, 181/255, 1.0),       # #2F0EB5
-    "CD4+T": (5/255, 247/255, 15/255, 1.0),        # #05F70F
-    "B": (234/255, 107/255, 168/255, 1.0),         # #EA6BA8
-}
-
-# celltype_level12 buckets (codex_meta_celltype_level012.csv); distinct from tab20 fallbacks.
-_LEVEL12_SPATIAL_DISTINCT_RGBA = {
-    "B_other": (234/255, 107/255, 168/255, 1.0),      # #EA6BA8, B-lineage
-    "B_plasma": (196/255, 69/255, 140/255, 1.0),      # #C4458C
-    "CD4_Tconv": (5/255, 247/255, 15/255, 1.0),       # #05F70F
-    "CD4_Treg": (10/255, 143/255, 60/255, 1.0),       # #0A8F3C
-    "CD8_Other": (47/255, 14/255, 181/255, 1.0),      # #2F0EB5
-    "CD8_Effector": (26/255, 188/255, 156/255, 1.0),  # #1ABC9C
-    "Stromal_other": (240/255, 180/255, 70/255, 1.0), # #F0B446
-    "Macrophage": (82/255, 182/255, 174/255, 1.0),    # #52B6AE
-    "Dendritic": (142/255, 68/255, 173/255, 1.0),     # #8E44AD
-    "Myeloid_other": (230/255, 126/255, 34/255, 1.0), # #E67E22
-    "Tumor": (255/255, 248/255, 0/255, 1.0),          # #FFF800
-    "Epithelial": (114/255, 9/255, 101/255, 1.0),     # #720965
-}
-
-
-# Fine-grained NCRT celltype list (stable tab20 assignment order; same as spatial plots).
-_NCRT_FINE_CELLTYPE_ORDER = [
-    "Treg", "Bn", "B_other", "CD4_Tn", "Endothelial", "CAF_other",
-    "Bm_switched", "CD8_Tn", "Tfh_CXCL13", "CAF_ap", "pDC", "CD4_Tex",
-    "Th17", "Macro_other", "B_proliferating", "CD4_Tcm", "Neutrophil",
-    "Tfh_CXCR5", "Tfh_CXCL13_CXCR5", "HEV", "Monocyte", "Muscle&mCAF",
-    "CD8_Trm", "CD4_Tem", "CD8_Tpex", "Plasma", "CD8_Tem", "CD8_Teff",
-    "DC_mature", "cDC2", "cDC1", "CD8_Trm_ex", "CD8_Tex",
-    "non_specific", "Macro_M1", "Low_quality", "Epithelial",
-    "Tumor_PDL1pos_MHCIpos", "Tumor_PDL1neg_MHCIpos", "Bm_unswitched",
-    "Tumor_PDL1neg_MHCIneg", "Tumor_PDL1pos_MHCIneg",
-    "Epithelial", "Stromal", "Myeloid", "CD8+T", "Tumor", "CD4+T", "B",
-]
-
-
-def build_ncrt_spatial_color_map(celltype_col="celltype"):
-    """
-    Label -> RGBA map used by ``plot_celltype_spatial_distribution`` (``spatial_color_scheme='ncrt'``).
-
-    ``celltype_col`` selects the tier palette: ``celltype``, ``celltype_level1``,
-    ``celltype_level12``, ``celltype_level0``, or ``celltype_level01``.
-    """
-    import numpy as np
-
-    if celltype_col == "celltype_level0":
-        return dict(_LEVEL0_SPATIAL_DISTINCT_RGBA)
-    if celltype_col == "celltype_level01":
-        return dict(_LEVEL01_SPATIAL_DISTINCT_RGBA)
-    if celltype_col == "celltype_level1":
-        return dict(_LEVEL1_SPATIAL_DISTINCT_RGBA)
-    if celltype_col == "celltype_level12":
-        return dict(_LEVEL12_SPATIAL_DISTINCT_RGBA)
-
-    all_celltypes = list(_NCRT_FINE_CELLTYPE_ORDER)
-    level1_custom_colors = dict(_LEVEL1_SPATIAL_DISTINCT_RGBA)
-    colors_tab20 = plt.cm.tab20(np.linspace(0, 1, 20))
-    colors_tab20b = plt.cm.tab20b(np.linspace(0, 1, 20))
-    colors_set1 = plt.cm.Set1(np.linspace(0, 1, 10))
-    all_colors = np.vstack([colors_tab20, colors_tab20b, colors_set1])
-    while len(all_colors) < len(all_celltypes):
-        all_colors = np.vstack([all_colors, np.array([[0.5, 0.5, 0.5, 1.0]])])
-    for i in range(len(all_colors)):
-        r, g, b, a = all_colors[i]
-        brightness = (r + g + b) / 3.0
-        if brightness > 0.75:
-            factor = 0.6 if brightness > 0.85 else 0.75
-            all_colors[i] = (r * factor, g * factor, b * factor, a)
-    fixed_color_map = dict(zip(all_celltypes, all_colors))
-    fixed_color_map.update(level1_custom_colors)
-    fixed_color_map.update(_LEVEL12_SPATIAL_DISTINCT_RGBA)
-    return fixed_color_map
-
-
-def ncrt_roc_color_overrides(class_names, celltype_col="celltype"):
-    """Per-class RGBA list aligned with NCRT spatial colors (for ``class_color_overrides``)."""
-    color_map = build_ncrt_spatial_color_map(celltype_col)
-    gray = (0.5, 0.5, 0.5, 1.0)
-    return {str(nm): tuple(color_map.get(str(nm), gray)[:4]) for nm in class_names}
-
-
-
 ########################################################
 # 2026.06.24: Xenium spatial color overrides 
 ########################################################
-def _import_xenium_spatial_color_module():
-    """Import Xenium lung spatial palette helpers (module was renamed)."""
-    import sys
-    from pathlib import Path
-
-    _xdir = Path(__file__).resolve().parent.parent / "Xenium_lung"
-    if _xdir.is_dir() and str(_xdir) not in sys.path:
-        sys.path.insert(0, str(_xdir))
-    for mod_name in ("plot_HEanno_spatial_labels", "plot_spatial_he_labels"):
-        try:
-            return __import__(mod_name)
-        except ImportError:
-            continue
-    raise ImportError("plot_HEanno_spatial_labels not found under code/Xenium_lung/")
-
-
 def build_xenium_spatial_color_overrides(
     class_names,
-    spatial_color_scheme="xenium_ct",
+    spatial_color_scheme="xenium_lung_fine",
 ):
     """Fixed label→RGBA map for all training classes (pred/true panels share colors)."""
-    scheme = (spatial_color_scheme or "xenium_ct").lower()
-    if scheme not in ("xenium", "xenium_auto", "xenium_lineage", "xenium_ct"):
+    scheme = (spatial_color_scheme or "xenium_lung_fine").strip()
+    scheme_key = scheme.lower()
+    if not is_known_scheme(scheme_key):
         return None
-    try:
-        mod = _import_xenium_spatial_color_module()
-        tier = "lineage" if scheme == "xenium_lineage" else "ct" if scheme == "xenium_ct" else "auto"
-        return mod.resolve_xenium_spatial_color_overrides(
-            class_names,
-            tier=tier,
-            canonical_labels=class_names,
-        )
-    except Exception as exc:
-        print(f"  ⚠ Could not build Xenium spatial colors ({exc}); using NCRT/default map.")
+    # Only Xenium schemes are supported here (used by legacy Xenium helpers).
+    from plotting_palettes import normalize_dataset_id
+    if normalize_dataset_id(scheme=scheme_key) != "xenium_lung":
         return None
+    return resolve_palette(
+        class_names,
+        scheme=scheme_key,
+        canonical_labels=class_names,
+    )
 
 
 def _resolve_spatial_color_overrides(
@@ -367,79 +287,98 @@ def _resolve_spatial_color_overrides(
     color_overrides,
     spatial_color_scheme,
     canonical_labels=None,
+    *,
+    pan_organ=None,
+    celltype_col=None,
 ):
-    """Merge explicit overrides with NCRT defaults or Xenium palettes (``plot_HEanno_spatial_labels``)."""
-    scheme = (spatial_color_scheme or "ncrt").lower()
-    if scheme == "ncrt":
+    """Merge explicit overrides with a registered dataset palette."""
+    scheme_in = (spatial_color_scheme or "codex_escc")
+    scheme_key = str(scheme_in).strip().lower()
+    # When pan_organ is set, treat the legacy ESCC default as implicit.
+    if pan_organ is not None and scheme_key in ("codex_escc", "ncrt"):
+        scheme_key = ""
+
+    # ESCC keeps its legacy tier-based color routing via celltype_col.
+    if scheme_key in ("codex_escc", "ncrt") or (
+        not scheme_key and pan_organ is not None and str(pan_organ).strip().lower() in ("codex_escc", "ncrt", "escc")
+    ):
         return color_overrides
-
-    xenium_overrides = None
-    if scheme in ("xenium", "xenium_auto", "xenium_lineage", "xenium_ct"):
-        try:
-            mod = _import_xenium_spatial_color_module()
-            tier = "lineage" if scheme == "xenium_lineage" else "ct" if scheme == "xenium_ct" else "auto"
-            xenium_overrides = mod.resolve_xenium_spatial_color_overrides(
-                unique_celltypes,
-                tier=tier,
-                canonical_labels=canonical_labels,
-            )
-        except Exception as exc:
-            print(f"  ⚠ Could not load Xenium spatial colors ({exc}); using NCRT/default map.")
-
-    if xenium_overrides and color_overrides:
-        merged = dict(xenium_overrides)
-        merged.update(color_overrides)
-        return merged
-    return xenium_overrides or color_overrides
+    # Resolve either through the explicit scheme, or via pan_organ + inferred head.
+    if scheme_key and not is_known_scheme(scheme_key):
+        return color_overrides
+    head = "l2"
+    if pan_organ is not None and celltype_col is not None:
+        head = _head_for_celltype_col(str(celltype_col), pan_organ=str(pan_organ))
+    effective = resolve_effective_scheme(
+        pan_organ=pan_organ,
+        head=head,
+        spatial_color_scheme=scheme_key or None,
+        legacy_default_scheme=scheme_in,
+    )
+    if effective is None:
+        return color_overrides
+    return resolve_palette(
+        unique_celltypes,
+        scheme=effective,
+        canonical_labels=canonical_labels,
+        color_overrides=color_overrides,
+        pan_organ=pan_organ,
+    )
     
 ########################################################
 
 def _roc_colors_for_class_names(
     class_names,
-    roc_color_scheme="ncrt",
+    roc_color_scheme="codex_escc",
     class_color_overrides=None,
     ncrt_color_tier="celltype",
+    *,
+    pan_organ=None,
+    color_tier=None,
 ):
     """
     Per-class RGBA colors for ROC curves (index ``i`` = ``class_names[i]``).
 
-    ``ncrt`` uses the same label->RGBA map as ``plot_celltype_spatial_distribution``
-    (``build_ncrt_spatial_color_map``). ``xenium_ct`` / ``xenium_lineage`` match Xenium spatial.
+    ``codex_escc`` uses the same label->RGBA map as
+    ``plot_celltype_spatial_distribution``; ``ncrt`` and the legacy Xenium
+    scheme IDs remain backward-compatible aliases.
     """
-    import numpy as np
-
     names = [str(c) for c in class_names]
-    n = len(names)
-    overrides = class_color_overrides
-    scheme = (roc_color_scheme or "ncrt").lower()
+    scheme_in = (roc_color_scheme or "codex_escc")
+    scheme_key = str(scheme_in).strip().lower()
+    if pan_organ is not None and scheme_key in ("codex_escc", "ncrt"):
+        scheme_key = ""
 
-    if overrides is None and scheme == "ncrt":
-        overrides = ncrt_roc_color_overrides(names, celltype_col=ncrt_color_tier or "celltype")
-
-    if overrides:
-        out = []
-        for nm in names:
-            t = overrides.get(nm, (0.5, 0.5, 0.5, 1.0))
-            t = tuple(t)
-            if len(t) == 3:
-                out.append((float(t[0]), float(t[1]), float(t[2]), 1.0))
-            else:
-                out.append(tuple(float(x) for x in t[:4]))
-        return out
-
-    if scheme in ("xenium", "xenium_auto", "xenium_ct", "xenium_lineage"):
-        sch = "xenium_auto" if scheme == "xenium" else scheme
-        xenium_overrides = _resolve_spatial_color_overrides(names, None, sch)
-        if xenium_overrides:
-            return [
-                tuple(xenium_overrides[nm][:4]) if nm in xenium_overrides else (0.5, 0.5, 0.5, 1.0)
-                for nm in names
-            ]
-
-    colors_tab20 = plt.cm.tab20(np.linspace(0, 1, 20))
-    colors_tab20b = plt.cm.tab20b(np.linspace(0, 1, 20))
-    pool = np.vstack([colors_tab20, colors_tab20b])
-    return [tuple(pool[i % len(pool)]) for i in range(n)]
+    tier_hint = color_tier if color_tier is not None else ncrt_color_tier
+    head = "l2"
+    if pan_organ is not None and tier_hint is not None:
+        head = _head_for_celltype_col(str(tier_hint), pan_organ=str(pan_organ))
+    effective = resolve_effective_scheme(
+        pan_organ=pan_organ,
+        head=head,
+        roc_color_scheme=scheme_key or None,
+        legacy_default_scheme=scheme_in,
+    )
+    if effective is None:
+        effective = scheme_in
+    eff_key = str(effective).strip().lower()
+    if not is_known_scheme(eff_key) and pan_organ is None:
+        # Maintain legacy fallback (Xenium fine) for completely unknown schemes.
+        return resolve_roc_colors(
+            names,
+            dataset="xenium_lung",
+            tier="fine",
+            canonical_labels=names,
+            color_overrides=class_color_overrides,
+        )
+    return resolve_roc_colors(
+        names,
+        scheme=eff_key if is_known_scheme(eff_key) else None,
+        tier=tier_hint if eff_key in ("codex_escc", "ncrt") else None,
+        canonical_labels=names,
+        color_overrides=class_color_overrides,
+        pan_organ=pan_organ,
+    )
 
 
 def plot_celltype_spatial_distribution(
@@ -453,7 +392,8 @@ def plot_celltype_spatial_distribution(
     format='pdf',
     save_path=None,
     color_overrides=None,
-    spatial_color_scheme="ncrt",
+    spatial_color_scheme="codex_escc",
+    pan_organ=None,
     title=None,
     show=True,
     show_grid=True,
@@ -474,11 +414,15 @@ def plot_celltype_spatial_distribution(
     s: float, point size, default is 1
     color_overrides: dict[str, tuple] optional mapping celltype name -> RGBA (r,g,b,a) in [0,1];
         applied after the default tab20 map so level1 plots can use maximally distinct hues.
-    spatial_color_scheme: ``ncrt`` (default, unchanged NCRT behavior), ``xenium_lineage``,
-        ``xenium_ct``, or ``xenium_auto`` (lineage colors for 4-class labels else tab20 CT colors).
+    spatial_color_scheme: ``codex_escc`` (default; ``ncrt`` is an alias),
+        Xenium schemes (``xenium_lung_fine``, ``xenium_lung_intermediate``,
+        ``xenium_lung_coarse``, ``xenium_lung_CNiche``, ``xenium_lung_TNiche``),
+        or CODEX HCC schemes (``codex_hcc``, ``codex_hcc_fine``,
+        ``codex_hcc_intermediate``, ``codex_hcc_coarse``).
     title: optional plot title (default ``{celltype_col} Spatial Distribution``).
     show: call ``plt.show()`` when True; set False when saving only (avoids duplicate Jupyter display).
-    show_grid: draw axis grid when True (default True for legacy NCRT plots).
+    show_grid: draw axis grid when True (default True for CODEX ESCC plots,
+        including the legacy ``ncrt`` scheme alias).
     axes_size: optional ``(width_in, height_in)`` of the **scatter panel only**; legend is
         placed in extra margin to the right so panel size stays fixed across tiers / ROIs.
     legend_width_in: horizontal inches reserved for legend when *axes_size* is set.
@@ -489,7 +433,22 @@ def plot_celltype_spatial_distribution(
     """
     import numpy as np
 
-    fixed_color_map = build_ncrt_spatial_color_map(celltype_col)
+    # Determine effective scheme. When pan_organ is set, treat the legacy ESCC
+    # default as implicit so callers can set only pan_organ.
+    scheme_in = spatial_color_scheme
+    scheme_key = str(scheme_in or "codex_escc").strip().lower()
+    if pan_organ is not None and scheme_key in ("codex_escc", "ncrt"):
+        scheme_key = ""
+    head = "l2"
+    if pan_organ is not None:
+        head = _head_for_celltype_col(str(celltype_col), pan_organ=str(pan_organ))
+    effective_scheme = resolve_effective_scheme(
+        pan_organ=pan_organ,
+        head=head,
+        spatial_color_scheme=scheme_key or None,
+        legacy_default_scheme=scheme_in,
+    ) or scheme_in
+    eff_key = str(effective_scheme).strip().lower()
 
     # Remove rows with missing coordinates
     celltype_df_clean = celltype_df.dropna(subset=[x_col, y_col])
@@ -502,31 +461,24 @@ def plot_celltype_spatial_distribution(
     
     # Use fixed color mapping for cell types that exist in the data
     # For any cell types not in the fixed list, use a default color (gray)
-    color_map = {}
-    for ct in unique_celltypes:
-        if ct in fixed_color_map:
-            color_map[ct] = fixed_color_map[ct]
-        else:
-            color_map[ct] = (0.5, 0.5, 0.5, 1.0)  # Gray color for unknown cell types
-
-    scheme = (spatial_color_scheme or "ncrt").lower()
-    if color_overrides and scheme != "ncrt":
-        # Caller supplied a fixed label→RGBA map (e.g. all training class_names).
-        scheme_overrides = dict(color_overrides)
+    if eff_key in ("codex_escc", "ncrt"):
+        fixed_color_map = build_ncrt_spatial_color_map(celltype_col)
+        color_map = {
+            ct: fixed_color_map.get(ct, (0.5, 0.5, 0.5, 1.0))
+            for ct in unique_celltypes
+        }
+        if color_overrides:
+            for k, v in color_overrides.items():
+                if v is not None:
+                    color_map[str(k)] = normalize_color_rgba(v)
     else:
-        scheme_overrides = _resolve_spatial_color_overrides(
+        color_map = resolve_palette(
             unique_celltypes,
-            color_overrides,
-            spatial_color_scheme,
+            scheme=eff_key if is_known_scheme(eff_key) else None,
+            canonical_labels=unique_celltypes,
+            color_overrides=color_overrides,
+            pan_organ=pan_organ,
         )
-    if scheme_overrides:
-        for k, v in scheme_overrides.items():
-            if v is not None:
-                t = tuple(v)
-                if len(t) == 3:
-                    color_map[k] = (float(t[0]), float(t[1]), float(t[2]), 1.0)
-                else:
-                    color_map[k] = tuple(float(x) for x in t[:4])
 
     # Create the figure — fixed scatter panel or legacy full-figsize layout
     n_types = len(unique_celltypes)
@@ -1131,6 +1083,8 @@ def plot_level1_spatial_distribution(
     fig_size=(12, 10),
     spatial_point_size=0.6,
     spatial_color_scheme="auto",
+    color_overrides=None,
+    pan_organ=None,
     show=True,
     X_coords_matched=None,
     y_level1_f=None,
@@ -1153,7 +1107,10 @@ def plot_level1_spatial_distribution(
         plot_celltype_spatial_distribution (function): Plotting function.
         save_path_pred (str or None): Path for saving prediction spatial plot.
         save_path_true (str or None): Path for saving true spatial plot.
-        spatial_color_scheme: ``ncrt``, ``xenium_lineage``, or ``auto`` (lineage names → Xenium colors).
+        spatial_color_scheme: ``codex_escc`` (alias ``ncrt``), ``xenium_lung_coarse``,
+            or ``auto`` (lineage names → Xenium colors).
+        color_overrides: optional label-to-color mapping. Hex strings and matplotlib-compatible
+            colors are accepted and applied to both predicted and true panels.
         show: display figures in the notebook (still saves when ``save_path_*`` is set).
         X_coords_matched: optional (N,2) array; overrides ``X_coords`` from npz when lengths must
             match ``all_preds`` from ``cv_data`` filtering.
@@ -1252,33 +1209,46 @@ def plot_level1_spatial_distribution(
 
     sch = (spatial_color_scheme or "auto").lower()
     if sch == "auto":
-        try:
-            mod = _import_xenium_spatial_color_module()
-            l1_scheme = (
-                "xenium_lineage"
-                if set(str(c) for c in class_names_level1) <= set(mod.LINEAGE_COLORS.keys())
-                else "ncrt"
+        if pan_organ is not None:
+            l1_scheme = resolve_effective_scheme(
+                pan_organ=pan_organ,
+                head="l1",
+                legacy_default_scheme="codex_escc",
             )
-        except Exception:
-            l1_scheme = "ncrt"
+        else:
+            l1_scheme = (
+                "xenium_lung_coarse"
+                if set(str(c) for c in class_names_level1) <= set(LINEAGE_COLORS)
+                else "codex_escc"
+            )
     else:
         l1_scheme = sch
 
-    if l1_scheme in ("xenium", "xenium_auto", "xenium_lineage", "xenium_ct"):
-        l1_color_overrides = build_xenium_spatial_color_overrides(
-            class_names_level1,
-            spatial_color_scheme=l1_scheme,
-        )
-        if l1_scheme == "xenium_lineage":
-            print("  Level1 spatial plot: Xenium lineage colors (final_lineage palette).")
-    else:
+    ## 2026.08.13 LLY, add color_overrides for HCC dataset
+    if color_overrides:
+        from matplotlib.colors import to_rgba
+
         l1_color_overrides = {
-            str(n): _LEVEL1_SPATIAL_DISTINCT_RGBA[n]
-            for n in class_names_level1
-            if n in _LEVEL1_SPATIAL_DISTINCT_RGBA
+            str(name): to_rgba(color)
+            for name, color in color_overrides.items()
+            if str(name) in {str(x) for x in class_names_level1}
         }
-        if l1_color_overrides:
-            print(f"  Level1 spatial plot: NCRT distinct palette for {len(l1_color_overrides)} class name(s).")
+        print(
+            "  Level1 spatial plot: explicit color map for "
+            f"{len(l1_color_overrides)} class name(s)."
+        )
+    else:
+        l1_color_overrides = resolve_palette(
+            class_names_level1,
+            scheme=str(l1_scheme).strip().lower(),
+            tier="celltype_level1" if str(l1_scheme).strip().lower() in ("codex_escc", "ncrt") else None,
+            canonical_labels=class_names_level1,
+            pan_organ=pan_organ,
+        )
+        if str(l1_scheme).strip().lower() in ("xenium_lung_coarse", "xenium_lineage"):
+            print("  Level1 spatial plot: Xenium lineage colors (final_lineage palette).")
+        elif str(l1_scheme).strip().lower() in ("codex_escc", "ncrt"):
+            print("  Level1 spatial plot: CODEX ESCC lineage palette (celltype_level1).")
 
     plot_celltype_spatial_distribution(
         pred_df_l1,
@@ -1292,6 +1262,7 @@ def plot_level1_spatial_distribution(
         save_path=save_path_pred,
         color_overrides=l1_color_overrides or None,
         spatial_color_scheme=l1_scheme,
+        pan_organ=pan_organ,
         title=title_pred or "Predicted level1 spatial distribution",
         show=show,
     )
@@ -1311,6 +1282,7 @@ def plot_level1_spatial_distribution(
             save_path=save_path_true,
             color_overrides=l1_color_overrides or None,
             spatial_color_scheme=l1_scheme,
+            pan_organ=pan_organ,
             title=title_true or "True level1 spatial distribution",
             show=show,
         )
@@ -1331,6 +1303,7 @@ def plot_tier_spatial_distribution(
     spatial_color_scheme="xenium_auto",
     celltype_col="celltype",
     color_overrides=None,
+    pan_organ=None,
     show=True,
     X_coords_matched=None,
     y_tier_f=None,
@@ -1345,20 +1318,36 @@ def plot_tier_spatial_distribution(
         class_names: label encoder ``classes_`` for this tier.
         y_tier_f: optional string labels (e.g. ``cv_data['y_level12_f']``) for ground-truth panel.
         spatial_color_scheme: passed to ``plot_celltype_spatial_distribution`` (``xenium_auto`` default).
-        celltype_col: NCRT color-tier hint (``celltype_level0`` / ``celltype_level01`` /
-            ``celltype_level12``). DataFrame columns remain ``celltype`` / ``true_celltype``.
+        celltype_col: CODEX ESCC color-tier hint (legacy ``ncrt`` behavior;
+            ``celltype_level0`` / ``celltype_level01`` / ``celltype_level12``).
+            DataFrame columns remain ``celltype`` / ``true_celltype``.
         color_overrides: optional label→RGBA map; when set, overrides ``celltype_col`` defaults.
     """
     import pandas as pd
 
-    _tier_color_maps = {
-        "celltype_level0": _LEVEL0_SPATIAL_DISTINCT_RGBA,
-        "celltype_level01": _LEVEL01_SPATIAL_DISTINCT_RGBA,
-        "celltype_level1": _LEVEL1_SPATIAL_DISTINCT_RGBA,
-        "celltype_level12": _LEVEL12_SPATIAL_DISTINCT_RGBA,
-    }
+    scheme_in = spatial_color_scheme
+    scheme_key = str(scheme_in or "xenium_auto").strip().lower()
+    # When pan_organ is set, allow it to override the legacy ESCC default.
+    if pan_organ is not None and scheme_key in ("codex_escc", "ncrt"):
+        scheme_key = ""
+    head = "l2"
+    if pan_organ is not None:
+        head = _head_for_celltype_col(str(celltype_col), pan_organ=str(pan_organ))
+    effective = resolve_effective_scheme(
+        pan_organ=pan_organ,
+        head=head,
+        spatial_color_scheme=scheme_key or None,
+        legacy_default_scheme=scheme_in,
+    ) or scheme_in
+    eff_key = str(effective).strip().lower()
     if color_overrides is None:
-        color_overrides = _tier_color_maps.get(celltype_col)
+        color_overrides = resolve_palette(
+            class_names,
+            scheme=eff_key if is_known_scheme(eff_key) else None,
+            tier=celltype_col if eff_key in ("codex_escc", "ncrt") else None,
+            canonical_labels=class_names,
+            pan_organ=pan_organ,
+        )
 
     pred_enc = np.asarray(pred_encoded, dtype=np.int64)
     names = list(class_names)
@@ -1416,8 +1405,9 @@ def plot_tier_spatial_distribution(
         s=spatial_point_size,
         format="jpg",
         save_path=save_path_pred,
-        spatial_color_scheme=spatial_color_scheme,
+        spatial_color_scheme=eff_key,
         color_overrides=color_overrides,
+        pan_organ=pan_organ,
         title=title_pred or "Predicted spatial distribution",
         show=show,
     )
@@ -1435,8 +1425,9 @@ def plot_tier_spatial_distribution(
             s=spatial_point_size,
             format="jpg",
             save_path=save_path_true,
-            spatial_color_scheme=spatial_color_scheme,
+            spatial_color_scheme=eff_key,
             color_overrides=color_overrides,
+            pan_organ=pan_organ,
             title=title_true or "Ground-truth spatial distribution",
             show=show,
         )
@@ -3047,9 +3038,11 @@ def plot_multiclass_roc_curves(
     figsize=(5, 5),
     dpi=300,
     threshold_marker=0.5,
-    roc_color_scheme="ncrt",
+    roc_color_scheme="codex_escc",
     class_color_overrides=None,
     ncrt_color_tier="celltype",
+    pan_organ=None,
+    color_tier=None,
 ):
     """
     One-vs-rest ROC for multiclass cell typing: one curve per class (where defined).
@@ -3068,13 +3061,15 @@ def plot_multiclass_roc_curves(
         threshold is closest to this value (OvR score for the positive class), similar
         to a binary ROC operating point. Use ``None`` to disable markers.
     roc_color_scheme : str
-        ``ncrt`` (same colors as NCRT spatial plots via ``ncrt_color_tier``) or
-        ``xenium_ct`` / ``xenium_lineage`` / ``xenium_auto``.
+        ``codex_escc`` (same colors as CODEX ESCC spatial plots via the legacy
+        ``ncrt_color_tier`` argument), its ``ncrt`` alias, a Xenium scheme, or
+        a ``codex_hcc_*`` scheme.
     class_color_overrides : dict[str, tuple] optional
         Explicit label -> RGBA; overrides ``roc_color_scheme`` / ``ncrt_color_tier``.
     ncrt_color_tier : str
-        When ``roc_color_scheme='ncrt'``, tier hint matching spatial ``celltype_col``
-        (``celltype``, ``celltype_level1``, ``celltype_level12``, etc.).
+        When ``roc_color_scheme`` is ``codex_escc`` or its ``ncrt`` alias, tier
+        hint matching spatial ``celltype_col`` (``celltype``,
+        ``celltype_level1``, ``celltype_level12``, etc.).
     figsize : (float, float)
         ``(figure_width_inches, roc_square_inches)``. The second value is the side
         length of the **square** ROC panel (height = width in data space, in inches).
@@ -3163,11 +3158,34 @@ def plot_multiclass_roc_curves(
         roc_color_scheme=roc_color_scheme,
         class_color_overrides=class_color_overrides,
         ncrt_color_tier=ncrt_color_tier,
+        pan_organ=pan_organ,
+        color_tier=color_tier,
     )
-    if roc_color_scheme and str(roc_color_scheme).lower() == "ncrt":
-        print(f"  ROC colors: ncrt / {ncrt_color_tier} (aligned with spatial palette).")
-    elif roc_color_scheme and str(roc_color_scheme).lower() not in ("ncrt",):
-        print(f"  ROC colors: {roc_color_scheme} (aligned with Xenium spatial palette).")
+    # Keep caller scheme explicit unless pan_organ is used with legacy defaults.
+    _tier_hint = color_tier if color_tier is not None else ncrt_color_tier
+    _scheme_in = (roc_color_scheme or "codex_escc")
+    _scheme_key = str(_scheme_in).strip().lower()
+    if pan_organ is not None and _scheme_key in ("codex_escc", "ncrt"):
+        _scheme_key = ""
+    _head = "l2"
+    if pan_organ is not None and _tier_hint is not None:
+        _head = _head_for_celltype_col(str(_tier_hint), pan_organ=str(pan_organ))
+    _eff = resolve_effective_scheme(
+        pan_organ=pan_organ,
+        head=_head,
+        roc_color_scheme=_scheme_key or None,
+        legacy_default_scheme=_scheme_in,
+    ) or _scheme_in
+    _eff_key = str(_eff).strip().lower()
+
+    if _eff_key in ("codex_escc", "ncrt"):
+        alias_note = " (ncrt alias)" if _eff_key == "ncrt" else ""
+        print(
+            f"  ROC colors: codex_escc{alias_note} / {ncrt_color_tier} "
+            "(aligned with spatial palette)."
+        )
+    elif _eff:
+        print(f"  ROC colors: {_eff} (aligned with dataset spatial palette).")
 
     for i, curve in enumerate(sel):
         k, fpr, tpr, ak, thr = curve
@@ -3239,9 +3257,11 @@ def plot_level1_roc_from_level2_scores(
     save_path=None,
     title="Level1 ROC from level2 probabilities",
     max_curves=16,
-    roc_color_scheme="xenium_lineage",
+    roc_color_scheme="codex_escc",
     class_color_overrides=None,
     ncrt_color_tier="celltype_level1",
+    pan_organ=None,
+    color_tier=None,
     y_level1_f=None,
 ):
     """
@@ -3250,6 +3270,9 @@ def plot_level1_roc_from_level2_scores(
 
     Mapping ``child_to_parent`` is inferred from ``(y_encoded_f, y_level1_encoded_f)``
     the same way as ``plot_level1_accuracy_from_level2_predictions``.
+
+    ``ncrt_color_tier`` retains its legacy name for API compatibility; it is
+    the CODEX ESCC tier hint when the canonical ``codex_escc`` scheme is used.
     """
     import numpy as np
 
@@ -3305,6 +3328,8 @@ def plot_level1_roc_from_level2_scores(
         roc_color_scheme=roc_color_scheme,
         class_color_overrides=class_color_overrides,
         ncrt_color_tier=ncrt_color_tier,
+        pan_organ=pan_organ,
+        color_tier=color_tier,
     )
 
 #############################################################
@@ -3323,9 +3348,11 @@ def plot_level1_roc_from_level1_head(
     x_key="X",
     batch_size=1024,
     n_rows_max=None,
-    roc_color_scheme="xenium_lineage",
+    roc_color_scheme="codex_escc",
     class_color_overrides=None,
     ncrt_color_tier="celltype_level1",
+    pan_organ=None,
+    color_tier=None,
     neighbor_index=None,
     X_f=None,
     y_level1_f=None,
@@ -3337,6 +3364,9 @@ def plot_level1_roc_from_level1_head(
 
     If ``n_rows_max`` is set (e.g. ``m`` from ``min(len(probs_l2), len(all_labels))``),
     only the first that many rows are used so ROCs align with truncated L2 scores.
+
+    ``ncrt_color_tier`` retains its legacy name for API compatibility; it is
+    the CODEX ESCC tier hint when the canonical ``codex_escc`` scheme is used.
     """
     import numpy as np
     import torch
@@ -3421,6 +3451,8 @@ def plot_level1_roc_from_level1_head(
         roc_color_scheme=roc_color_scheme,
         class_color_overrides=class_color_overrides,
         ncrt_color_tier=ncrt_color_tier,
+        pan_organ=pan_organ,
+        color_tier=color_tier,
     )
 
 
