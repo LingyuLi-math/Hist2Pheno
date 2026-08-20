@@ -209,6 +209,16 @@ macro-F1 只有 0.1144，差距很大；模型效果判断必须以 CV 指标为
 
 ## Changelog
 
+### 2026-08-20 — HCC rest StarDist-all inference (`stardist_hcc_rest/`)
+
+- `discover_hcc_rest_samples` / `step_pooled_stardist_all_hcc_rest`: the 8
+  `StarDist_Segment` regions **without** CODEX cell-type CSV (not the 36
+  annotated set).
+- Label h5ads are written to
+  `s4769/{save_result}/stardist_hcc_rest/{sample}/`, separate from §5
+  `stardist/`.
+- Notebook `HCC_train_validate_cv_UNIlabel_all.ipynb` §6.
+
 ### 2026-08-14 — HCC histology-derived niche indices (TLS / SRI / TNI)
 
 - Added `code/CODEX_hcc/hcc_histology_derived_niche_index.py`: HCC Level-2

@@ -187,6 +187,13 @@ HEAD_TO_CLASS_NAMES_KEY = {
     "l3": "class_names_level3",
     "l4": "class_names_level4",
 }
+HEAD_DISPLAY_NAMES = {
+    "l2": "L2 celltype (final_CT)",
+    "l1": "L1 lineage (final_lineage)",
+    "l12": "L12 sublineage (final_sublineage)",
+    "l3": "L3 CNiche",
+    "l4": "L4 TNiche",
+}
 
 
 def stardist_all_label_h5ad_path(data_root, sample, save_result="result"):
@@ -201,7 +208,220 @@ def stardist_incomplete_all_label_h5ad_path(data_root, sample, save_result="resu
     """``Data/{save_result}/stardist_Incomplete_Cases/{sample}/{sample}_all_features_stardist_label.h5ad``."""
     result_dir = Path(data_root) / save_result / STARDIST_INCOMPLETE_RESULT_SUBDIR / sample
     return result_dir / f"{sample}{STARDIST_ALL_LABEL_H5AD_SUFFIX}"
+
+
 ########################################################
+## 2026.08.20 LLY: HCC rest (no CODEX annotation) all-nuclei label path
+########################################################
+STARDIST_HCC_REST_RESULT_SUBDIR = "stardist_hcc_rest"
+
+
+def stardist_hcc_rest_all_label_h5ad_path(data_root, sample, save_result="result"):
+    """``s4769/{save_result}/stardist_hcc_rest/{sample}/{sample}_all_features_stardist_label.h5ad``."""
+    result_dir = Path(data_root) / save_result / STARDIST_HCC_REST_RESULT_SUBDIR / sample
+    return result_dir / f"{sample}{STARDIST_ALL_LABEL_H5AD_SUFFIX}"
+########################################################
+
+
+def load_stardist_label_head_predictions(
+    h5ad_path,
+    *,
+    heads: Sequence[str] = ("l2", "l12", "l1"),
+    obsm_key: str = "spatial_HE",
+) -> dict:
+    """Load argmax preds + coords from a StarDist ``*_label.h5ad``.
+
+    Uses ``uns['pred_prob_class_names']`` and ``obs['{head}_prob_{j}']``.
+    """
+    import anndata as ad
+
+    path = Path(h5ad_path)
+    adata = ad.read_h5ad(path)
+    names_map = adata.uns.get("pred_prob_class_names") or {}
+    coords = None
+    for key in (obsm_key, "spatial_HE", "spatial"):
+        if key in adata.obsm:
+            coords = np.asarray(adata.obsm[key], dtype=np.float64)[:, :2]
+            break
+    if coords is None and {"centroid_x", "centroid_y"}.issubset(adata.obs.columns):
+        coords = adata.obs[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
+    if coords is None:
+        raise KeyError(f"{path.name}: no spatial coords in obsm or centroid_x/y.")
+    tiers = {}
+    for head in heads:
+        if head not in names_map:
+            raise KeyError(
+                f"{path.name}: missing head {head!r} in pred_prob_class_names; "
+                f"available={list(names_map)}"
+            )
+        class_names = [str(x) for x in names_map[head]]
+        prob_cols = [f"{head}_prob_{j}" for j in range(len(class_names))]
+        missing = [c for c in prob_cols if c not in adata.obs.columns]
+        if missing:
+            raise ValueError(f"{path.name}: missing {missing[:4]}")
+        probs = adata.obs[prob_cols].to_numpy(dtype=np.float64)
+        tiers[head] = {
+            "class_names": class_names,
+            "pred_encoded": probs.argmax(axis=1).astype(np.int64),
+        }
+    return {
+        "path": path,
+        "coords": coords,
+        "tiers": tiers,
+        "n_obs": int(adata.n_obs),
+    }
+
+
+def plot_stardist_label_spatial_heads(
+    rec: Mapping,
+    *,
+    sample: str,
+    heads: Sequence[str],
+    pan_organ: str,
+    spatial_point_size: float = 0.25,
+    fig_size: tuple[float, float] = (10, 8),
+    show: bool = False,
+    title_prefix: str | None = None,
+) -> dict[str, Path]:
+    """Write one pred-only spatial JPG per head next to the label h5ad."""
+    from plot import plot_celltype_spatial_distribution, plot_tier_spatial_distribution
+
+    save_dir = Path(rec["path"]).parent
+    n_obs = rec.get("n_obs")
+    n_txt = f" (n={n_obs:,})" if n_obs is not None else ""
+    prefix = title_prefix if title_prefix is not None else sample
+    saved = {}
+    for head in heads:
+        out = save_dir / f"{sample}_stardist_pred_{head}.jpg"
+        display = HEAD_DISPLAY_NAMES.get(head, str(head).upper())
+        plot_tier_spatial_distribution(
+            pred_encoded=rec["tiers"][head]["pred_encoded"],
+            class_names=rec["tiers"][head]["class_names"],
+            plot_celltype_spatial_distribution=plot_celltype_spatial_distribution,
+            save_path_pred=str(out),
+            fig_size=fig_size,
+            spatial_point_size=spatial_point_size,
+            spatial_color_scheme=scheme_for_pan_organ(pan_organ, head=head),
+            celltype_col=head,
+            pan_organ=pan_organ,
+            show=show,
+            X_coords_matched=rec["coords"],
+            title_pred=f"{prefix}  StarDist pred {display}{n_txt}",
+        )
+        print(f"  saved {out.name}")
+        saved[head] = out
+    return saved
+
+
+def plot_stardist_label_spatial_overview(
+    loaded: Mapping[str, Mapping],
+    *,
+    heads: Sequence[str],
+    pan_organ: str,
+    save_path=None,
+    point_size: float = 0.5,
+    sample_labels: Mapping[str, str] | None = None,
+    suptitle: str | None = None,
+    show: bool = True,
+):
+    """Compact ``n_samples × n_heads`` pred-only spatial grid."""
+    import matplotlib.pyplot as plt
+    from plotting_palettes import resolve_palette
+
+    samples = list(loaded)
+    n_row, n_col = len(samples), len(heads)
+    if n_row == 0:
+        raise ValueError("loaded is empty")
+    fig, axes = plt.subplots(
+        n_row, n_col, figsize=(4.0 * n_col, 3.2 * n_row), squeeze=False,
+    )
+    for i, sample in enumerate(samples):
+        rec = loaded[sample]
+        xy = rec["coords"]
+        row_label = (sample_labels or {}).get(sample, sample)
+        n_obs = rec.get("n_obs")
+        for j, head in enumerate(heads):
+            ax = axes[i, j]
+            names = rec["tiers"][head]["class_names"]
+            pred = rec["tiers"][head]["pred_encoded"]
+            palette = resolve_palette(
+                names,
+                pan_organ=pan_organ,
+                scheme=scheme_for_pan_organ(pan_organ, head=head),
+            )
+            colors = np.array(
+                [palette.get(names[int(k)], (0.5, 0.5, 0.5, 1.0)) for k in pred]
+            )
+            ax.scatter(
+                xy[:, 0], xy[:, 1], c=colors, s=point_size, alpha=0.7,
+                linewidths=0, rasterized=True,
+            )
+            ax.set_aspect("equal")
+            ax.invert_yaxis()
+            ax.set_xticks([])
+            ax.set_yticks([])
+            if i == 0:
+                ax.set_title(HEAD_DISPLAY_NAMES.get(head, str(head).upper()), fontsize=10)
+            if j == 0:
+                n_txt = f"\nn={n_obs:,}" if n_obs is not None else ""
+                ax.set_ylabel(f"{row_label}{n_txt}", fontsize=8)
+    if suptitle:
+        fig.suptitle(suptitle, fontsize=12, y=1.002)
+    fig.tight_layout()
+    if save_path is not None:
+        out = Path(save_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out, dpi=200, bbox_inches="tight")
+        print(f"Overview → {out}")
+    # Jupyter auto-displays a returned Figure; close after show so the
+    # notebook cell does not render the same overview twice.
+    if show:
+        plt.show()
+        plt.close(fig)
+        return None
+    return fig
+
+
+def plot_stardist_label_spatial_maps(
+    data_root,
+    samples: Sequence[str],
+    save_result: str,
+    *,
+    label_h5ad_path_fn,
+    heads: Sequence[str],
+    pan_organ: str,
+    spatial_point_size: float = 0.25,
+    fig_size: tuple[float, float] = (10, 8),
+    show: bool = False,
+    title_prefix_fn=None,
+    missing_error: str = "No label h5ads. Run the inference cell first.",
+) -> dict[str, dict]:
+    """Load label h5ads and write one pred-only spatial JPG per head."""
+    loaded: dict[str, dict] = {}
+    for sample in samples:
+        path = Path(label_h5ad_path_fn(data_root, sample, save_result))
+        if not path.is_file():
+            print(f"  skip (missing label h5ad): {sample}")
+            continue
+        rec = load_stardist_label_head_predictions(path, heads=heads)
+        rec["sample"] = sample
+        prefix = title_prefix_fn(sample) if title_prefix_fn is not None else sample
+        print(f"  {prefix}: n={rec['n_obs']:,}")
+        plot_stardist_label_spatial_heads(
+            rec,
+            sample=sample,
+            heads=heads,
+            pan_organ=pan_organ,
+            spatial_point_size=spatial_point_size,
+            fig_size=fig_size,
+            show=show,
+            title_prefix=prefix,
+        )
+        loaded[sample] = rec
+    if not loaded:
+        raise FileNotFoundError(missing_error)
+    return loaded
+
 
 def attach_five_head_probs_to_adata_obs(adata, head_probs, g=None, *, cv_data=None):
     """

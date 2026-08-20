@@ -31,7 +31,22 @@ set -euo pipefail
 
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
 SINGLE_SCRIPT="${REPO}/code/CODEX_hcc/demo_GT_feature_extraction_Single.sh"
-PYTHON="/ssd2/users/lingyu/conda_envs/SeededNTM/bin/python"
+if [[ -z "${PYTHON:-}" ]]; then
+  for cand in \
+    /nobackup2/users/lingyu/conda_envs/SeededNTM/bin/python \
+    /ssd2/users/lingyu/conda_envs/SeededNTM/bin/python
+  do
+    if [[ -x "${cand}" ]]; then
+      PYTHON="${cand}"
+      break
+    fi
+  done
+fi
+PYTHON="${PYTHON:-$(command -v python || true)}"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "ERROR: SeededNTM python not found. Activate the env or set PYTHON=..." >&2
+  exit 1
+fi
 S4769="${REPO}/data/CODEX/HCC/Michael_data_transfer/s4769"
 MAPPING_XLSX="${S4769}/HE/s4769_he_mapping_updated_Visium.xlsx"
 STARDIST_ROOT="${STARDIST_ROOT:-${REPO}/data/CODEX/HCC/StarDist_Segment}"

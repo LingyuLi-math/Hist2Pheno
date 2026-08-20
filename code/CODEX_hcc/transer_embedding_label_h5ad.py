@@ -225,9 +225,15 @@ def _write_h5ad(adata: "AnnData", output: Path) -> None:
         if temporary.exists():
             temporary.unlink()
 
+## 2026.08.20 LLY: add aligned_only=False to load all datasets
+def load_acquisition_map(
+    cases_root: Path, *, aligned_only: bool = True
+) -> dict[str, str]:
+    """Load MATCHED_HE -> CODEX_ACQUISITION_ID from the s4769 mapping.
 
-def load_acquisition_map(cases_root: Path) -> dict[str, str]:
-    """Load MATCHED_HE -> CODEX_ACQUISITION_ID from the s4769 mapping."""
+    ``aligned_only=True`` keeps ``ALIGNED=='Y'`` (38 regions). Rest/unaligned
+    HE keys (``ALIGNED=='N'``) are included when ``aligned_only=False``.
+    """
     mapping_csv = cases_root / MAPPING_CSV_NAME
     _require_file(mapping_csv, "HE/CODEX acquisition mapping CSV")
     mapping = pd.read_csv(mapping_csv)
@@ -235,7 +241,7 @@ def load_acquisition_map(cases_root: Path) -> dict[str, str]:
     missing = sorted(required - set(mapping.columns))
     if missing:
         raise KeyError(f"{mapping_csv} is missing columns: {missing}")
-    if "ALIGNED" in mapping.columns:
+    if aligned_only and "ALIGNED" in mapping.columns:
         mapping = mapping[
             mapping["ALIGNED"].astype(str).str.strip().str.upper().eq("Y")
         ]
@@ -253,6 +259,8 @@ def discover_samples(
 ) -> list[str]:
     """Return mapped HCC regions with directories under cases_root."""
     if requested_sample is not None:
+        if requested_sample not in acq_map:
+            acq_map = load_acquisition_map(cases_root, aligned_only=False)
         if requested_sample not in acq_map:
             raise KeyError(
                 f"No CODEX_ACQUISITION_ID for MATCHED_HE={requested_sample!r}"
@@ -666,7 +674,9 @@ def main(argv: list[str] | None = None) -> int:
     cases_root = args.cases_root.expanduser().resolve()
     stardist_root = args.stardist_root.expanduser().resolve()
     steps = resolve_steps(args.steps)
-    acq_map = load_acquisition_map(cases_root)
+    acq_map = load_acquisition_map(
+        cases_root, aligned_only=args.sample is None
+    )
     samples = discover_samples(cases_root, args.sample, acq_map)
 
     print(f"Cases root:     {cases_root}")

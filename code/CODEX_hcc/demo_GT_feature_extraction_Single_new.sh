@@ -29,7 +29,22 @@
 set -euo pipefail
 
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
-PYTHON="/ssd2/users/lingyu/conda_envs/SeededNTM/bin/python"
+if [[ -z "${PYTHON:-}" ]]; then
+  for cand in \
+    /nobackup2/users/lingyu/conda_envs/SeededNTM/bin/python \
+    /ssd2/users/lingyu/conda_envs/SeededNTM/bin/python
+  do
+    if [[ -x "${cand}" ]]; then
+      PYTHON="${cand}"
+      break
+    fi
+  done
+fi
+PYTHON="${PYTHON:-$(command -v python || true)}"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "ERROR: SeededNTM python not found. Activate the env or set PYTHON=..." >&2
+  exit 1
+fi
 ACQ_ID="${ACQ_ID:-FinalLiv-27_c001_v001_r001_reg001}"
 HE_KEY="${HE_KEY:-awy-98938_aligned_0d535a74}"
 S4769="${REPO}/data/CODEX/HCC/Michael_data_transfer/s4769"

@@ -156,6 +156,54 @@ DEFAULT_CODEX_HCC_EXCLUDED_LABELS = ("Unknown", "Stroma Uncharacterized")
 DEFAULT_CELLTYPE_FILTER = DEFAULT_CODEX_HCC_EXCLUDED_LABELS
 DEFAULT_CELLTYPE_FILTER_CODEX_hcc = DEFAULT_CODEX_HCC_EXCLUDED_LABELS
 
+##########################################
+# 2026.08.20, add CODEX_PDAC palettes (s1167 Pancreas TMA)
+##########################################
+Cell_Type_COLORS_CODEX_pdac_level2 = {
+    "Epithelial cells": "#17becf",
+    "Fibroblasts": "#98df8a",
+    "Cytotoxic T cells": "#d62728",
+    "Helper T cells": "#ff7f0e",
+    "Tregs": "#ffbb78",
+    "Macrophages": "#9467bd",
+    "Neutrophils": "#bcbd22",
+    "Dendritic cells": "#8c564b",
+    "B cells": "#f7b6d2",
+    "Plasma cells": "#e377c2",
+    "Lymphatic Endothelial cells": "#aec7e8",
+}
+Cell_Type_COLORS_CODEX_pdac_level1 = {
+    "Stromal": "#98df8a",
+    "T cells": "#ff7f0e",
+    "Myeloid": "#d62728",
+    "Endothelial": "#2ca02c",
+    "Epithelial": "#1f77b4",
+    "B cells": "#f7b6d2",
+}
+Cell_Type_COLORS_CODEX_pdac_level0 = {
+    "Stromal": "#98df8a",
+    "Immune": "#d62728",
+    "Endothelial": "#2ca02c",
+    "Epithelial": "#1f77b4",
+}
+DEFAULT_CODEX_PDAC_EXCLUDED_LABELS = ("Other", "Unannotated")
+
+##########################################
+# 2026.08.20, add CODEX_GIST palettes (s1167 GIST TMA, 550 annotated)
+##########################################
+Cell_Type_COLORS_CODEX_gist_level2 = {
+    **Cell_Type_COLORS_CODEX_pdac_level2,
+    "Endothelial cells": "#1f77b4",
+    "Stromal cells": "#2ca02c",
+    "T cells": "#c44e52",
+    "Monocytes": "#c49c94",
+    "DCs": "#8c564b",
+}
+Cell_Type_COLORS_CODEX_gist_level1 = dict(Cell_Type_COLORS_CODEX_pdac_level1)
+Cell_Type_COLORS_CODEX_gist_level0 = dict(Cell_Type_COLORS_CODEX_pdac_level0)
+DEFAULT_CODEX_GIST_EXCLUDED_LABELS = ("Other", "Unannotated")
+
+
 
 def normalize_color_rgba(color: Any, alpha: float | None = None) -> tuple[float, float, float, float]:
     """Normalize any matplotlib-compatible color to an RGBA float tuple."""
@@ -213,6 +261,8 @@ _DATASET_ALIASES = {
     "xenium": "xenium_lung", "xenium_lung": "xenium_lung",
     "lung": "xenium_lung", "codex": "codex_hcc", "hcc": "codex_hcc",
     "codex_hcc": "codex_hcc",
+    "pdac": "codex_pdac", "codex_pdac": "codex_pdac", "pancreas": "codex_pdac",
+    "gist": "codex_gist", "codex_gist": "codex_gist", "gist_tma": "codex_gist",
 }
 _SCHEME_DEFAULTS = {
     "codex_escc": ("codex_escc", None), "ncrt": ("codex_escc", None),
@@ -227,6 +277,12 @@ _SCHEME_DEFAULTS = {
     "codex_hcc": ("codex_hcc", "auto"), "codex_hcc_fine": ("codex_hcc", "fine"),
     "codex_hcc_intermediate": ("codex_hcc", "intermediate"),
     "codex_hcc_coarse": ("codex_hcc", "coarse"),
+    "codex_pdac": ("codex_pdac", "auto"), "codex_pdac_fine": ("codex_pdac", "fine"),
+    "codex_pdac_intermediate": ("codex_pdac", "intermediate"),
+    "codex_pdac_coarse": ("codex_pdac", "coarse"),
+    "codex_gist": ("codex_gist", "auto"), "codex_gist_fine": ("codex_gist", "fine"),
+    "codex_gist_intermediate": ("codex_gist", "intermediate"),
+    "codex_gist_coarse": ("codex_gist", "coarse"),
 }
 
 
@@ -290,6 +346,20 @@ _PAN_ORGAN_HEAD_SCHEMES: dict[str, dict[str, str]] = {
         # so callers that reuse the extra-tier loops remain stable.
         "l3": "codex_hcc_intermediate",
         "l4": "codex_hcc_intermediate",
+    },
+    "codex_pdac": {
+        "l2": "codex_pdac_fine",
+        "l1": "codex_pdac_coarse",
+        "l12": "codex_pdac_intermediate",
+        "l3": "codex_pdac_intermediate",
+        "l4": "codex_pdac_intermediate",
+    },
+    "codex_gist": {
+        "l2": "codex_gist_fine",
+        "l1": "codex_gist_coarse",
+        "l12": "codex_gist_intermediate",
+        "l3": "codex_gist_intermediate",
+        "l4": "codex_gist_intermediate",
     },
 }
 
@@ -365,11 +435,20 @@ CLINICAL_GROUP_ORDER_BY_ORGAN: dict[str, dict[str, tuple[str, ...]]] = {
         "Response": ("Responder", "Non_Responder"),
         "diagnosis": ("Pre", "Post"),
     },
+    "codex_pdac": {
+        "coverslip": ("c001", "c003", "c005", "c007"),
+        "SAMPLE_LABEL": ("TA-237", "TA-256", "TA-257", "TA-258"),
+    },
+    "codex_gist": {
+        "coverslip": ("c009", "c011", "c013"),
+    },
 }
 
 CLINICAL_COLUMNS_BY_ORGAN: dict[str, tuple[str, ...]] = {
     "xenium_lung": ("Status", "Sample_Affect_Pairing"),
     "codex_hcc": ("Response", "diagnosis", "treatment"),
+    "codex_pdac": ("coverslip", "SAMPLE_LABEL"),
+    "codex_gist": ("coverslip", "SAMPLE_LABEL"),
 }
 
 
@@ -446,6 +525,8 @@ def _infer_tier(labels: list[str], dataset: str) -> str:
         "codex_escc": ("coarse", "lineage_bucket", "lineage", "intermediate", "fine"),
         "xenium_lung": ("lineage", "intermediate", "cniche", "tniche", "fine"),
         "codex_hcc": ("coarse", "intermediate", "fine"),
+        "codex_pdac": ("coarse", "intermediate", "fine"),
+        "codex_gist": ("coarse", "intermediate", "fine"),
     }[dataset]
     label_set = set(labels)
     for candidate in candidates:
@@ -496,6 +577,20 @@ def get_palette(
             "fine": Cell_Type_COLORS, "intermediate": SUBLINEAGE_COLORS,
             "lineage": LINEAGE_COLORS, "coarse": LINEAGE_COLORS,
             "cniche": CNICHE_COLORS, "tniche": TNICHE_COLORS,
+        }.get(semantic_tier)
+    elif dataset_id == "codex_pdac":
+        palette = {
+            "fine": Cell_Type_COLORS_CODEX_pdac_level2,
+            "intermediate": Cell_Type_COLORS_CODEX_pdac_level1,
+            "coarse": Cell_Type_COLORS_CODEX_pdac_level0,
+            "lineage": Cell_Type_COLORS_CODEX_pdac_level0,
+        }.get(semantic_tier)
+    elif dataset_id == "codex_gist":
+        palette = {
+            "fine": Cell_Type_COLORS_CODEX_gist_level2,
+            "intermediate": Cell_Type_COLORS_CODEX_gist_level1,
+            "coarse": Cell_Type_COLORS_CODEX_gist_level0,
+            "lineage": Cell_Type_COLORS_CODEX_gist_level0,
         }.get(semantic_tier)
     else:
         palette = {

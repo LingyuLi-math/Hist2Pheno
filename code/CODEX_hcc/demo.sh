@@ -5,6 +5,9 @@
 
 ## 2026.07.06 LLY: process the CODEX cell type annotation on the HE image
 
+0_Data_process_visual_codex_HEcelltype.ipynb
+  ## Transfer .zarray into .tif
+
 1_s4769_img_cell_mapping.py
   using command: 
   conda run --no-capture-output -n SeededNTM python -u code/CODEX_hcc/1_s4769_img_cell_mapping.py
@@ -35,6 +38,57 @@
   conda run --no-capture-output -n SeededNTM python -u \
     code/CODEX_hcc/transer_embedding_label_h5ad.py \
     --steps stardist_all_h5ad
+
+##############################################################################
+## 2026.08.20 LLY: add stardist_all_h5ad for StarDist predict on all nuclei of 36 StarDist_Segment
+## Call the other six datasets that have no annotations
+
+# cd /home/lingyu/ssd2/Python/Hist2Pheno
+
+# # Extract embeddings first, 
+# for MATCHED_HE in \
+#   awm-10421_aligned_to_FinalLiv-27_c001_v001_r001_reg029 \
+#   awm-10421_aligned_to_FinalLiv-27_c001_v001_r001_reg030 \
+#   mwc-11504_aligned_to_FinalLiv-27_c001_v001_r001_reg031 \
+#   mwc-11504_aligned_to_FinalLiv-27_c001_v001_r001_reg032 \
+#   clk-37422_aligned_to_FinalLiv-27_c002_v001_r001_reg001 \
+#   clk-37422_aligned_to_FinalLiv-27_c002_v001_r001_reg002
+# do
+#   COORD=stardist HE_KEY="$MATCHED_HE" \
+#     bash code/CODEX_hcc/demo_GT_feature_extraction_Single.sh stardist && \
+#   conda run --no-capture-output -n SeededNTM python -u \
+#     code/CODEX_hcc/transer_embedding_label_h5ad.py \
+#     --sample "$MATCHED_HE" \
+#     --steps stardist_all_h5ad \
+#     --stardist-root data/CODEX/HCC/StarDist_Segment
+# done
+
+
+# # then rebuild h5ad:
+# for MATCHED_HE in \
+#   dpn-56105_aligned_93258926 \
+#   xid-87175_aligned_f82fb393 \
+#   awm-10421_aligned_to_FinalLiv-27_c001_v001_r001_reg029 \
+#   awm-10421_aligned_to_FinalLiv-27_c001_v001_r001_reg030 \
+#   mwc-11504_aligned_to_FinalLiv-27_c001_v001_r001_reg031 \
+#   mwc-11504_aligned_to_FinalLiv-27_c001_v001_r001_reg032 \
+#   clk-37422_aligned_to_FinalLiv-27_c002_v001_r001_reg001 \
+#   clk-37422_aligned_to_FinalLiv-27_c002_v001_r001_reg002
+# do
+#   conda run --no-capture-output -n SeededNTM python -u \
+#     code/CODEX_hcc/transer_embedding_label_h5ad.py \
+#     --sample "$MATCHED_HE" \
+#     --steps stardist_all_h5ad \
+#     --stardist-root data/CODEX/HCC/StarDist_Segment
+# done
+
+## Only test one sample (concluded in StarDist_Segment)
+# conda run --no-capture-output -n SeededNTM python -u \
+#   code/CODEX_hcc/transer_embedding_label_h5ad.py \
+#   --sample dpn-56105_aligned_93258926 \
+#   --steps stardist_all_h5ad \
+#   --stardist-root data/CODEX/HCC/StarDist_Segment
+##############################################################################
 
 6_HCC_train_validate_cv_UNIlabel_all.ipynb
   # obtain the StarDist macro AUROC by clinical groups

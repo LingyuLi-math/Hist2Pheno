@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -319,6 +319,86 @@ def analyze_hcc_stardist_macro_auroc_by_clinical(
     kwargs.setdefault("figsize", (15.0, 5.0))
     kwargs.setdefault("legend_ncol", 2)
     return _analyze(stardist_result_root, clinical_info, **kwargs)
+
+
+#####################################################
+# 2026.08.20 rest-region StarDist-all spatial maps
+#####################################################
+def short_matched_he_label(sample: str) -> str:
+    """Short y-axis / title label for a long MATCHED_HE key."""
+    sample = str(sample)
+    prefix = sample.split("_aligned")[0]
+    if "_reg" in sample:
+        return f"{prefix} {sample.rsplit('_', 1)[-1]}"
+    return prefix
+
+
+def plot_hcc_rest_stardist_spatial_maps(
+    data_root,
+    samples: Sequence[str],
+    save_result: str = "result_all_spatial",
+    *,
+    heads: Sequence[str] = HCC_STARDIST_MACRO_AUROC_TIERS,
+    pan_organ: str = "codex_hcc",
+    spatial_point_size: float = 0.25,
+    fig_size: tuple[float, float] = (10, 8),
+    show: bool = False,
+) -> dict[str, dict]:
+    """Full-size pred-only L2/L12/L1 maps for HCC rest label h5ads."""
+    from uni_label_cv_helpers import (
+        plot_stardist_label_spatial_maps,
+        stardist_hcc_rest_all_label_h5ad_path,
+    )
+
+    return plot_stardist_label_spatial_maps(
+        data_root,
+        samples,
+        save_result,
+        label_h5ad_path_fn=stardist_hcc_rest_all_label_h5ad_path,
+        heads=heads,
+        pan_organ=pan_organ,
+        spatial_point_size=spatial_point_size,
+        fig_size=fig_size,
+        show=show,
+        title_prefix_fn=short_matched_he_label,
+        missing_error="No rest label h5ads. Run the §6 inference cell first.",
+    )
+
+
+def plot_hcc_rest_stardist_spatial_overview(
+    loaded: Mapping[str, Mapping],
+    data_root,
+    save_result: str = "result_all_spatial",
+    *,
+    heads: Sequence[str] = HCC_STARDIST_MACRO_AUROC_TIERS,
+    pan_organ: str = "codex_hcc",
+    point_size: float = 0.5,
+    show: bool = True,
+    save_path=None,
+):
+    """8×3 (or n×3) overview of HCC rest predicted spatial maps."""
+    from uni_label_cv_helpers import (
+        STARDIST_HCC_REST_RESULT_SUBDIR,
+        plot_stardist_label_spatial_overview,
+    )
+
+    if save_path is None:
+        save_path = (
+            Path(data_root)
+            / save_result
+            / STARDIST_HCC_REST_RESULT_SUBDIR
+            / "rest_spatial_pred_overview_l2_l12_l1.jpg"
+        )
+    return plot_stardist_label_spatial_overview(
+        loaded,
+        heads=heads,
+        pan_organ=pan_organ,
+        save_path=save_path,
+        point_size=point_size,
+        sample_labels={s: short_matched_he_label(s) for s in loaded},
+        suptitle="HCC rest StarDist-all predicted spatial maps (pred only)",
+        show=show,
+    )
 
 
 # End of s4769 compatibility wrappers.

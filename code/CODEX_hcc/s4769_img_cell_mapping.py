@@ -90,6 +90,7 @@ def load_visium_he_mapping(
 
 
 ## 2026.06.18 LLY — CODEX↔HE alignment (ALIGNED=='Y', 38 regions)
+## 2026.08.14 LLY — optional Annotation=='Y' (36 annotated regions)
 def load_codex_he_alignment(
     sample: str = S4769_SAMPLE,
     base_dir: str | Path = DEFAULT_CODEX_HCC_DIR,
@@ -97,14 +98,20 @@ def load_codex_he_alignment(
     sheet_name: str = DEFAULT_HE_MAPPING_SHEET,
     *,
     aligned_only: bool = True,
+    annotated_only: bool = False,
 ) -> pd.DataFrame:
-    """Load HE↔CODEX mapping table; default keeps ALIGNED=='Y' rows only (38 regions)."""
+    """Load HE↔CODEX mapping table.
+
+    ``aligned_only=True`` keeps ``ALIGNED=='Y'`` (38 regions).
+    ``annotated_only=True`` further keeps ``Annotation=='Y'`` (36 regions).
+    """
     path = he_mapping_path(sample, base_dir, xlsx_name)
     df = pd.read_excel(path, sheet_name=sheet_name)
     if aligned_only:
         df = df[df["ALIGNED"].astype(str).str.upper() == "Y"].copy()
-    df = df.reset_index(drop=True)
-    return df
+    if annotated_only:
+        df = filter_alignment_with_annotation(df)
+    return df.reset_index(drop=True)
 
 
 def load_codex_celltype_hierarchy(
@@ -649,12 +656,13 @@ def summarize_celltype_distributions(
     return table
 
 
+## 2026.08.14 LLY, summarize the CODEX↔HE alignment
 def summarize_codex_he_alignment(
     mapping_df: pd.DataFrame,
     sample: str = S4769_SAMPLE,
     base_dir: str | Path = DEFAULT_CODEX_HCC_DIR,
 ) -> None:
-    """Print CODEX↔HE alignment rows (ALIGNED=='Y') with HE Zarr / Visium CSV checks."""
+    """Print CODEX↔HE alignment rows with HE Zarr / Visium CSV / Annotation checks."""
     print(f"CODEX↔HE alignment rows: {len(mapping_df)}")
     for _, row in mapping_df.iterrows():
         acq_id = str(row["CODEX_ACQUISITION_ID"])
@@ -663,10 +671,13 @@ def summarize_codex_he_alignment(
         he_path = he_img_path(he_key, sample, base_dir)
         vis_path = visium_csv_path(label, sample, base_dir)
         has_visium = str(row.get("Visium", "")).upper() == "Y"
+        has_anno = str(row.get("Annotation", "")).upper() == "Y"
         print(
             f"\n=== {acq_id} | {label} ===\n"
             f"  MATCHED_HE={he_key!r}  exists={he_path.is_dir()}\n"
-            f"  Visium={has_visium}  CSV={vis_path.name!r}  exists={vis_path.is_file()}"
+            f"  ALIGNED={str(row.get('ALIGNED', '')).upper()}  "
+            f"Annotation={has_anno}  Visium={has_visium}  "
+            f"CSV={vis_path.name!r}  exists={vis_path.is_file()}"
         )
 
 

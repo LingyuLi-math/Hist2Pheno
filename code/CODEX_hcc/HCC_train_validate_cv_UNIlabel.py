@@ -25,6 +25,32 @@
 
 
 ## 2026.08.13, add pan_organ for CODEX ESCC and Xenium Lung dataset
+## 2026.08.20, add stardist_all_h5ad for StarDist predict on all nuclei of 36 StarDist_Segment
+# conda run --no-capture-output -n SeededNTM python -u \
+#   code/CODEX_hcc/transer_embedding_label_h5ad.py \
+#   --sample {MATCHED_HE} --steps stardist_all_h5ad \
+#   --stardist-root data/CODEX/HCC/StarDist_Segment
+
+
+# cd /home/lingyu/ssd2/Python/Hist2Pheno
+
+# for MATCHED_HE in \
+#   dpn-56105_aligned_93258926 \
+#   xid-87175_aligned_f82fb393 \
+#   awm-10421_aligned_to_FinalLiv-27_c001_v001_r001_reg029 \
+#   awm-10421_aligned_to_FinalLiv-27_c001_v001_r001_reg030 \
+#   mwc-11504_aligned_to_FinalLiv-27_c001_v001_r001_reg031 \
+#   mwc-11504_aligned_to_FinalLiv-27_c001_v001_r001_reg032 \
+#   clk-37422_aligned_to_FinalLiv-27_c002_v001_r001_reg001 \
+#   clk-37422_aligned_to_FinalLiv-27_c002_v001_r001_reg002
+# do
+#   conda run --no-capture-output -n SeededNTM python -u \
+#     code/CODEX_hcc/transer_embedding_label_h5ad.py \
+#     --sample "$MATCHED_HE" \
+#     --steps stardist_all_h5ad \
+#     --stardist-root data/CODEX/HCC/StarDist_Segment
+# done
+
 
 
 #!/usr/bin/env python3
@@ -156,6 +182,7 @@ from uni_label_cv_helpers import (  # noqa: E402
     discover_stardist_all_h5ad_samples,
     stardist_all_label_h5ad_path,
     stardist_incomplete_all_label_h5ad_path,
+    stardist_hcc_rest_all_label_h5ad_path,
     plot_he_confusion_matrices,
     plot_he_f1_extra_tiers,
     plot_he_spatial_extra_tiers,
@@ -175,6 +202,12 @@ DEFAULT_S4769_ROOT = (
 DEFAULT_CASES_ROOT = DEFAULT_S4769_ROOT / "HE"
 DEFAULT_DATA_ROOT = DEFAULT_S4769_ROOT  # pooled outputs under s4769/{save_result}/
 DEFAULT_STARDIST_ROOT = _REPO_ROOT / "data/CODEX/HCC/StarDist_Segment"
+
+## 2026.08.20, add stardist_all_h5ad for StarDist predict on all nuclei of 36 StarDist_Segment
+STARDIST_ALL_H5AD_SUFFIX = "_all_features_stardist.h5ad"
+STARDIST_HCC_REST_RESULT_SUBDIR = "stardist_hcc_rest"
+INCOMPLETE_CASES_DIRNAME = "Incomplete_Cases"
+
 DEFAULT_PYTHON_ROOT = Path("/home/lingyu/ssd2/Python/")
 DEFAULT_ABLATION_TAG = "D_emph_L2"
 DEFAULT_VAL_SELECTION_METRIC = "three_tier_auc_sum"
@@ -1788,6 +1821,93 @@ def step_pooled_stardist_all(ctx: PooledRunContext) -> None:
             failures.append((sample, str(exc)))
     if failures:
         print(f"\n  StarDist-all failures: {len(failures)}/{len(ctx.samples)}", flush=True)
+
+
+########################################################
+## 2026.08.20 LLY: StarDist all-nuclei inference for 8 HCC rest regions (no CODEX annotation)
+########################################################
+def discover_hcc_rest_samples(
+    cases_root: Path | None = None,
+    stardist_root: Path | None = None,
+    *,
+    require_h5ad: bool = False,
+) -> list[str]:
+    """MATCHED_HE keys in StarDist_Segment that are not among the 36 annotated regions."""
+    cases_root = Path(cases_root or DEFAULT_CASES_ROOT)
+    stardist_root = Path(stardist_root or DEFAULT_STARDIST_ROOT)
+    annotated = {
+        str(k).strip()
+        for k in list_aligned_annotated_regions()["MATCHED_HE"].tolist()
+    }
+    if not stardist_root.is_dir():
+        raise FileNotFoundError(f"StarDist root not found: {stardist_root}")
+    out = []
+    for p in sorted(stardist_root.iterdir()):
+        if not p.is_dir() or p.name.startswith(".") or p.name == "HE_images":
+            continue
+        if p.name in annotated:
+            continue
+        if not stardist_csv_path(stardist_root, p.name).is_file():
+            continue
+        h5ad = cases_root / p.name / f"{p.name}{STARDIST_ALL_H5AD_SUFFIX}"
+        if require_h5ad and not h5ad.is_file():
+            print(f"  skip {p.name}: missing {h5ad.name}", flush=True)
+            continue
+        out.append(p.name)
+    return out
+
+
+def step_pooled_stardist_all_hcc_rest(
+    ctx: PooledRunContext,
+    samples: list[str] | None = None,
+    *,
+    cases_root: Path | None = None,
+    stardist_root: Path | None = None,
+) -> None:
+    """
+    Predict all StarDist nuclei for HCC rest regions (no CODEX cell-type CSV).
+
+    Input: ``HE/{sample}/{sample}_all_features_stardist.h5ad``
+    Output: ``s4769/{save_result}/stardist_hcc_rest/{sample}/..._label.h5ad``
+    """
+    cases_root = Path(cases_root or ctx.cases_root)
+    if samples is None:
+        samples = discover_hcc_rest_samples(
+            cases_root, stardist_root, require_h5ad=True,
+        )
+    if not samples:
+        print(
+            f"\n[Pooled StarDist all nuclei — HCC rest] no samples "
+            f"(need {STARDIST_ALL_H5AD_SUFFIX} under {cases_root})",
+            flush=True,
+        )
+        return
+
+    print(
+        f"\n[Pooled StarDist all nuclei — HCC rest] {len(samples)} datasets",
+        flush=True,
+    )
+    failures = []
+    for sample in samples:
+        try:
+            out_path = stardist_hcc_rest_all_label_h5ad_path(
+                ctx.data_root, sample, ctx.save_result
+            )
+            step_pooled_stardist_all_one_sample(
+                ctx,
+                sample,
+                cases_root=cases_root,
+                out_path=out_path,
+            )
+        except Exception as exc:
+            print(f"  FAIL {sample}: {exc}", flush=True)
+            failures.append((sample, str(exc)))
+    if failures:
+        print(
+            f"\n  StarDist-all HCC rest failures: {len(failures)}/{len(samples)}",
+            flush=True,
+        )
+
 
 ########################################################
 ## 2026.07.05 LLY: Add the function to predict the StarDist all nuclei of Incomplete_Cases
