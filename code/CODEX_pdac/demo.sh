@@ -3,6 +3,7 @@
 
 %cd /home/lingyu/ssd2/Python/Hist2Pheno/
   conda activate SeededNTM
+  export CUDA_VISIBLE_DEVICES=1    # 换一张卡
 
 ## Counts (on disk, not swapped):
 ##   Pancreas TMA: 473 cores

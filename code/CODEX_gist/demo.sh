@@ -2,8 +2,20 @@
 ## Analog of code/CODEX_pdac/demo.sh
 ## All 550 GIST cores are annotated (no Incomplete_Cases).
 
+
+
+1. match_codex_cells_with_pixel.py / 3. transer_embedding_label_h5ad.py
+CPU 为主，不用指定 GPU。
+2. UNI 特征提取（Image_feature_extraction.py 用可见的 cuda:0）
+CUDA_VISIBLE_DEVICES=2 bash code/CODEX_gist/demo_UNI_feature_extraction_batch.sh gt
+CUDA_VISIBLE_DEVICES=2 bash code/CODEX_gist/demo_UNI_feature_extraction_batch.sh stardist
+
+#########################################################################
+
+
 %cd /home/lingyu/ssd2/Python/Hist2Pheno/
   conda activate SeededNTM
+  export CUDA_VISIBLE_DEVICES=2    # 换一张卡
 
 ## Counts:
 ##   GIST TMA: 550 cores (c009 160 + c011 197 + c013 193)

@@ -1,252 +1,164 @@
 # Hist2Pheno
 
-**Histology image embeddings → cell phenotype prediction → spatial niche indices.**
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](requirements.txt)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 
-Hist2Pheno maps H&E patch embeddings (UNI / HIPT / Virchow2) to multi-tier cell-type labels via a five-head MLP, validates on independent StarDist nuclei, and supports histology-derived niche biomarkers (TLS, FRI, ARI, APNB).
+**Predict cell phenotypes from H&E histology**, then map those predictions in space.
 
-This repository contains:
+Hist2Pheno takes per-nucleus H&E patch embeddings (UNI / HIPT / Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS, FRI, ARI, APNB).
 
-| Path | Description |
-|------|-------------|
-| [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) | Core library — modeling, shared plotting/palettes, and UNI-label CV helpers ([package README](code/Hist2Pheno_pkg/README.md)) |
-| [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) | Per-cell UNI/HIPT embedding extraction from H&E (Xenium + CODEX HCC) |
-| [`code/Xenium_lung/`](code/Xenium_lung/) | **GSE250346 lung fibrosis Xenium** pipeline — Complete + Incomplete cohorts ([README](code/Xenium_lung/README.md)) |
-| [`code/CODEX_hcc/`](code/CODEX_hcc/) | **CODEX HCC s4769** pipeline — Visium-aligned HE, GT + StarDist UNI features ([README](code/CODEX_hcc/README.md)) |
+Raw images and embeddings are **not** shipped in this repository. Each dataset folder has its own README and `demo.sh` command index.
 
-## Quick start
+## Highlights
+
+- **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, and CV helpers
+- **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / HIPT / Virchow2 patches from H&E
+- **Multi-cohort pipelines** — Xenium lung fibrosis plus CODEX HCC, ESCC, PDAC, and GIST
+- **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei
+
+```mermaid
+flowchart LR
+  HE[H&E image] --> UNI[Patch embeddings]
+  GT[GT cell labels] --> Match[Coordinate match]
+  UNI --> Match
+  Match --> H5AD[matched h5ad]
+  H5AD --> MLP[Multi-head MLP]
+  MLP --> Pred[Predicted phenotypes]
+  Pred --> Spatial[Spatial maps / niche indices]
+  Star[StarDist nuclei] --> UNI
+```
+
+## Supported datasets
+
+| Dataset | Folder | Scale | Labels | `pan_organ` |
+|---------|--------|-------|--------|-------------|
+| Xenium lung fibrosis ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)) | [`code/Xenium_lung/`](code/Xenium_lung/) | 25 Complete + 20 Incomplete | five-head (L2 / L12 / L1 / CNiche / TNiche) | `xenium_lung` |
+| CODEX HCC (s4769) | [`code/CODEX_hcc/`](code/CODEX_hcc/) | 36–38 Visium-aligned HE regions | three-head (L2 / L12 / L1) | `codex_hcc` |
+| CODEX ESCC (NCRT cohort) | [`code/CODEX_escc/`](code/CODEX_escc/) | tumor ROIs | five-tier labels | `codex_escc` |
+| CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` |
+| CODEX GIST (s1167 GIST TMA) | [`code/CODEX_gist/`](code/CODEX_gist/) | 550 annotated cores | three-head | `codex_gist` |
+
+Start from the dataset README, then follow that folder’s `demo.sh`.
+
+## Repository layout
+
+```text
+Hist2Pheno/
+├── code/
+│   ├── Hist2Pheno_pkg/          # shared library
+│   ├── Image_feature_extraction.py
+│   ├── StarDist_nuclei_segmente.py
+│   ├── Xenium_lung/
+│   ├── CODEX_hcc/
+│   ├── CODEX_escc/
+│   ├── CODEX_pdac/
+│   └── CODEX_gist/
+├── requirements.txt
+└── LICENSE
+```
+
+Processed data are expected under a local `data/` tree (gitignored). Do not commit `.h5ad`, `.pth`, TIFF, or model weights.
+
+## Installation
 
 ```bash
 git clone https://github.com/LingyuLi-math/Hist2Pheno.git
 cd Hist2Pheno
-
-# Conda env with PyTorch, scanpy, spatialdata (e.g. SeededNTM)
-conda activate SeededNTM
 ```
 
-Add the package to `PYTHONPATH` (or let project scripts add it automatically):
+Use a CUDA-enabled PyTorch environment. The development env is named `SeededNTM`; a fresh install can start from:
+
+```bash
+conda create -n Hist2Pheno python=3.10
+conda activate Hist2Pheno
+pip install -r requirements.txt
+# install a CUDA PyTorch build that matches your driver:
+# https://pytorch.org/get-started/locally/
+```
+
+UNI / HIPT / Virchow2 **weights are not bundled**. Place them where `Image_feature_extraction.py` expects, or pass the checkpoint path used in your dataset `demo.sh`.
+
+Scripts add `code/Hist2Pheno_pkg` to `sys.path`. For ad-hoc imports:
 
 ```bash
 export PYTHONPATH="${PWD}/code/Hist2Pheno_pkg:${PYTHONPATH}"
 ```
 
----
+### GPU selection
 
-## Xenium lung pipeline
-
-Full step-by-step instructions: **[`code/Xenium_lung/README.md`](code/Xenium_lung/README.md)**
-
-### Cohorts
-
-| Cohort | Samples | Role |
-|--------|---------|------|
-| `Complete_Cases` | 25 | Train pooled cross-dataset model; pathologist GT; StarDist matched validation |
-| `Incomplete_Cases` | 20 | Discovery cohort — no `data.zarr`; all-StarDist prediction + clinical niche burden (APNB) |
-
-Replace `<DATA>` with your local GSE250346 processed data root  
-(e.g. `.../Spatial-PF-Processed/Data`). Raw data are **not** included in this repo.
-
-### Phase A — Complete_Cases (training cohort)
+UNI extraction and MLP training use the **first visible** device (`cuda:0` after masking). Pin a physical GPU **before** importing PyTorch:
 
 ```bash
-# 1. Spatial coords + HE annotation match + StarDist copy
-python code/Xenium_lung/extract_cell_spatial_coords.py --data-dir <DATA>/Complete_Cases
-python code/Xenium_lung/match_HEanno_with_sample_pix.py --cases-dir <DATA>/Complete_Cases
-python code/Xenium_lung/copy_stardist_to_cases.py
-
-# 2. UNI features (single script: GT or StarDist × Complete or Incomplete)
-bash code/Xenium_lung/demo_UNI_feature_extraction_batch.sh gt complete
-bash code/Xenium_lung/demo_UNI_feature_extraction_batch.sh stardist complete
-
-# 3. Build matched / StarDist h5ad
-python -u code/Xenium_lung/transer_embedding_label_h5ad.py
-python -u code/Xenium_lung/transer_embedding_label_h5ad.py --steps stardist_all_h5ad
-
-# 4. Cross-dataset train + StarDist matched validation (spatial context)
-python -u code/Xenium_lung/Lung_train_validate_cv_UNIlabel.py \
-  --mode cross-dataset --cases-set complete \
-  --use-spatial-context --spatial-k 8 --spatial-mode mean \
-  --pooled-save-result result_all_spatial \
-  --ablation-tag D_emph_L2_spatial_bs4096
-
-# 5. All StarDist nuclei → five-head label h5ad (Complete)
-python -u code/Xenium_lung/Lung_train_validate_cv_UNIlabel.py \
-  --mode cross-dataset --cases-set complete \
-  --pooled-save-result result_all_spatial \
-  --use-spatial-context --spatial-k 8 --spatial-mode mean \
-  --ablation-tag D_emph_L2_spatial_bs4096 \
-  --steps stardist_all
+export CUDA_VISIBLE_DEVICES=1          # physical GPU 1 → logical cuda:0
 ```
 
-**Main outputs** under `<DATA>/result_all_spatial/`:
+Training CLIs also accept `--cuda-device 1` when `CUDA_VISIBLE_DEVICES` is unset.  
+Matching / h5ad transfer (`transer_embedding_label_h5ad.py`) is CPU.  
+Notebooks: set `NCRT_CUDA_DEVICE` **before** `import torch`, then restart the kernel. See [`code/CODEX_gist/README.md`](code/CODEX_gist/README.md) for a worked GPU-pinning example.
 
-- `cross_dataset_cv/D_emph_L2_spatial_bs4096/best_mlp_gpu.pt` — pooled checkpoint
-- `stardist/{sample}/validation_external_stardist_matched_AUROC.csv` — matched nuclei + GT
-- `stardist/{sample}/{sample}_all_features_stardist_label.h5ad` — all nuclei, five-head softmax
+## Typical workflow
 
-### Phase B — Incomplete_Cases (discovery cohort)
-
-Incomplete samples lack Xenium zarr; skip `extract_cell_spatial_coords.py`. Run HE match, StarDist copy, UNI extraction, and h5ad build on the incomplete set, then apply the **Complete-trained** checkpoint:
+Every CODEX / Xenium track follows the same five stages. Replace `CODEX_pdac` with the dataset folder you need.
 
 ```bash
-python code/Xenium_lung/match_HEanno_with_sample_pix.py --cases-dir <DATA>/Incomplete_Cases
-python code/Xenium_lung/copy_stardist_to_cases.py --cases-dir <DATA>/Incomplete_Cases
+conda activate SeededNTM   # or Hist2Pheno
+cd /path/to/Hist2Pheno
 
-bash code/Xenium_lung/demo_UNI_feature_extraction_batch.sh stardist incomplete
-python -u code/Xenium_lung/transer_embedding_label_h5ad.py \
-  --cases-set incomplete --steps stardist_all_h5ad
+# 1. Match GT cells to HE pixels (and StarDist, if annotated)
+python -u code/CODEX_pdac/match_codex_cells_with_pixel.py
 
-# Predict all StarDist nuclei with pooled Complete model
-python -u code/Xenium_lung/Lung_train_validate_cv_UNIlabel.py \
-  --mode cross-dataset --cases-set incomplete \
-  --pooled-save-result result_all_spatial \
+# 2. Per-nucleus UNI embeddings (GPU)
+bash code/CODEX_pdac/demo_UNI_feature_extraction_batch.sh gt
+bash code/CODEX_pdac/demo_UNI_feature_extraction_batch.sh stardist
+
+# 3. Write matched / all-nuclei AnnData
+python -u code/CODEX_pdac/transer_embedding_label_h5ad.py --steps he_h5ad
+python -u code/CODEX_pdac/transer_embedding_label_h5ad.py --steps stardist_all_h5ad
+
+# 4. Cross-dataset train + StarDist inference (GPU)
+python -u code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \
+  --mode cross-dataset \
   --use-spatial-context --spatial-k 8 --spatial-mode mean \
-  --ablation-tag D_emph_L2_spatial_bs4096 \
-  --steps stardist_all
+  --pooled-save-result result_all_spatial
+
+# 5. Interactive CV / spatial maps
+#    open the dataset *_train_validate_cv_UNIlabel_all.ipynb
 ```
 
-**Outputs:** `<DATA>/result_all_spatial/stardist_Incomplete_Cases/{sample}/{sample}_all_features_stardist_label.h5ad`
+h5ad builders skip a sample when the cache is valid; pass `--force-rebuild` to overwrite.  
+Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`code/CODEX_hcc/demo.sh`](code/CODEX_hcc/demo.sh), [`code/CODEX_pdac/demo.sh`](code/CODEX_pdac/demo.sh), [`code/CODEX_gist/demo.sh`](code/CODEX_gist/demo.sh), [`code/CODEX_escc/demo.sh`](code/CODEX_escc/demo.sh).
 
-### Phase C — Niche indices and clinical analysis
+### Prediction heads
 
-Open **[`code/Xenium_lung/histology_derived_niche_index.ipynb`](code/Xenium_lung/histology_derived_niche_index.ipynb)**:
-
-| Section | Content |
-|---------|---------|
-| §6 | Complete_Cases — TLS / FRI / ARI on StarDist matched nuclei; pathologist validation |
-| §7 | Incomplete_Cases — Active Proliferative Niche Burden (APNB) on **all** StarDist nuclei; clinical comparison vs `41588_2025_2080_MOESM5_ESM.xlsx`; five-tier spatial maps (`plot_stardist_all_label_spatial_tiers`) |
-
-Key Python API in [`histology_derived_niche_index.py`](code/Xenium_lung/histology_derived_niche_index.py):
-
-```python
-import histology_derived_niche_index as hdni
-
-# Complete — matched StarDist + spatial TLS/FRI/ARI
-df, class_names, probs, coords, paths = hdni.load_cross_dataset_sample_with_spatial("VUILD107MA")
-
-# Incomplete — all nuclei from label h5ad
-hdni.plot_stardist_all_label_spatial_tiers("TILD299MA", tier="l2")
-```
-
-### Notebooks (Xenium)
-
-| Notebook | Purpose |
-|----------|---------|
-| [`Lung_train_validate_cv_UNIlabel_all.ipynb`](code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all.ipynb) | Cross-dataset training; §4 StarDist matched; §5–§6 Complete / Incomplete all-nuclei prediction |
-| [`histology_derived_niche_index.ipynb`](code/Xenium_lung/histology_derived_niche_index.ipynb) | Niche indices, APNB, clinical stratification, spatial tier plots |
-| [`Data_process_visual_xenium_all.ipynb`](code/Xenium_lung/Data_process_visual_xenium_all.ipynb) | Preprocessing QC and cohort overview |
-
----
-
-## CODEX HCC pipeline (s4769)
-
-Full step-by-step instructions: **[`code/CODEX_hcc/README.md`](code/CODEX_hcc/README.md)**
-
-**CODEX hepatocellular carcinoma** — 38 Visium-aligned HE regions from the Michael s4769 transfer dataset. Uses the same Hist2Pheno five-head MLP stack after per-cell UNI extraction from aligned H&E TIFFs.
-
-### Data layout
-
-```
-data/HCC/Michael_data_transfer/s4769/
-├── HE/s4769_he_mapping_updated_Visium.xlsx   # 38 ALIGNED=='Y' regions
-├── HE/{HE_KEY}/figures/{HE_KEY}.tif          # registered H&E (~0.5 µm/px)
-├── {ACQ_ID}/{ACQ_ID}.cell_data.csv           # GT CODEX cell coords (X, Y in HE px)
-└── HE/{HE_KEY}/project_all_UNI/
-    ├── ImgEmbeddings_all/                    # GT UNI .pth
-    └── ImgEmbeddings_all_stardist/           # StarDist UNI .pth
-```
-
-StarDist CSVs (external): `{STARDIST_ROOT}/{HE_KEY}/{HE_KEY}_Float_prob0.01_nms_0.3.csv`
-
-### Workflow
-
-```bash
-# 1. Map CODEX cell types onto aligned HE (QC figures)
-python -u code/CODEX_hcc/s4769_img_cell_mapping.py
-
-# 2. UNI feature extraction — single region
-bash code/CODEX_hcc/demo_GT_feature_extraction_Single.sh gt
-bash code/CODEX_hcc/demo_GT_feature_extraction_Single.sh stardist
-
-# 3. Batch UNI — all 38 regions (GT then StarDist)
-bash code/CODEX_hcc/demo_UNI_feature_extraction_batch.sh gt
-bash code/CODEX_hcc/demo_UNI_feature_extraction_batch.sh stardist
-
-# 4. Train / validate (see HCC_train_validate_cv_UNIlabel.py)
-python -u code/CODEX_hcc/HCC_train_validate_cv_UNIlabel.py
-```
-
-Both shell wrappers call [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) with region-specific `--position` CSV and HE TIFF. CODEX HCC uses **native HE resolution** (`scale_image=False`, patch size 16 → ~8 µm); Xenium lung uses `scale=0.425` for 0.2125 µm/px HE.
-
-### CODEX scripts
-
-| Script | Role |
-|--------|------|
-| [`s4769_img_cell_mapping.py`](code/CODEX_hcc/s4769_img_cell_mapping.py) | Load CODEX annotations; render cell types on aligned HE |
-| [`demo_GT_feature_extraction_Single.sh`](code/CODEX_hcc/demo_GT_feature_extraction_Single.sh) | One region — GT (`cell_data.csv`) or StarDist coords |
-| [`demo_UNI_feature_extraction_batch.sh`](code/CODEX_hcc/demo_UNI_feature_extraction_batch.sh) | Batch over 38 ALIGNED regions |
-| [`HCC_train_validate_cv_UNIlabel.py`](code/CODEX_hcc/HCC_train_validate_cv_UNIlabel.py) | HCE training + validation (adapted from Xenium lung) |
-| [`HCC_train_validate_cv_UNIlabel_single.ipynb`](code/CODEX_hcc/HCC_train_validate_cv_UNIlabel_single.ipynb) | Interactive training / visualization |
-| [`Data_process_visual_codex.ipynb`](code/CODEX_hcc/Data_process_visual_codex.ipynb) | CODEX preprocessing and QC |
-
-Env overrides for batch extraction: `ACQ_ID`, `HE_KEY`, `STARDIST_ROOT`, `SKIP_IF_DONE`, `CLEAN_UNI_OUTPUT`.
-
----
-
-## Package overview
-
-### `Hist2Pheno_pkg`
-
-- **`base.py`** — coordinate matching, AnnData / NPZ builders, spatial kNN index, five-head MLP architectures, embedding I/O
-- **`model.py`** — stratified / LOGO cross-validation training, spatial-context fusion, checkpoint selection
-- **`plot.py`** — confusion matrices, ROC, spatial cell-type maps, five-head softmax collection
-- **[`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py)** — canonical dataset-aware palette registry and resolvers
-- **[`plotting_utils.py`](code/Hist2Pheno_pkg/plotting_utils.py)** — reusable bar/composition transforms and plots
-- **[`uni_label_cv_helpers.py`](code/Hist2Pheno_pkg/uni_label_cv_helpers.py)** — canonical shared UNI-label CV, internal-validation, and StarDist-tier helpers
-
-See the **[`Hist2Pheno_pkg` README](code/Hist2Pheno_pkg/README.md)** for the full module index, plotting API, tier mappings, and extension policy.
-
-Canonical plotting dataset IDs are `codex_escc`, `xenium_lung`, and
-`codex_hcc`. The historical `ncrt` plotting ID remains a fully
-backward-compatible alias of `codex_escc`; NCRT cohort terminology and
-identifiers are unchanged.
-
-The former Xenium path [`code/Xenium_lung/xenium_uni_nb_helpers.py`](code/Xenium_lung/xenium_uni_nb_helpers.py) is a compatibility shim that quietly re-exports the shared module. New code should import `uni_label_cv_helpers` directly.
-
-### Five prediction heads
-
-| Head | Tier | Example labels |
+| Head | Role | Typical column |
 |------|------|----------------|
-| L2 | Fine cell type | B cells, AT2, Myofibroblasts, … |
-| L1 | Lineage | Epithelial, Immune, Mesenchymal, … |
-| L12 | Level 1-1-2 | Intermediate grouping |
-| L3 | CNiche | C1–C12 |
-| L4 | TNiche | T1–T12 |
+| L2 | Fine cell type | `final_CT` |
+| L12 | Intermediate / sublineage | `final_sublineage` |
+| L1 | Coarse lineage | `final_lineage` |
+| L3 / L4 | CNiche / TNiche (Xenium) or ESCC coarse / lineage-bucket | dataset-specific |
 
-### `Image_feature_extraction.py`
-
-Shared UNI/HIPT/Virchow2 patch embedder used by both pipelines. Accepts a coordinate CSV (`X`/`Y` or Xenium-specific columns) and an H&E image path; writes one `.pth` per cell under `ImgEmbeddings_all/` or `ImgEmbeddings_all_stardist/`.
-
----
+Xenium uses all five heads. HCC / PDAC / GIST use L2 + L12 + L1. Palettes live in [`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py); see the [package README](code/Hist2Pheno_pkg/README.md).
 
 ## Data
 
-Processed datasets live outside this repository:
+This repo tracks **code only**. Point each pipeline at your local copy:
 
-| Project | Location (local example) |
-|---------|--------------------------|
-| Xenium lung | `.../Spatial-PF-Processed/` — see [`code/Xenium_lung/README.md`](code/Xenium_lung/README.md) |
-| CODEX HCC | `.../data/HCC/Michael_data_transfer/s4769/` |
-
-Clinical metadata for Xenium lung: `Annotation/HE_Annotations/41588_2025_2080_MOESM5_ESM.xlsx` (`Supplementary Table 1` / `Clinical_info`).
-
----
+| Project | Local layout (example) | Notes |
+|---------|------------------------|--------|
+| Xenium lung | `Spatial-PF-Processed/Data/{Complete,Incomplete}_Cases/` | [GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346); see [`code/Xenium_lung/README.md`](code/Xenium_lung/README.md) |
+| CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | Visium-aligned HE + CODEX cell tables |
+| CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST) |
+| CODEX ESCC | `data/CODEX/ESCC/` | NCRT remains the cohort path name |
 
 ## Citation
 
-If you use this code, please cite the associated publication (TBD) and the original datasets:
+If you use this code, please cite the associated publication (TBD) and the source datasets, including:
 
-> Kedlian et al. — spatial multi-omics lung fibrosis atlas ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346))
+> Kedlian et al., spatial multi-omics lung fibrosis atlas ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)).
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE).
+
+Foundation-model checkpoints (UNI, HIPT, Virchow2) keep their original licenses and must be obtained separately.
