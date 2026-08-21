@@ -3298,7 +3298,7 @@ def evaluate_and_plot_on_all_data(
     celltype_true_dir=None,
     prediction_only=False,  # If True, skip loading labels to predict all samples
     spatial_figsize=(12, 10),
-    spatial_point_size=0.6,
+    spatial_point_size=None,
     spatial_plot_mode="pred_true_l2",
     spatial_color_scheme="codex_escc",
     pan_organ=None,
@@ -3328,6 +3328,10 @@ def evaluate_and_plot_on_all_data(
         raise ValueError(
             "spatial_plot_mode must be one of: pred_true_l2, pred_l2_pred_l1, pred_l2_only"
         )
+    if spatial_point_size is None:
+        from plotting_palettes import default_spatial_point_size
+
+        spatial_point_size = default_spatial_point_size(pan_organ)
     plot_l2_true = spatial_plot_mode == "pred_true_l2"
     plot_l1_pred = spatial_plot_mode == "pred_l2_pred_l1" and class_names_level1 is not None
 

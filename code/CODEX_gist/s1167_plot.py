@@ -62,7 +62,7 @@ def plot_gist_stardist_spatial_maps(
     *,
     heads: Sequence[str] = GIST_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_gist",
-    spatial_point_size: float = 0.25,
+    spatial_point_size: float | None = None,
     fig_size: tuple[float, float] = (10, 8),
     show: bool = False,
 ) -> dict[str, dict]:
@@ -94,7 +94,7 @@ def plot_gist_stardist_spatial_overview(
     *,
     heads: Sequence[str] = GIST_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_gist",
-    point_size: float = 0.5,
+    point_size: float | None = None,
     show: bool = True,
     save_path=None,
     max_per_coverslip: int | None = 2,

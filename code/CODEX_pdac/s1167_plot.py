@@ -31,6 +31,7 @@ from s1167_img_cell_mapping import (  # noqa: E402
     DEFAULT_S1167_CELLTYPE_FILTER,
     S1167_CELLTYPE_COLORS,
     coverslip_from_acq,
+    load_s1167_metadata,
 )
 
 PDAC_COVERSLIP_ORDER = ("c001", "c003", "c005", "c007")
@@ -188,6 +189,7 @@ def plot_pooled_celltype_distribution(
 # 2026.08.20 Incomplete_Cases StarDist-all spatial maps
 #####################################################
 PDAC_STARDIST_MACRO_AUROC_TIERS: tuple[str, ...] = ("l2", "l12", "l1")
+S1167_STARDIST_CLINICAL_COLUMNS: tuple[str, ...] = ("coverslip", "SAMPLE_LABEL")
 
 
 def short_pdac_acq_label(sample: str) -> str:
@@ -226,7 +228,7 @@ def plot_pdac_incomplete_stardist_spatial_maps(
     *,
     heads: Sequence[str] = PDAC_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_pdac",
-    spatial_point_size: float = 0.25,
+    spatial_point_size: float | None = None,
     fig_size: tuple[float, float] = (10, 8),
     show: bool = False,
 ) -> dict[str, dict]:
@@ -258,7 +260,7 @@ def plot_pdac_incomplete_stardist_spatial_overview(
     *,
     heads: Sequence[str] = PDAC_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_pdac",
-    point_size: float = 0.5,
+    point_size: float | None = None,
     show: bool = True,
     save_path=None,
     max_per_coverslip: int | None = 2,
@@ -292,4 +294,83 @@ def plot_pdac_incomplete_stardist_spatial_overview(
         sample_labels={s: short_pdac_acq_label(s) for s in plot_loaded},
         suptitle="PDAC Incomplete_Cases StarDist-all predicted spatial maps (pred only)",
         show=show,
+    )
+
+
+def load_s1167_clinical_info(
+    *,
+    cohort: str = "PDAC",
+    annotated_only: bool = True,
+    with_he_only: bool = True,
+    show_overview: bool = True,
+) -> pd.DataFrame:
+    """Clinical_info for PDAC or GIST, with ``coverslip`` attached."""
+    clinical = load_s1167_metadata(
+        cohort=cohort, annotated_only=annotated_only, with_he_only=with_he_only,
+    ).copy()
+    clinical["coverslip"] = clinical["ACQUISITION_ID"].map(coverslip_from_acq)
+    print("Clinical rows:", len(clinical), f"(cohort={cohort})")
+    if show_overview:
+        try:
+            from IPython.display import display as display_fn
+        except ImportError:
+            display_fn = None
+        show_cols = [
+            c for c in (
+                "ACQUISITION_ID", "coverslip", "SAMPLE_LABEL", "SAMPLE_ID", "tissue_type",
+            )
+            if c in clinical.columns
+        ]
+        preview = clinical[show_cols].head(12) if show_cols else clinical.head(12)
+        if display_fn is not None:
+            display_fn(preview)
+        else:
+            print(preview.to_string(index=False))
+        for col in ("coverslip", "SAMPLE_LABEL"):
+            if col not in clinical.columns:
+                continue
+            print(f"\n{col}")
+            counts = clinical[col].value_counts(dropna=False)
+            if display_fn is not None:
+                display_fn(counts)
+            else:
+                print(counts.to_string())
+    return clinical
+
+
+def analyze_s1167_stardist_macro_auroc_by_clinical(
+    stardist_result_root,
+    clinical_info: pd.DataFrame,
+    *,
+    pan_organ: str = "codex_pdac",
+    **kwargs,
+) -> dict:
+    """Pooled per-core macro AUROC vs coverslip / SAMPLE_LABEL."""
+    from uni_label_cv_helpers import analyze_stardist_macro_auroc_by_clinical as _analyze
+
+    kwargs.setdefault("tiers", PDAC_STARDIST_MACRO_AUROC_TIERS)
+    kwargs.setdefault("clinical_columns", S1167_STARDIST_CLINICAL_COLUMNS)
+    kwargs.setdefault("clinical_key", "ACQUISITION_ID")
+    kwargs.setdefault("pan_organ", pan_organ)
+    kwargs.setdefault("layout", "pooled_stardist")
+    kwargs.setdefault("figsize", (12.0, 5.0))
+    kwargs.setdefault("legend_ncol", 2)
+    return _analyze(stardist_result_root, clinical_info, **kwargs)
+
+
+def analyze_pdac_stardist_macro_auroc_by_clinical(
+    stardist_result_root, clinical_info: pd.DataFrame, **kwargs,
+) -> dict:
+    kwargs.setdefault("pan_organ", "codex_pdac")
+    return analyze_s1167_stardist_macro_auroc_by_clinical(
+        stardist_result_root, clinical_info, **kwargs,
+    )
+
+
+def analyze_gist_stardist_macro_auroc_by_clinical(
+    stardist_result_root, clinical_info: pd.DataFrame, **kwargs,
+) -> dict:
+    kwargs.setdefault("pan_organ", "codex_gist")
+    return analyze_s1167_stardist_macro_auroc_by_clinical(
+        stardist_result_root, clinical_info, **kwargs,
     )

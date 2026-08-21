@@ -26,6 +26,7 @@ from plotting_palettes import (
     resolve_palette,
     resolve_roc_colors,
     resolve_effective_scheme,
+    default_spatial_point_size,
 )
 from plotting_utils import (
     celltype_counts_from_df,
@@ -35,6 +36,14 @@ from plotting_utils import (
     plot_final_ct_by_lineage,
     pooled_celltype_counts,
 )
+
+def _legend_markerscale(s: float) -> float:
+    """Keep legend dots readable when scatter ``s`` is TMA-sized."""
+    s = float(s)
+    if s <= 1.5:
+        return 6.0
+    return max(1.0, min(6.0, 4.6 / max(s ** 0.5, 1e-6)))
+
 
 def _head_for_celltype_col(celltype_col: str, *, pan_organ: str) -> str:
     """Map a column/tier hint to a five-head key (l2/l1/l12/l3/l4)."""
@@ -526,7 +535,7 @@ def plot_celltype_spatial_distribution(
         loc='upper left',
         fontsize=9 if n_types > 15 else 10,
         scatterpoints=1,
-        markerscale=6,
+        markerscale=_legend_markerscale(s),
         frameon=False,
         title='Cell Type Count',
         ncol=legend_ncol,
@@ -1081,7 +1090,7 @@ def plot_level1_spatial_distribution(
     save_path_pred=None,
     save_path_true=None,
     fig_size=(12, 10),
-    spatial_point_size=0.6,
+    spatial_point_size=None,
     spatial_color_scheme="auto",
     color_overrides=None,
     pan_organ=None,
@@ -1120,6 +1129,8 @@ def plot_level1_spatial_distribution(
     """
     title_pred = title_pred or spatial_title_pred_l1
     title_true = title_true or spatial_title_true_l1
+    if spatial_point_size is None:
+        spatial_point_size = default_spatial_point_size(pan_organ)
 
     all_preds_l2 = np.asarray(all_preds)
     y_l1_true_for_plot = None
@@ -1299,7 +1310,7 @@ def plot_tier_spatial_distribution(
     save_path_pred=None,
     save_path_true=None,
     fig_size=(10, 8),
-    spatial_point_size=0.6,
+    spatial_point_size=None,
     spatial_color_scheme="xenium_auto",
     celltype_col="celltype",
     color_overrides=None,
@@ -1322,8 +1333,13 @@ def plot_tier_spatial_distribution(
             ``celltype_level0`` / ``celltype_level01`` / ``celltype_level12``).
             DataFrame columns remain ``celltype`` / ``true_celltype``.
         color_overrides: optional label→RGBA map; when set, overrides ``celltype_col`` defaults.
+        spatial_point_size: matplotlib scatter ``s``. ``None`` uses the pan_organ default
+            (larger markers on PDAC / GIST TMA cores).
     """
     import pandas as pd
+
+    if spatial_point_size is None:
+        spatial_point_size = default_spatial_point_size(pan_organ)
 
     scheme_in = spatial_color_scheme
     scheme_key = str(scheme_in or "xenium_auto").strip().lower()

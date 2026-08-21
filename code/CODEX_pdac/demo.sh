@@ -54,5 +54,18 @@
     --use-spatial-context --spatial-k 8 --spatial-mode mean \
     --pooled-save-result result_all_spatial
 
+4b_PDAC_train_validate_cv_UNIlabel_single.ipynb
+  ## One annotated core: HE h5ad → K-fold train → HE validate → StarDist
+  ## Demo: Charvill-94_c001_v001_r001_reg001
+
 5_PDAC_train_validate_cv_UNIlabel_all.ipynb
   ## §1–§5: 278 annotated; §6: 195 Incomplete_Cases → stardist_Incomplete_Cases/
+
+6_PDAC_histology_derived_niche_index.ipynb
+  ## TLS / SRI / TNI on matched StarDist (demo: Charvill-94_c001_v001_r001_reg001)
+  ## §6 QUICK_VALIDATE=True → first 6 cores; set False for all 278
+  ## out: s1167/result_all_spatial/niche_index_pdac/
+
+7_Pred_statistic_visual_pdac_all.ipynb
+  ## 278 annotated: pooled ROC + macro AUROC vs coverslip / SAMPLE_LABEL
+  ## out: s1167/result_all_spatial/clinical_viz_pdac/

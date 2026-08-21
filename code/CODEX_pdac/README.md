@@ -47,17 +47,35 @@ HE 仍在每个 acquisition 文件夹内，与 HCC s4769 的 `MATCHED_HE` 布局
 | 文件 | 作用 |
 |------|------|
 | `s1167_img_cell_mapping.py` | 读 **xlsx**、HE Zarr、细胞 CSV；导出 TIFF / JPG |
-| `s1167_plot.py` | coverslip stacked / pooled 组成图 |
+| `s1167_plot.py` | coverslip stacked / pooled 组成图；StarDist macro AUROC vs clinical |
+| `s1167_histology_derived_niche_index.py` | PDAC/GIST 共用 TLS / SRI / TNI（`configure("codex_pdac"|"codex_gist")`） |
+| `pdac_histology_derived_niche_index.py` | PDAC wrapper（`pan_organ="codex_pdac"`） |
 | `Data_process_visual_codex_HEcelltype_pdac.ipynb` | PDAC 交互式流程（步骤 0–7） |
 | `match_codex_cells_with_pixel.py` | 278 annotated → `*_cells_with_pixel.csv` / StarDist-matched CSV |
 | `demo_GT_feature_extraction_Single.sh` | 单核 UNI（GT 或 StarDist 坐标） |
 | `demo_UNI_feature_extraction_batch.sh` | 278 annotated 或 `INCOMPLETE=1` 的 195 Incomplete_Cases |
 | `transer_embedding_label_h5ad.py` | matched / all-nuclei h5ad |
 | `PDAC_train_validate_cv_UNIlabel.py` | per-sample + cross-dataset 训练 / StarDist 推断 |
+| `PDAC_train_validate_cv_UNIlabel_single.ipynb` | **单核** train / HE validate / StarDist（demo：`Charvill-94_c001_v001_r001_reg001`） |
 | `PDAC_train_validate_cv_UNIlabel_all.ipynb` | 跨核 CV notebook（§1–§6） |
+| `PDAC_histology_derived_niche_index.ipynb` | TLS / SRI / TNI 下游（matched StarDist） |
+| `Pred_statistic_visual_pdac_all.ipynb` | 278 核 pooled ROC + coverslip / SAMPLE_LABEL AUROC |
 | `demo.sh` | 全流程命令索引 |
 
 从 `code/CODEX_pdac` import，不要从 `CODEX_hnscc` import。
+
+## 下游分析（对照 HCC）
+
+先跑完训练轨 `PDAC_train_validate_cv_UNIlabel_all.ipynb`（278 annotated → `result_all_spatial/stardist/`），再开这两个 notebook。环境：`SeededNTM`。
+
+| Notebook | 作用 | 输出 |
+|----------|------|------|
+| `PDAC_histology_derived_niche_index.ipynb` | TLS / SRI / TNI（matched StarDist softmax + `spatial_HE`） | `s1167/result_all_spatial/niche_index_pdac/` |
+| `Pred_statistic_visual_pdac_all.ipynb` | 278 核 pooled ROC；macro AUROC vs **coverslip** / **SAMPLE_LABEL** | `s1167/result_all_spatial/clinical_viz_pdac/` |
+
+与 HCC 的差别：没有 **Response**。临床分组只有 coverslip 与 SAMPLE_LABEL。TNI 的髓系项是 **Macrophages**（没有 M2-like）。§6 默认 `QUICK_VALIDATE = True`（先跑 6 个 core）；全队列把该开关改成 `False`。
+
+不要在同一个 kernel 里同时 `import pdac_histology_derived_niche_index` 和 `gist_histology_derived_niche_index`：共用模块的 `configure()` 以后导入为准。
 
 ## Notebook 处理流程
 
@@ -171,6 +189,11 @@ plot_celltype_proportions_stacked(...)  # group by coverslip
 ```
 
 ## Changelog
+
+### 2026-08-20 — PDAC 下游：niche index + Pred statistic
+
+- `PDAC_histology_derived_niche_index.ipynb` + `pdac_histology_derived_niche_index.py`：对照 HCC TLS / SRI / TNI；临床分组 coverslip / SAMPLE_LABEL。
+- `Pred_statistic_visual_pdac_all.ipynb`：278 annotated pooled ROC + macro AUROC vs clinical（`s1167_plot.analyze_pdac_stardist_macro_auroc_by_clinical`）。
 
 ### 2026-08-20 — Hist2Pheno pipeline on PDAC (s1167)
 

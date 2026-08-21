@@ -1,0 +1,26 @@
+# Hist2Pheno conda environment
+#
+# Derived from the existing SeededNTM development environment
+# (https://github.com/LingyuLi-math/SeededNTM), which follows the
+# SeededNTM install recipe: Python 3.11 + conda-forge compilers / HDF5 /
+# pyarrow / pyproj, then the scientific Python stack used by this repo.
+#
+# Create:
+#   conda env create -f environment.yml
+#   conda activate Hist2Pheno
+# Then install a CUDA PyTorch wheel that matches your driver (see README).
+
+name: Hist2Pheno
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - ipython
+  - ipykernel
+  - jupyterlab
+  - hdf5
+  - pyarrow
+  - pyproj
+  - pip:
+    - -r requirements.txt

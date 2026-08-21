@@ -31,11 +31,30 @@ Cell-type CSV：GIST 使用 `{acq}.{numeric_id}.cell_types.csv`（见 `CODEX_pda
 | `demo_UNI_feature_extraction_batch.sh` | 550 annotated 批量 UNI |
 | `transer_embedding_label_h5ad.py` | matched / all-nuclei h5ad |
 | `GIST_train_validate_cv_UNIlabel.py` | per-sample + cross-dataset 训练 / StarDist 推断 |
+| `GIST_train_validate_cv_UNIlabel_single.ipynb` | **单核** train / HE validate / StarDist（demo：`Charvill-94_c013_v001_r001_reg002`） |
 | `GIST_train_validate_cv_UNIlabel_all.ipynb` | 跨核 CV notebook（§1–§5） |
+| `GIST_histology_derived_niche_index.ipynb` | TLS / SRI / TNI 下游（matched StarDist） |
+| `Pred_statistic_visual_gist_all.ipynb` | 550 核 pooled ROC + coverslip / SAMPLE_LABEL AUROC |
+| `gist_histology_derived_niche_index.py` | GIST wrapper（调用 `CODEX_pdac/s1167_histology_derived_niche_index.py`） |
 | `s1167_plot.py` | GIST StarDist-all 空间图（overview 默认每 coverslip 2 个 core） |
 | `demo.sh` | 全流程命令索引 |
 
 HE / metadata / cell CSV 读写复用 `code/CODEX_pdac/s1167_img_cell_mapping.py`（不要复制第二份 mapping）。
+
+## 下游分析（对照 HCC）
+
+先跑完训练轨 `GIST_train_validate_cv_UNIlabel_all.ipynb`（550 annotated → `result_all_spatial/stardist/`），再开这两个 notebook。环境：`SeededNTM`。
+
+| Notebook | 作用 | 输出 |
+|----------|------|------|
+| `GIST_histology_derived_niche_index.ipynb` | TLS / SRI / TNI（matched StarDist softmax + `spatial_HE`） | `s1167/result_all_spatial/niche_index_gist/` |
+| `Pred_statistic_visual_gist_all.ipynb` | 550 核 pooled ROC；macro AUROC vs **coverslip** / **SAMPLE_LABEL** | `s1167/result_all_spatial/clinical_viz_gist/` |
+
+`Pred_statistic_visual_gist_all.ipynb` 从 **`CODEX_pdac/s1167_plot.py`** 读临床与 AUROC helpers（`analyze_gist_stardist_macro_auroc_by_clinical`），不要改成 gist 目录里那个同名 `s1167_plot.py`。
+
+与 HCC 的差别：没有 **Response**。TNI 髓系 = Macrophages（+ Monocytes）；内皮 = Endothelial cells + Lymphatic Endothelial cells。§6 默认 `QUICK_VALIDATE = True`（先跑 6 个 core）；全队列改成 `False`。
+
+不要在同一个 kernel 里同时 import PDAC 与 GIST 的 niche wrapper。
 
 可视化预处理（TIFF / cell-type JPG）仍用 PDAC 的 `Data_process_visual_codex_HEcelltype_pdac.ipynb` 里 GIST 各节。
 
@@ -107,6 +126,11 @@ os.environ.setdefault("NCRT_CUDA_DEVICE", "2")
 `configure_notebook_runtime()` 会在 `CUDA_VISIBLE_DEVICES` 未设置时把它设为 `2`。若 kernel 启动时已经带了别的 `CUDA_VISIBLE_DEVICES`，需要先清掉或重启。
 
 ## Changelog
+
+### 2026-08-20 — GIST 下游：niche index + Pred statistic
+
+- `GIST_histology_derived_niche_index.ipynb` + `gist_histology_derived_niche_index.py`：对照 HCC TLS / SRI / TNI。
+- `Pred_statistic_visual_gist_all.ipynb`：550 annotated pooled ROC + macro AUROC vs clinical。
 
 ### 2026-08-20 — 指定 GPU（cuda:2）
 

@@ -322,6 +322,42 @@ def normalize_pan_organ(pan_organ: str | None) -> str | None:
     return normalize_dataset_id(pan_organ)
 
 
+# s1167 TMA cores are ~2k×2k px with a few thousand cells. The HCC / Xenium
+# defaults (s=0.6 maps, s=0.25–0.5 StarDist) look like single pixels on TMA.
+TMA_PAN_ORGANS = frozenset({"codex_pdac", "codex_gist"})
+DEFAULT_SPATIAL_POINT_SIZE = 0.6
+DEFAULT_STARDIST_MAP_POINT_SIZE = 0.25
+DEFAULT_SPATIAL_OVERVIEW_POINT_SIZE = 0.5
+TMA_SPATIAL_POINT_SIZE = 12.0
+TMA_SPATIAL_OVERVIEW_POINT_SIZE = 5.0
+
+
+def default_spatial_point_size(
+    pan_organ: str | None = None,
+    *,
+    overview: bool = False,
+    stardist_map: bool = False,
+) -> float:
+    """Matplotlib scatter ``s`` for spatial cell maps.
+
+    PDAC / GIST TMA cores use a larger marker than HCC / Xenium whole slides.
+    Pass an explicit ``spatial_point_size`` at the call site to override.
+    """
+    organ = None
+    if pan_organ is not None:
+        try:
+            organ = normalize_pan_organ(pan_organ)
+        except ValueError:
+            organ = str(pan_organ).strip().lower()
+    if organ in TMA_PAN_ORGANS:
+        return TMA_SPATIAL_OVERVIEW_POINT_SIZE if overview else TMA_SPATIAL_POINT_SIZE
+    if overview:
+        return DEFAULT_SPATIAL_OVERVIEW_POINT_SIZE
+    if stardist_map:
+        return DEFAULT_STARDIST_MAP_POINT_SIZE
+    return DEFAULT_SPATIAL_POINT_SIZE
+
+
 _PAN_ORGAN_HEAD_SCHEMES: dict[str, dict[str, str]] = {
     # CODEX ESCC uses a single scheme; tier is selected via column/tier hints.
     "codex_escc": {

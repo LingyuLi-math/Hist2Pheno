@@ -1,7 +1,7 @@
 # Hist2Pheno
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](requirements.txt)
+[![Python](https://img.shields.io/badge/python-3.11-blue.svg)](environment.yml)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 
 **Predict cell phenotypes from H&E histology**, then map those predictions in space.
@@ -34,7 +34,7 @@ flowchart LR
 | Dataset | Folder | Scale | Labels | `pan_organ` |
 |---------|--------|-------|--------|-------------|
 | Xenium lung fibrosis ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)) | [`code/Xenium_lung/`](code/Xenium_lung/) | 25 Complete + 20 Incomplete | five-head (L2 / L12 / L1 / CNiche / TNiche) | `xenium_lung` |
-| CODEX HCC (s4769) | [`code/CODEX_hcc/`](code/CODEX_hcc/) | 36–38 Visium-aligned HE regions | three-head (L2 / L12 / L1) | `codex_hcc` |
+| CODEX HCC (s4769; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869)) | [`code/CODEX_hcc/`](code/CODEX_hcc/) | 36–38 Visium-aligned HE regions | three-head (L2 / L12 / L1) | `codex_hcc` |
 | CODEX ESCC (NCRT cohort) | [`code/CODEX_escc/`](code/CODEX_escc/) | tumor ROIs | five-tier labels | `codex_escc` |
 | CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` |
 | CODEX GIST (s1167 GIST TMA) | [`code/CODEX_gist/`](code/CODEX_gist/) | 550 annotated cores | three-head | `codex_gist` |
@@ -54,6 +54,7 @@ Hist2Pheno/
 │   ├── CODEX_escc/
 │   ├── CODEX_pdac/
 │   └── CODEX_gist/
+├── environment.yml              # dedicated Hist2Pheno conda env
 ├── requirements.txt
 └── LICENSE
 ```
@@ -67,15 +68,34 @@ git clone https://github.com/LingyuLi-math/Hist2Pheno.git
 cd Hist2Pheno
 ```
 
-Use a CUDA-enabled PyTorch environment. The development env is named `SeededNTM`; a fresh install can start from:
+Hist2Pheno was developed in the existing **SeededNTM** conda environment ([LingyuLi-math/SeededNTM](https://github.com/LingyuLi-math/SeededNTM)). This repo now ships a dedicated env of the same stack: Python **3.11**, conda-forge HDF5 / pyarrow / pyproj, then the scientific Python packages in [`requirements.txt`](requirements.txt). Keep **NumPy 1.x** (NumPy 2 breaks some pandas / scanpy combinations used here).
+
+### Option A — create `Hist2Pheno` (recommended for GitHub)
 
 ```bash
-conda create -n Hist2Pheno python=3.10
+conda env create -f environment.yml
 conda activate Hist2Pheno
-pip install -r requirements.txt
-# install a CUDA PyTorch build that matches your driver:
+
+# CUDA PyTorch matching your driver (tested: torch 2.9 + CUDA 13.0)
 # https://pytorch.org/get-started/locally/
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+python -m ipykernel install --user --name Hist2Pheno --display-name "Python (Hist2Pheno)"
 ```
+
+`cu128` is an example index. Change it if your driver needs another CUDA wheel.
+
+### Option B — clone the existing `SeededNTM` env (this machine)
+
+If `SeededNTM` is already installed and working:
+
+```bash
+conda create --name Hist2Pheno --clone SeededNTM
+conda activate Hist2Pheno
+```
+
+Then run Hist2Pheno with `conda activate Hist2Pheno` (or `conda run -n Hist2Pheno ...`) instead of `SeededNTM`.
 
 UNI / HIPT / Virchow2 **weights are not bundled**. Place them where `Image_feature_extraction.py` expects, or pass the checkpoint path used in your dataset `demo.sh`.
 
@@ -102,7 +122,7 @@ Notebooks: set `NCRT_CUDA_DEVICE` **before** `import torch`, then restart the ke
 Every CODEX / Xenium track follows the same five stages. Replace `CODEX_pdac` with the dataset folder you need.
 
 ```bash
-conda activate SeededNTM   # or Hist2Pheno
+conda activate Hist2Pheno   # or SeededNTM, if you have not cloned the env yet
 cd /path/to/Hist2Pheno
 
 # 1. Match GT cells to HE pixels (and StarDist, if annotated)
@@ -147,15 +167,16 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 | Project | Local layout (example) | Notes |
 |---------|------------------------|--------|
 | Xenium lung | `Spatial-PF-Processed/Data/{Complete,Incomplete}_Cases/` | [GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346); see [`code/Xenium_lung/README.md`](code/Xenium_lung/README.md) |
-| CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | Visium-aligned HE + CODEX cell tables |
+| CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | Visium-aligned HE + CODEX; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869), processed data on [Zenodo](https://doi.org/10.5281/zenodo.15392699) |
 | CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST) |
 | CODEX ESCC | `data/CODEX/ESCC/` | NCRT remains the cohort path name |
 
 ## Citation
 
-If you use this code, please cite the associated publication (TBD) and the source datasets, including:
+If you use this code, please cite the associated publication (TBD) and the source datasets:
 
-> Kedlian et al., spatial multi-omics lung fibrosis atlas ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)).
+- **CODEX HCC** — Wu Z, Boen J, Jindal S, et al. Spatial multi-omics and deep learning reveal fingerprints of immunotherapy response and resistance in hepatocellular carcinoma. *bioRxiv* (2025). [doi:10.1101/2025.06.11.656869](https://doi.org/10.1101/2025.06.11.656869). Processed CODEX / Visium / co-registered H&E: [Zenodo](https://doi.org/10.5281/zenodo.15392699).
+- **Xenium lung** — Kedlian et al., spatial multi-omics lung fibrosis atlas ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)).
 
 ## License
 

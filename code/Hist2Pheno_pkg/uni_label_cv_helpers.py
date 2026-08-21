@@ -22,6 +22,7 @@ from plotting_palettes import (
     clinical_columns_for_pan_organ,
     clinical_group_order,
     scheme_for_pan_organ,
+    default_spatial_point_size,
 )
 
 ###############################################
@@ -278,13 +279,16 @@ def plot_stardist_label_spatial_heads(
     sample: str,
     heads: Sequence[str],
     pan_organ: str,
-    spatial_point_size: float = 0.25,
+    spatial_point_size: float | None = None,
     fig_size: tuple[float, float] = (10, 8),
     show: bool = False,
     title_prefix: str | None = None,
 ) -> dict[str, Path]:
     """Write one pred-only spatial JPG per head next to the label h5ad."""
     from plot import plot_celltype_spatial_distribution, plot_tier_spatial_distribution
+
+    if spatial_point_size is None:
+        spatial_point_size = default_spatial_point_size(pan_organ, stardist_map=True)
 
     save_dir = Path(rec["path"]).parent
     n_obs = rec.get("n_obs")
@@ -319,7 +323,7 @@ def plot_stardist_label_spatial_overview(
     heads: Sequence[str],
     pan_organ: str,
     save_path=None,
-    point_size: float = 0.5,
+    point_size: float | None = None,
     sample_labels: Mapping[str, str] | None = None,
     suptitle: str | None = None,
     show: bool = True,
@@ -327,6 +331,9 @@ def plot_stardist_label_spatial_overview(
     """Compact ``n_samples × n_heads`` pred-only spatial grid."""
     import matplotlib.pyplot as plt
     from plotting_palettes import resolve_palette
+
+    if point_size is None:
+        point_size = default_spatial_point_size(pan_organ, overview=True)
 
     samples = list(loaded)
     n_row, n_col = len(samples), len(heads)
@@ -390,7 +397,7 @@ def plot_stardist_label_spatial_maps(
     label_h5ad_path_fn,
     heads: Sequence[str],
     pan_organ: str,
-    spatial_point_size: float = 0.25,
+    spatial_point_size: float | None = None,
     fig_size: tuple[float, float] = (10, 8),
     show: bool = False,
     title_prefix_fn=None,
