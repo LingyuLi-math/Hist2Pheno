@@ -6,6 +6,16 @@ for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
 ## Changelog
 
+### 2026-08-27 — Shared histology niche-index engine
+
+- Added `histology_niche_index.py`: dataset-neutral TLS / SRI / TNI (AUROC load,
+  neighborhood scores, cohort Q4 / burden, source-metric grid).
+- Register a new organ with `OrganNicheConfig` + `register_organ_config` (GBM /
+  BRCA can call this without copying HCC/PDAC modules).
+- CODEX HCC / PDAC / GIST keep thin wrappers for paths and clinical I/O.
+- Xenium lung ARI / FRI / pathologist code stays in
+  `Xenium_lung/histology_derived_niche_index.py`.
+
 ### 2026-08-13 — Dataset-aware plotting refactor
 
 - Moved canonical CODEX ESCC, Xenium lung, and CODEX HCC palettes and palette
@@ -38,6 +48,7 @@ helpers moved from `Xenium_lung/xenium_uni_nb_helpers.py` to
 | [`plot.py`](plot.py) | Dataset-neutral ROC, confusion-matrix, and spatial plotting APIs, including multi-tier prediction plots. |
 | [`plotting_palettes.py`](plotting_palettes.py) | Canonical palette registry, dataset/tier normalization, scheme aliases, RGBA conversion, and deterministic palette resolution. |
 | [`plotting_utils.py`](plotting_utils.py) | Generic DataFrame count/composition transforms and reusable bar, stacked-composition, and lineage-panel plots. |
+| [`histology_niche_index.py`](histology_niche_index.py) | Shared TLS / SRI / TNI engine (`OrganNicheConfig`, neighborhood scores, cohort burden). |
 | [`uni_label_cv_helpers.py`](uni_label_cv_helpers.py) | Shared UNI-label CV, internal-validation, and StarDist prediction/report helpers used by dataset pipelines and notebooks. |
 
 ## Architecture boundary

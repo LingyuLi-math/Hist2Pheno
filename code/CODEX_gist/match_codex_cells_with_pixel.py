@@ -34,9 +34,12 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPT_DIR.parents[1]
 _PKG_DIR = _REPO_ROOT / "code" / "Hist2Pheno_pkg"
 _CODEX_PDAC_DIR = _REPO_ROOT / "code" / "CODEX_pdac"
-for _p in (_SCRIPT_DIR, _CODEX_PDAC_DIR, _PKG_DIR):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+# Last insert wins: keep this GIST module ahead of the PDAC twin.
+for _p in (_PKG_DIR, _CODEX_PDAC_DIR, _SCRIPT_DIR):
+    s = str(_p)
+    if s in sys.path:
+        sys.path.remove(s)
+    sys.path.insert(0, s)
 
 from s1167_img_cell_mapping import (  # noqa: E402
     DEFAULT_CODEX_DIR,

@@ -1,4 +1,4 @@
-%cd /home/lingyu/ssd2/Python/Hist2Pheno/
+cd /home/lingyu/ssd2/Python/Hist2Pheno/
 
 ########################################################
 ## Pro-prescription visualization

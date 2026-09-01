@@ -13,7 +13,7 @@
 # All 278 annotated cores:
 # conda run --no-capture-output -n SeededNTM python -u \
 #   code/CODEX_pdac/transer_embedding_label_h5ad.py \
-#   --steps stardist_all_h5ad
+#   --steps stardist_h5ad stardist_all_h5ad
 
 # 195 Incomplete_Cases (StarDist-all h5ad only):
 # conda run --no-capture-output -n SeededNTM python -u \

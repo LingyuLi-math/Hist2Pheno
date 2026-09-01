@@ -32,7 +32,7 @@ Cell-type CSV：GIST 使用 `{acq}.{numeric_id}.cell_types.csv`（见 `CODEX_pda
 | `transer_embedding_label_h5ad.py` | matched / all-nuclei h5ad |
 | `GIST_train_validate_cv_UNIlabel.py` | per-sample + cross-dataset 训练 / StarDist 推断 |
 | `GIST_train_validate_cv_UNIlabel_single.ipynb` | **单核** train / HE validate / StarDist（demo：`Charvill-94_c013_v001_r001_reg002`） |
-| `GIST_train_validate_cv_UNIlabel_all.ipynb` | 跨核 CV notebook（§1–§5） |
+| `GIST_train_validate_cv_UNIlabel_all.ipynb` | 跨核 CV notebook（§1–§5）；默认 **load** CLI 权重，不重训 |
 | `GIST_histology_derived_niche_index.ipynb` | TLS / SRI / TNI 下游（matched StarDist） |
 | `Pred_statistic_visual_gist_all.ipynb` | 550 核 pooled ROC + coverslip / SAMPLE_LABEL AUROC |
 | `gist_histology_derived_niche_index.py` | GIST wrapper（调用 `CODEX_pdac/s1167_histology_derived_niche_index.py`） |
@@ -43,12 +43,12 @@ HE / metadata / cell CSV 读写复用 `code/CODEX_pdac/s1167_img_cell_mapping.py
 
 ## 下游分析（对照 HCC）
 
-先跑完训练轨 `GIST_train_validate_cv_UNIlabel_all.ipynb`（550 annotated → `result_all_spatial/stardist/`），再开这两个 notebook。环境：`SeededNTM`。
+先完成 cross-dataset 权重（CLI `demo.sh` 或 notebook `SKIP_POOLED_TRAIN=False`），输出在 `result_all_spatial_gist/stardist/`。之后再开这两个 notebook。已有权重时用 `_all` notebook 的 `SKIP_POOLED_TRAIN=True` load 即可。环境：`SeededNTM`。
 
 | Notebook | 作用 | 输出 |
 |----------|------|------|
-| `GIST_histology_derived_niche_index.ipynb` | TLS / SRI / TNI（matched StarDist softmax + `spatial_HE`） | `s1167/result_all_spatial/niche_index_gist/` |
-| `Pred_statistic_visual_gist_all.ipynb` | 550 核 pooled ROC；macro AUROC vs **coverslip** / **SAMPLE_LABEL** | `s1167/result_all_spatial/clinical_viz_gist/` |
+| `GIST_histology_derived_niche_index.ipynb` | TLS / SRI / TNI（matched StarDist softmax + `spatial_HE`） | `s1167/result_all_spatial_gist/niche_index_gist/` |
+| `Pred_statistic_visual_gist_all.ipynb` | 550 核 pooled ROC；macro AUROC vs **coverslip** / **SAMPLE_LABEL** | `s1167/result_all_spatial_gist/clinical_viz_gist/` |
 
 `Pred_statistic_visual_gist_all.ipynb` 从 **`CODEX_pdac/s1167_plot.py`** 读临床与 AUROC helpers（`analyze_gist_stardist_macro_auroc_by_clinical`），不要改成 gist 目录里那个同名 `s1167_plot.py`。
 
@@ -110,7 +110,7 @@ conda run --no-capture-output -n SeededNTM python -u \
   --cuda-device 2 \
   --mode cross-dataset \
   --use-spatial-context --spatial-k 8 --spatial-mode mean \
-  --pooled-save-result result_all_spatial
+  --pooled-save-result result_all_spatial_gist
 ```
 
 已经 `export CUDA_VISIBLE_DEVICES=2` 时，不必再加 `--cuda-device 2`。  
@@ -125,7 +125,36 @@ os.environ.setdefault("NCRT_CUDA_DEVICE", "2")
 
 `configure_notebook_runtime()` 会在 `CUDA_VISIBLE_DEVICES` 未设置时把它设为 `2`。若 kernel 启动时已经带了别的 `CUDA_VISIBLE_DEVICES`，需要先清掉或重启。
 
+## Train / validate / StarDist inference
+
+- CLI：`GIST_train_validate_cv_UNIlabel.py`（`--mode per-sample` 或 `cross-dataset`）
+- Notebook：`GIST_train_validate_cv_UNIlabel_all.ipynb`
+  - **默认 `SKIP_POOLED_TRAIN = True`**：不重训，只 load `demo.sh` 写出的 checkpoint
+  - §1 prepare → §2 load `best_mlp_gpu.pt` → §3 打印已有 OOF 图（不重画）
+  - §4 / §5 StarDist 重预测默认注释掉；已有 JPG/PDF 在 `stardist/`
+  - 只有要重新训练时才把 `SKIP_POOLED_TRAIN` 改成 `False`
+
+CLI 不传 `--ablation-tag` 时目录是 **`D_emph_L2`**（即使开了 `--use-spatial-context`）。Notebook 必须用同一个 tag，否则会写到 `D_emph_L2_spatial_bs4096/` 并再训一遍。
+
+```text
+s1167/result_all_spatial_gist/cross_dataset_cv/D_emph_L2/best_mlp_gpu.pt
+s1167/result_all_spatial_gist/roc_internal_level2_oof.pdf
+s1167/result_all_spatial_gist/stardist/{ACQUISITION_ID}/
+```
+
+CLI 训完后看结果：Restart Kernel，再跑 config → §1 → §2。若 CLI 还在跑、`best_mlp_gpu.pt` 尚未写出，§2 会报缺文件，**不会**再开一轮 train；等 CLI 结束后重跑该 cell。
+
+命令索引：`code/CODEX_gist/demo.sh`。
+
 ## Changelog
+
+### 2026-08-28 — `_all` notebook load 已有权重（不重训）
+
+`GIST_train_validate_cv_UNIlabel_all.ipynb` 默认 `SKIP_POOLED_TRAIN=True`，`POOLED_ABLATION_TAG=D_emph_L2`（与 `demo.sh` / CLI 默认一致）。§2 调 `_ensure_pooled_inference_ready` load `best_mlp_gpu.pt`；§3–§5 不自动重训或重预测。不要用 `D_emph_L2_spatial_bs4096`，那会另开一份 CV。
+
+### 2026-08-28 — split pooled outputs from PDAC
+
+Cross-dataset weights now go to `result_all_spatial_gist/` (do not reuse PDAC's folder). Matched StarDist h5ad for pooled validation: `transer_embedding_label_h5ad.py --steps stardist_h5ad`.
 
 ### 2026-08-20 — GIST 下游：niche index + Pred statistic
 

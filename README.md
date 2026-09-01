@@ -6,16 +6,19 @@
 
 **Predict cell phenotypes from H&E histology**, then map those predictions in space.
 
-Hist2Pheno takes per-nucleus H&E patch embeddings (UNI / HIPT / Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS, FRI, ARI, APNB).
+Hist2Pheno takes per-nucleus H&E patch embeddings (UNI / HIPT / Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS / SRI / TNI on CODEX; FRI / ARI / APNB on Xenium).
+
+The **s1167 Pancreas (PDAC) and GIST TMA tracks** are complete end-to-end: match → UNI → h5ad → cross-dataset CV → StarDist inference → pooled ROC / clinical AUROC → TLS / SRI / TNI.
 
 Raw images and embeddings are **not** shipped in this repository. Each dataset folder has its own README and `demo.sh` command index.
 
 ## Highlights
 
-- **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, and CV helpers
+- **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, CV helpers, and the TLS / SRI / TNI engine
 - **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / HIPT / Virchow2 patches from H&E
 - **Multi-cohort pipelines** — Xenium lung fibrosis plus CODEX HCC, ESCC, PDAC, and GIST
 - **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei
+- **s1167 TMAs done** — PDAC (278 annotated + 195 unlabeled cores) and GIST (550 annotated) share one TMA root but keep separate StarDist trees, pooled weights, and clinical notebooks
 
 ```mermaid
 flowchart LR
@@ -25,19 +28,21 @@ flowchart LR
   Match --> H5AD[matched h5ad]
   H5AD --> MLP[Multi-head MLP]
   MLP --> Pred[Predicted phenotypes]
-  Pred --> Spatial[Spatial maps / niche indices]
+  Pred --> Spatial[Spatial maps]
+  Pred --> Clinical[Pooled ROC / clinical AUROC]
+  Spatial --> Niche[TLS / SRI / TNI]
   Star[StarDist nuclei] --> UNI
 ```
 
 ## Supported datasets
 
-| Dataset | Folder | Scale | Labels | `pan_organ` |
-|---------|--------|-------|--------|-------------|
-| Xenium lung fibrosis ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)) | [`code/Xenium_lung/`](code/Xenium_lung/) | 25 Complete + 20 Incomplete | five-head (L2 / L12 / L1 / CNiche / TNiche) | `xenium_lung` |
-| CODEX HCC (s4769; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869)) | [`code/CODEX_hcc/`](code/CODEX_hcc/) | 36–38 Visium-aligned HE regions | three-head (L2 / L12 / L1) | `codex_hcc` |
-| CODEX ESCC (NCRT cohort) | [`code/CODEX_escc/`](code/CODEX_escc/) | tumor ROIs | five-tier labels | `codex_escc` |
-| CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` |
-| CODEX GIST (s1167 GIST TMA) | [`code/CODEX_gist/`](code/CODEX_gist/) | 550 annotated cores | three-head | `codex_gist` |
+| Dataset | Folder | Scale | Labels | `pan_organ` | Pipeline |
+|---------|--------|-------|--------|-------------|----------|
+| Xenium lung fibrosis ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)) | [`code/Xenium_lung/`](code/Xenium_lung/) | 25 Complete + 20 Incomplete | five-head (L2 / L12 / L1 / CNiche / TNiche) | `xenium_lung` | train + niche |
+| CODEX HCC (s4769; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869)) | [`code/CODEX_hcc/`](code/CODEX_hcc/) | 36–38 Visium-aligned HE regions | three-head (L2 / L12 / L1) | `codex_hcc` | train + Pred + niche |
+| CODEX ESCC (NCRT cohort) | [`code/CODEX_escc/`](code/CODEX_escc/) | tumor ROIs | five-tier labels | `codex_escc` | train |
+| CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` | **full** (train + Pred + niche) |
+| CODEX GIST (s1167 GIST TMA) | [`code/CODEX_gist/`](code/CODEX_gist/) | 550 annotated cores | three-head | `codex_gist` | **full** (train + Pred + niche) |
 
 Start from the dataset README, then follow that folder’s `demo.sh`.
 
@@ -52,8 +57,8 @@ Hist2Pheno/
 │   ├── Xenium_lung/
 │   ├── CODEX_hcc/
 │   ├── CODEX_escc/
-│   ├── CODEX_pdac/
-│   └── CODEX_gist/
+│   ├── CODEX_pdac/              # s1167 Pancreas TMA (shared mapping + niche engine)
+│   └── CODEX_gist/              # s1167 GIST TMA (thin wrappers + notebooks)
 ├── environment.yml              # dedicated Hist2Pheno conda env
 ├── requirements.txt
 └── LICENSE
@@ -119,7 +124,7 @@ Notebooks: set `NCRT_CUDA_DEVICE` **before** `import torch`, then restart the ke
 
 ## Typical workflow
 
-Every CODEX / Xenium track follows the same five stages. Replace `CODEX_pdac` with the dataset folder you need.
+Every CODEX / Xenium track follows **match → embed → h5ad → train**, then dataset notebooks for CV maps, prediction statistics, and niche indices. The walkthrough below is PDAC; GIST is the same sequence with `CODEX_gist` and `result_all_spatial_gist`.
 
 ```bash
 conda activate Hist2Pheno   # or SeededNTM, if you have not cloned the env yet
@@ -134,19 +139,29 @@ bash code/CODEX_pdac/demo_UNI_feature_extraction_batch.sh stardist
 
 # 3. Write matched / all-nuclei AnnData
 python -u code/CODEX_pdac/transer_embedding_label_h5ad.py --steps he_h5ad
-python -u code/CODEX_pdac/transer_embedding_label_h5ad.py --steps stardist_all_h5ad
+python -u code/CODEX_pdac/transer_embedding_label_h5ad.py --steps stardist_h5ad stardist_all_h5ad
 
 # 4. Cross-dataset train + StarDist inference (GPU)
 python -u code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \
   --mode cross-dataset \
   --use-spatial-context --spatial-k 8 --spatial-mode mean \
-  --pooled-save-result result_all_spatial
+  --pooled-save-result result_all_spatial_pdac
 
-# 5. Interactive CV / spatial maps
-#    open the dataset *_train_validate_cv_UNIlabel_all.ipynb
+# 5. Interactive CV / spatial maps (default: load CLI weights, do not retrain)
+#    open PDAC_train_validate_cv_UNIlabel_all.ipynb
+
+# 6. Histology-derived niche index (TLS / SRI / TNI on matched StarDist)
+#    open PDAC_histology_derived_niche_index.ipynb
+
+# 7. Pooled ROC + per-core macro AUROC vs clinical groups
+#    open Pred_statistic_visual_pdac_all.ipynb
 ```
 
-h5ad builders skip a sample when the cache is valid; pass `--force-rebuild` to overwrite.  
+GIST analog: `GIST_train_validate_cv_UNIlabel.py --pooled-save-result result_all_spatial_gist`, then [`GIST_histology_derived_niche_index.ipynb`](code/CODEX_gist/GIST_histology_derived_niche_index.ipynb) and [`Pred_statistic_visual_gist_all.ipynb`](code/CODEX_gist/Pred_statistic_visual_gist_all.ipynb).
+
+CLI default ablation tag is **`D_emph_L2`** even with `--use-spatial-context`. Notebooks must use the same tag (`SKIP_POOLED_TRAIN=True` loads `best_mlp_gpu.pt`).  
+h5ad builders skip a sample when the cache is valid; pass `--force-rebuild` to overwrite. Pooled StarDist validation needs `--steps stardist_h5ad`, not only `stardist_all_h5ad`.
+
 Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`code/CODEX_hcc/demo.sh`](code/CODEX_hcc/demo.sh), [`code/CODEX_pdac/demo.sh`](code/CODEX_pdac/demo.sh), [`code/CODEX_gist/demo.sh`](code/CODEX_gist/demo.sh), [`code/CODEX_escc/demo.sh`](code/CODEX_escc/demo.sh).
 
 ### Prediction heads
@@ -160,6 +175,37 @@ Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`co
 
 Xenium uses all five heads. HCC / PDAC / GIST use L2 + L12 + L1. Palettes live in [`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py); see the [package README](code/Hist2Pheno_pkg/README.md).
 
+## CODEX PDAC and GIST (s1167 TMA)
+
+Both cohorts live under the same TMA root (`data/CODEX/HCC/Michael_data_transfer/s1167/`) and share [`s1167_img_cell_mapping.py`](code/CODEX_pdac/s1167_img_cell_mapping.py). They are **separate Hist2Pheno tracks**: do not mix StarDist folders, pooled result directories, or niche-index kernels.
+
+| | PDAC | GIST |
+|--|------|------|
+| Folder | [`code/CODEX_pdac/`](code/CODEX_pdac/) | [`code/CODEX_gist/`](code/CODEX_gist/) |
+| Cores | 473 (278 annotated + 195 unlabeled) | 550 (all annotated) |
+| Coverslips | `c001`, `c003`, `c005`, `c007` | `c009`, `c011`, `c013` |
+| StarDist | `StarDist_Segment_pdac/` | `StarDist_Segment_gist/` |
+| Pooled outputs | `s1167/result_all_spatial_pdac/` | `s1167/result_all_spatial_gist/` |
+| Train / infer | Train 278; infer unlabeled → `stardist_Incomplete_Cases/` | Train + infer all 550; no Incomplete_Cases |
+| Pred notebook | `Pred_statistic_visual_pdac_all.ipynb` | `Pred_statistic_visual_gist_all.ipynb` |
+| Niche notebook | `PDAC_histology_derived_niche_index.ipynb` | `GIST_histology_derived_niche_index.ipynb` |
+| Clinical groups | coverslip, `SAMPLE_LABEL` | coverslip plus recoded `site` / `size` / mitotic / mutation / risk / primary / `tma_block` |
+| Niche wrapper | `pdac_histology_derived_niche_index.py` | `gist_histology_derived_niche_index.py` |
+
+Shared niche engine: [`s1167_histology_derived_niche_index.py`](code/CODEX_pdac/s1167_histology_derived_niche_index.py) (`configure("codex_pdac")` or `configure("codex_gist")`) on top of [`histology_niche_index.py`](code/Hist2Pheno_pkg/histology_niche_index.py). **Do not import both wrappers in one kernel** — `configure()` is global.
+
+GIST Pred and clinical recoding (`recode_gist_tma_clinical`) live in **[`code/CODEX_pdac/s1167_plot.py`](code/CODEX_pdac/s1167_plot.py)**. Do not switch those notebooks to the GIST-folder `s1167_plot.py`.
+
+Neither TMA has immunotherapy **Response**. TNI myeloid = Macrophages (GIST also counts Monocytes); endothelium includes lymphatic endothelial cells on GIST. Niche §6 defaults to `QUICK_VALIDATE=True` (six cores); set `False` for the full cohort.
+
+Outputs under `s1167/`:
+
+| | PDAC | GIST |
+|--|------|------|
+| Weights | `result_all_spatial_pdac/cross_dataset_cv/D_emph_L2/best_mlp_gpu.pt` | `result_all_spatial_gist/cross_dataset_cv/D_emph_L2/best_mlp_gpu.pt` |
+| Niche | `result_all_spatial_pdac/niche_index_pdac/` | `result_all_spatial_gist/niche_index_gist/` |
+| Clinical viz | `result_all_spatial_pdac/clinical_viz_pdac/` | `result_all_spatial_gist/clinical_viz_gist/` |
+
 ## Data
 
 This repo tracks **code only**. Point each pipeline at your local copy:
@@ -168,7 +214,7 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 |---------|------------------------|--------|
 | Xenium lung | `Spatial-PF-Processed/Data/{Complete,Incomplete}_Cases/` | [GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346); see [`code/Xenium_lung/README.md`](code/Xenium_lung/README.md) |
 | CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | Visium-aligned HE + CODEX; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869), processed data on [Zenodo](https://doi.org/10.5281/zenodo.15392699) |
-| CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST) |
+| CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST). Metadata: `raw_metadata_updated.xlsx` sheet `Clinical_info` |
 | CODEX ESCC | `data/CODEX/ESCC/` | NCRT remains the cohort path name |
 
 ## Citation

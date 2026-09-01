@@ -13,7 +13,8 @@ CUDA_VISIBLE_DEVICES=2 bash code/CODEX_gist/demo_UNI_feature_extraction_batch.sh
 #########################################################################
 
 
-%cd /home/lingyu/ssd2/Python/Hist2Pheno/
+# Run from Hist2Pheno repo root (not ~/ssd2/Python). %cd is IPython-only.
+cd /home/lingyu/ssd2/Python/Hist2Pheno/
   conda activate SeededNTM
   export CUDA_VISIBLE_DEVICES=2    # 换一张卡
 
@@ -43,7 +44,7 @@ CUDA_VISIBLE_DEVICES=2 bash code/CODEX_gist/demo_UNI_feature_extraction_batch.sh
     --steps he_h5ad stardist_csv stardist_h5ad stardist_all_h5ad
   conda run --no-capture-output -n SeededNTM python -u \
     code/CODEX_gist/transer_embedding_label_h5ad.py \
-    --steps stardist_all_h5ad
+    --steps stardist_h5ad stardist_all_h5ad
 
 4_GIST_train_validate_cv_UNIlabel.py
   conda run --no-capture-output -n SeededNTM python -u \
@@ -53,7 +54,7 @@ CUDA_VISIBLE_DEVICES=2 bash code/CODEX_gist/demo_UNI_feature_extraction_batch.sh
     code/CODEX_gist/GIST_train_validate_cv_UNIlabel.py \
     --mode cross-dataset \
     --use-spatial-context --spatial-k 8 --spatial-mode mean \
-    --pooled-save-result result_all_spatial
+    --pooled-save-result result_all_spatial_gist
 
 4b_GIST_train_validate_cv_UNIlabel_single.ipynb
   ## One annotated core: HE h5ad → K-fold train → HE validate → StarDist
@@ -65,9 +66,9 @@ CUDA_VISIBLE_DEVICES=2 bash code/CODEX_gist/demo_UNI_feature_extraction_batch.sh
 6_GIST_histology_derived_niche_index.ipynb
   ## TLS / SRI / TNI on matched StarDist (demo: Charvill-94_c013_v001_r001_reg002)
   ## §6 QUICK_VALIDATE=True → first 6 cores; set False for all 550
-  ## out: s1167/result_all_spatial/niche_index_gist/
+  ## out: s1167/result_all_spatial_gist/niche_index_gist/
 
 7_Pred_statistic_visual_gist_all.ipynb
   ## 550 annotated: pooled ROC + macro AUROC vs coverslip / SAMPLE_LABEL
   ## helpers: CODEX_pdac/s1167_plot.py (not gist/s1167_plot.py)
-  ## out: s1167/result_all_spatial/clinical_viz_gist/
+  ## out: s1167/result_all_spatial_gist/clinical_viz_gist/

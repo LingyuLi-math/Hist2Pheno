@@ -58,7 +58,7 @@ def _subset_loaded_by_coverslip(
 def plot_gist_stardist_spatial_maps(
     data_root,
     samples: Sequence[str],
-    save_result: str = "result_all_spatial",
+    save_result: str = "result_all_spatial_gist",
     *,
     heads: Sequence[str] = GIST_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_gist",
@@ -90,7 +90,7 @@ def plot_gist_stardist_spatial_maps(
 def plot_gist_stardist_spatial_overview(
     loaded: Mapping[str, Mapping],
     data_root,
-    save_result: str = "result_all_spatial",
+    save_result: str = "result_all_spatial_gist",
     *,
     heads: Sequence[str] = GIST_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_gist",
@@ -98,11 +98,14 @@ def plot_gist_stardist_spatial_overview(
     show: bool = True,
     save_path=None,
     max_per_coverslip: int | None = 2,
+    figsize: tuple[float, float] | None = None,
+    dpi: int = 200,
 ):
     """n×3 overview of GIST StarDist-all predicted spatial maps.
 
     Defaults to ``max_per_coverslip=2`` so 550 cores do not make a huge grid.
     Pass ``max_per_coverslip=None`` to plot every loaded core.
+    ``figsize`` is ``(width, height)`` inches; ``dpi`` is used when saving the JPG.
     """
     from uni_label_cv_helpers import plot_stardist_label_spatial_overview
 
@@ -125,4 +128,6 @@ def plot_gist_stardist_spatial_overview(
         sample_labels={s: short_gist_acq_label(s) for s in plot_loaded},
         suptitle="GIST StarDist-all predicted spatial maps (pred only)",
         show=show,
+        figsize=figsize,
+        dpi=dpi,
     )

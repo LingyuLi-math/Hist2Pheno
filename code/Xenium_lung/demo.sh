@@ -1,6 +1,6 @@
 ## 20260520 copy from demo.sh
 
-%cd /home/lingyu/ssd2/Python/Hist2Pheno/
+cd /home/lingyu/ssd2/Python/Hist2Pheno/
 
 ## 2026.06.22: LLY, Define the order of .py
 1_extract_cell_spatial_coords.py

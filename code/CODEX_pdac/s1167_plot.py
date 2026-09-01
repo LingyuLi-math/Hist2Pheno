@@ -187,9 +187,17 @@ def plot_pooled_celltype_distribution(
 
 #####################################################
 # 2026.08.20 Incomplete_Cases StarDist-all spatial maps
+# 2026.09.01: add GIST clinical information
 #####################################################
 PDAC_STARDIST_MACRO_AUROC_TIERS: tuple[str, ...] = ("l2", "l12", "l1")
 S1167_STARDIST_CLINICAL_COLUMNS: tuple[str, ...] = ("coverslip", "SAMPLE_LABEL")
+GIST_TMA_CLINICAL_RAW_COLUMNS: tuple[str, ...] = (
+    "tma_position", "site", "size", "mitotic_rate", "mutation_status", "risk", "primary",
+)
+GIST_TMA_CLINICAL_GROUP_COLUMNS: tuple[str, ...] = (
+    "site_group", "size_group", "mitotic_group", "mutation_group",
+    "risk_group", "primary_group", "tma_block",
+)
 
 
 def short_pdac_acq_label(sample: str) -> str:
@@ -224,7 +232,7 @@ def _subset_loaded_by_coverslip(
 def plot_pdac_incomplete_stardist_spatial_maps(
     data_root,
     samples: Sequence[str],
-    save_result: str = "result_all_spatial",
+    save_result: str = "result_all_spatial_pdac",
     *,
     heads: Sequence[str] = PDAC_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_pdac",
@@ -256,7 +264,7 @@ def plot_pdac_incomplete_stardist_spatial_maps(
 def plot_pdac_incomplete_stardist_spatial_overview(
     loaded: Mapping[str, Mapping],
     data_root,
-    save_result: str = "result_all_spatial",
+    save_result: str = "result_all_spatial_pdac",
     *,
     heads: Sequence[str] = PDAC_STARDIST_MACRO_AUROC_TIERS,
     pan_organ: str = "codex_pdac",
@@ -264,11 +272,15 @@ def plot_pdac_incomplete_stardist_spatial_overview(
     show: bool = True,
     save_path=None,
     max_per_coverslip: int | None = 2,
+    figsize: tuple[float, float] | None = None,
+    dpi: int = 200,
 ):
     """n×3 overview of Incomplete_Cases predicted spatial maps.
 
     Defaults to ``max_per_coverslip=2`` so 195 cores do not make a huge grid.
     Pass ``max_per_coverslip=None`` to plot every loaded core.
+    ``figsize`` is ``(width, height)`` inches, forwarded to the overview grid.
+    ``dpi`` is used when saving the JPG (default 200).
     """
     from uni_label_cv_helpers import (
         STARDIST_INCOMPLETE_RESULT_SUBDIR,
@@ -294,6 +306,8 @@ def plot_pdac_incomplete_stardist_spatial_overview(
         sample_labels={s: short_pdac_acq_label(s) for s in plot_loaded},
         suptitle="PDAC Incomplete_Cases StarDist-all predicted spatial maps (pred only)",
         show=show,
+        figsize=figsize,
+        dpi=dpi,
     )
 
 
@@ -338,6 +352,56 @@ def load_s1167_clinical_info(
     return clinical
 
 
+#####################################################
+# 2026.09.01: add GIST clinical information
+#####################################################
+def _stardist_macro_auroc_analyzer():
+    """Fresh ``analyze_stardist_macro_auroc_by_clinical``, reloading stale kernels."""
+    import importlib
+    import inspect
+    import sys
+
+    def _has_param(mod_name: str, fn_name: str, param: str) -> bool:
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            return True
+        fn = getattr(mod, fn_name, None)
+        if fn is None:
+            return True
+        return param in inspect.signature(fn).parameters
+
+    stale = not _has_param(
+        "uni_label_cv_helpers",
+        "analyze_stardist_macro_auroc_by_clinical",
+        "color_by",
+    ) or not _has_param(
+        "uni_label_cv_helpers",
+        "analyze_stardist_macro_auroc_by_clinical",
+        "pairwise",
+    ) or not _has_param(
+        "histology_derived_niche_index",
+        "plot_q4_clinical_comparison",
+        "color_by",
+    ) or not _has_param(
+        "histology_derived_niche_index",
+        "plot_q4_clinical_comparison",
+        "show_pairwise",
+    )
+    if stale:
+        for name in (
+            "plotting_palettes",
+            "histology_derived_niche_index",
+            "uni_label_cv_helpers",
+        ):
+            if name in sys.modules:
+                importlib.reload(sys.modules[name])
+    from uni_label_cv_helpers import (
+        analyze_stardist_macro_auroc_by_clinical as _analyze,
+    )
+
+    return _analyze
+
+
 def analyze_s1167_stardist_macro_auroc_by_clinical(
     stardist_result_root,
     clinical_info: pd.DataFrame,
@@ -346,8 +410,6 @@ def analyze_s1167_stardist_macro_auroc_by_clinical(
     **kwargs,
 ) -> dict:
     """Pooled per-core macro AUROC vs coverslip / SAMPLE_LABEL."""
-    from uni_label_cv_helpers import analyze_stardist_macro_auroc_by_clinical as _analyze
-
     kwargs.setdefault("tiers", PDAC_STARDIST_MACRO_AUROC_TIERS)
     kwargs.setdefault("clinical_columns", S1167_STARDIST_CLINICAL_COLUMNS)
     kwargs.setdefault("clinical_key", "ACQUISITION_ID")
@@ -355,7 +417,10 @@ def analyze_s1167_stardist_macro_auroc_by_clinical(
     kwargs.setdefault("layout", "pooled_stardist")
     kwargs.setdefault("figsize", (12.0, 5.0))
     kwargs.setdefault("legend_ncol", 2)
-    return _analyze(stardist_result_root, clinical_info, **kwargs)
+    kwargs.setdefault("color_by", "sample")
+    return _stardist_macro_auroc_analyzer()(
+        stardist_result_root, clinical_info, **kwargs,
+    )
 
 
 def analyze_pdac_stardist_macro_auroc_by_clinical(
@@ -371,6 +436,127 @@ def analyze_gist_stardist_macro_auroc_by_clinical(
     stardist_result_root, clinical_info: pd.DataFrame, **kwargs,
 ) -> dict:
     kwargs.setdefault("pan_organ", "codex_gist")
+    kwargs.setdefault("color_by", "group")
     return analyze_s1167_stardist_macro_auroc_by_clinical(
         stardist_result_root, clinical_info, **kwargs,
     )
+
+#####################################################
+# 2026.09.01: new function: summarize_gist_tma_clinical for GIST clinical information
+#####################################################
+def summarize_gist_tma_clinical(
+    clinical: pd.DataFrame,
+    *,
+    columns: Sequence[str] = GIST_TMA_CLINICAL_RAW_COLUMNS,
+) -> pd.DataFrame:
+    """Missingness and unique-value counts for GIST TMA clinical fields."""
+    rows = []
+    n = len(clinical)
+    for col in columns:
+        if col not in clinical.columns:
+            rows.append({"column": col, "n": n, "n_missing": n, "n_unique": 0, "present": False})
+            continue
+        ser = clinical[col]
+        n_missing = int(ser.isna().sum())
+        rows.append(
+            {
+                "column": col,
+                "n": n,
+                "n_missing": n_missing,
+                "n_nonmissing": n - n_missing,
+                "n_unique": int(ser.nunique(dropna=True)),
+                "present": True,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _gist_parse_size_cm(val) -> float:
+    if pd.isna(val):
+        return float("nan")
+    nums = [float(x) for x in re.findall(r"(\d+\.?\d*)", str(val))]
+    return max(nums) if nums else float("nan")
+
+
+def _gist_site_group(val) -> str:
+    if pd.isna(val) or str(val).strip() == "":
+        return "Missing"
+    s = str(val).strip().lower()
+    if any(k in s for k in ("stomach", "gastric", "esophagus")):
+        return "Stomach"
+    if any(k in s for k in ("intestine", "jejunum", "duodenum", "ileum")):
+        return "Small intestine"
+    return "Other"
+
+
+def _gist_mutation_group(val) -> str:
+    if pd.isna(val) or str(val).strip() == "":
+        return "Missing"
+    s = str(val).strip().lower()
+    if "unknown" in s:
+        return "Unknown"
+    if "kit" in s:
+        return "KIT"
+    if any(k in s for k in ("pdgfra", "sdh", "wild")):
+        return "Non-KIT"
+    return "Unknown"
+
+
+def _gist_risk_group(val) -> str:
+    if pd.isna(val) or str(val).strip() == "":
+        return "Missing"
+    s = str(val).strip().lower()
+    if "control" in s:
+        return "Control"
+    if s in ("unknown",):
+        return "Unknown"
+    if "intermediate" in s:
+        return "Intermediate"
+    if any(k in s for k in ("high", "malignant")):
+        return "High"
+    if "low" in s:
+        return "Low"
+    return "Unknown"
+
+
+def _gist_primary_group(val) -> str:
+    if pd.isna(val) or str(val).strip() == "":
+        return "Missing"
+    s = str(val).strip().lower()
+    if s == "primary":
+        return "Primary"
+    if s.startswith("met"):
+        return "Metastasis"
+    return "Unknown"
+
+
+def recode_gist_tma_clinical(clinical: pd.DataFrame) -> pd.DataFrame:
+    """Collapse sparse GIST TMA clinical fields into ≤3 analysis groups."""
+    out = clinical.copy()
+    if "tma_position" in out.columns:
+        block = out["tma_position"].astype(str).str.split("_").str[0]
+        out["tma_block"] = np.where(block.isin(["2", "4"]), block, "Missing")
+    if "site" in out.columns:
+        out["site_group"] = out["site"].map(_gist_site_group)
+    if "size" in out.columns:
+        size_cm = out["size"].map(_gist_parse_size_cm)
+        out["size_cm"] = size_cm
+        out["size_group"] = pd.cut(
+            size_cm,
+            bins=[-np.inf, 5, 10, np.inf],
+            labels=["<5 cm", "5–10 cm", "≥10 cm"],
+        ).astype(object)
+        out.loc[size_cm.isna(), "size_group"] = "Missing"
+    if "mitotic_rate" in out.columns:
+        mito = pd.to_numeric(out["mitotic_rate"], errors="coerce")
+        out["mitotic_group"] = np.where(
+            mito.isna(), "Missing",
+            np.where(mito <= 5, "≤5 /50 HPF", ">5 /50 HPF"),
+        )
+    if "mutation_status" in out.columns:
+        out["mutation_group"] = out["mutation_status"].map(_gist_mutation_group)
+    if "risk" in out.columns:
+        out["risk_group"] = out["risk"].map(_gist_risk_group)
+    if "primary" in out.columns:
+        out["primary_group"] = out["primary"].map(_gist_primary_group)
+    return out

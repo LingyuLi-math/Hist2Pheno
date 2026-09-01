@@ -8,6 +8,11 @@
 """
 Histology-derived niche indices from StarDist Level2 softmax probabilities.
 
+Lung-specific TLS / ARI / FRI definitions, pathologist overlays, and Complete /
+Incomplete_Cases loaders live here. Dataset-neutral TLS / SRI / TNI (HCC, PDAC,
+GIST, and new organs such as GBM / BRCA) live in
+``Hist2Pheno_pkg/histology_niche_index.py``.
+
 Input tables (per sample or pooled):
   **Per-sample model** (``Complete_Cases/{sample}/{sample}_project_all_UNI/result/``):
     dataset-specific checkpoint; one AUROC CSV per Complete_Cases folder.
@@ -2332,6 +2337,176 @@ def merge_ari_fri_batch_with_clinical(
     return merged
 
 
+#####################################################
+# 2026.09.01: add GIST clinical information
+#####################################################
+def _holm_adjust(pvals: np.ndarray) -> np.ndarray:
+    """Holm step-down adjusted p-values; non-finite inputs stay NaN."""
+    pvals = np.asarray(pvals, dtype=float)
+    adj = np.full(pvals.shape, np.nan, dtype=float)
+    finite = np.flatnonzero(np.isfinite(pvals))
+    m = int(finite.size)
+    if m == 0:
+        return adj
+    order = finite[np.argsort(pvals[finite])]
+    running = 0.0
+    for rank, idx in enumerate(order):
+        running = max(running, min(1.0, float(pvals[idx]) * (m - rank)))
+        adj[idx] = running
+    return adj
+
+
+def pairwise_group_metric_tests(
+    groups: Sequence[np.ndarray],
+    labels: Sequence[str],
+    *,
+    method: Literal["rank", "parametric"] = "rank",
+    alternative: Literal["two-sided", "less", "greater"] = "two-sided",
+    correction: Literal["holm", "bonferroni", "none"] = "holm",
+) -> list[dict]:
+    """All pairwise two-group tests (Mann–Whitney U or Welch t) with p-adjustment."""
+    from itertools import combinations
+    from scipy.stats import mannwhitneyu, ttest_ind
+
+    method_key = str(method).strip().lower()
+    alt = str(alternative).strip().lower()
+    corr = str(correction).strip().lower()
+    if method_key not in ("rank", "parametric"):
+        raise ValueError(f"method must be 'rank' or 'parametric', got {method!r}")
+    if alt not in ("two-sided", "less", "greater"):
+        raise ValueError(f"alternative must be two-sided/less/greater, got {alternative!r}")
+    if corr not in ("holm", "bonferroni", "none"):
+        raise ValueError(f"correction must be holm/bonferroni/none, got {correction!r}")
+
+    rows: list[dict] = []
+    for i, j in combinations(range(len(groups)), 2):
+        a = np.asarray(groups[i], dtype=float)
+        b = np.asarray(groups[j], dtype=float)
+        a = a[np.isfinite(a)]
+        b = b[np.isfinite(b)]
+        if len(a) < 2 or len(b) < 2:
+            continue
+        if method_key == "parametric":
+            if alt == "two-sided":
+                stat, p = ttest_ind(a, b, equal_var=False, alternative="two-sided")
+            elif alt == "greater":
+                stat, p = ttest_ind(b, a, equal_var=False, alternative="greater")
+            else:
+                stat, p = ttest_ind(b, a, equal_var=False, alternative="less")
+            test_name = "Welch t-test"
+        elif alt == "two-sided":
+            stat, p = mannwhitneyu(a, b, alternative="two-sided")
+            test_name = "Mann-Whitney U"
+        elif alt == "greater":
+            stat, p = mannwhitneyu(b, a, alternative="greater")
+            test_name = "Mann-Whitney U"
+        else:
+            stat, p = mannwhitneyu(b, a, alternative="less")
+            test_name = "Mann-Whitney U"
+        rows.append(
+            {
+                "group_a": str(labels[i]),
+                "group_b": str(labels[j]),
+                "n_a": int(len(a)),
+                "n_b": int(len(b)),
+                "test": test_name,
+                "statistic": float(stat),
+                "p_value": float(p),
+            }
+        )
+
+    p_raw = np.array([r["p_value"] for r in rows], dtype=float)
+    n_pair = int(p_raw.size)
+    if n_pair == 0:
+        return rows
+    if corr == "none" or n_pair == 1:
+        p_adj = p_raw.copy()
+        adj_name = "none"
+    elif corr == "bonferroni":
+        p_adj = np.minimum(1.0, p_raw * n_pair)
+        adj_name = "bonferroni"
+    else:
+        p_adj = _holm_adjust(p_raw)
+        adj_name = "holm"
+    for rec, pa in zip(rows, p_adj):
+        rec["p_adj"] = float(pa) if np.isfinite(pa) else float("nan")
+        rec["p_adjust_method"] = adj_name
+        rec["stars"] = (
+            pvalue_to_stars(rec["p_adj"]) if np.isfinite(rec["p_adj"]) else "NA"
+        )
+    return rows
+
+
+def _annotate_pairwise_brackets(
+    ax,
+    pairwise: Sequence[Mapping],
+    order: Sequence[str],
+    *,
+    y_max: float,
+    y_span: float,
+    fontsize: float = 8,
+) -> float:
+    """Draw significance brackets; return the y coordinate above the top bracket."""
+    pos = {str(lab): float(i + 1) for i, lab in enumerate(order)}
+    usable = []
+    for rec in pairwise:
+        a = str(rec.get("group_a", ""))
+        b = str(rec.get("group_b", ""))
+        if a not in pos or b not in pos:
+            continue
+        x1, x2 = pos[a], pos[b]
+        if x1 == x2:
+            continue
+        usable.append((min(x1, x2), max(x1, x2), rec))
+    if not usable:
+        return y_max
+
+    usable.sort(key=lambda t: (t[1] - t[0], t[0]))
+    levels: list[list[tuple[float, float]]] = []
+    placed: list[tuple[float, float, Mapping, int]] = []
+    for x1, x2, rec in usable:
+        level = 0
+        for level, occupied in enumerate(levels):
+            if all(x2 < lo or x1 > hi for lo, hi in occupied):
+                occupied.append((x1, x2))
+                break
+        else:
+            level = len(levels)
+            levels.append([(x1, x2)])
+        placed.append((x1, x2, rec, level))
+
+    h = y_span * 0.08
+    y0 = y_max + y_span * 0.04
+    top = y_max
+    for x1, x2, rec, level in placed:
+        y = y0 + level * h * 1.45
+        y_bar = y + h * 0.32
+        ax.plot(
+            [x1, x1, x2, x2],
+            [y, y_bar, y_bar, y],
+            color="0.15",
+            lw=0.9,
+            clip_on=False,
+            zorder=4,
+        )
+        p_show = rec.get("p_adj", rec.get("p_value", np.nan))
+        stars = rec.get("stars")
+        if not stars:
+            stars = pvalue_to_stars(float(p_show)) if np.isfinite(p_show) else "NA"
+        ax.text(
+            0.5 * (x1 + x2),
+            y_bar,
+            str(stars),
+            ha="center",
+            va="bottom",
+            fontsize=fontsize,
+            clip_on=False,
+            zorder=5,
+        )
+        top = max(top, y_bar + h * 0.55)
+    return top
+#####################################################
+
 def test_q4_by_clinical_groups(
     df: pd.DataFrame,
     *,
@@ -2341,6 +2516,8 @@ def test_q4_by_clinical_groups(
     pan_organ: str | None = "xenium_lung",
     min_group_size: int = 2,
     alternative: Literal["two-sided", "less", "greater"] = "two-sided",
+    pairwise: bool = True,
+    pairwise_correction: Literal["holm", "bonferroni", "none"] = "holm",
 ) -> pd.DataFrame:
     """
     Compare a sample-level niche metric across clinical groups.
@@ -2349,7 +2526,8 @@ def test_q4_by_clinical_groups(
     ``Q4_global_percent`` or ``active_niche_burden``.
 
     Uses two-sided Mann–Whitney U (Wilcoxon rank-sum) for exactly two groups;
-    Kruskal–Wallis for three or more.
+    Kruskal–Wallis for three or more. Pairwise two-group tests (Holm-adjusted
+    by default) are stored in the ``pairwise`` column.
     """
     from scipy.stats import kruskal, mannwhitneyu
 
@@ -2381,6 +2559,7 @@ def test_q4_by_clinical_groups(
                     "statistic": float("nan"),
                     "n_groups": len(groups),
                     "group_labels": labels,
+                    "pairwise": [],
                 }
             )
             continue
@@ -2396,6 +2575,17 @@ def test_q4_by_clinical_groups(
             stat, p = kruskal(*groups)
             test_name = "Kruskal-Wallis"
         medians = [float(np.median(g)) for g in groups]
+        pair_rows = (
+            pairwise_group_metric_tests(
+                groups,
+                labels,
+                method="rank",
+                alternative=alternative,
+                correction=pairwise_correction,
+            )
+            if pairwise
+            else []
+        )
         rows.append(
             {
                 "clinical_variable": group_col,
@@ -2407,6 +2597,7 @@ def test_q4_by_clinical_groups(
                 "group_labels": labels,
                 "group_median_q4": medians,
                 "group_median_values": medians,
+                "pairwise": pair_rows,
             }
         )
     out = pd.DataFrame(rows)
@@ -2414,7 +2605,9 @@ def test_q4_by_clinical_groups(
         out["neg_log10_p"] = -np.log10(out["p_value"].clip(lower=1e-300))
     return out
 
-
+##############################################  
+# 2026.09.01: plot_q4_clinical_comparison for GIST histology derived niche index
+##############################################  
 def plot_q4_clinical_comparison(
     df: pd.DataFrame,
     stats_summary: pd.DataFrame,
@@ -2429,6 +2622,8 @@ def plot_q4_clinical_comparison(
     ylabel: str | None = None,
     suptitle: str | None = None,
     show_sample_legend: bool = True,
+    show_pairwise: bool = True,
+    color_by: Literal["sample", "group"] = "sample",
     legend_ncol: int = 1,
     legend_fontsize: float = 6.5,
     point_size: float = 28,
@@ -2440,9 +2635,11 @@ def plot_q4_clinical_comparison(
     """
     Boxplots of a sample-level niche metric by clinical group.
 
-    Each scatter point is one sample. When ``sample_col`` is present and
-    ``show_sample_legend=True``, points are colored by sample (consistent across
-    panels) with a shared sample legend on the right.
+    Each scatter point is one sample. ``color_by='sample'`` (default) colors
+    points by sample with a shared sample legend. ``color_by='group'`` colors
+    points by the x-axis clinical group (few legend entries, not hundreds of
+    sample IDs). Pairwise Mann–Whitney / Welch brackets are drawn when
+    ``show_pairwise=True`` (Holm-adjusted p-values).
 
     Use ``q4_col='Q4_global_percent'`` or ``'active_niche_burden'`` for cohort analysis.
     """
@@ -2452,13 +2649,20 @@ def plot_q4_clinical_comparison(
     cols = [c for c in clinical_columns if c in df.columns]
     if not cols:
         raise KeyError(f"No clinical columns found among {clinical_columns!r}.")
+    color_by_key = str(color_by).strip().lower()
+    if color_by_key not in ("sample", "group"):
+        raise ValueError(f"color_by must be 'sample' or 'group', got {color_by!r}")
+    color_by_sample = (
+        color_by_key == "sample" and show_sample_legend and sample_col in df.columns
+    )
+    color_by_group = color_by_key == "group"
     if figsize is None:
+        extra_w = 2.2 if color_by_sample else 0.0
         base_w = max(3.5 * len(cols), 8.0)
-        figsize = (base_w + (2.2 if show_sample_legend and sample_col in df.columns else 0.0), 5.0)
+        figsize = (base_w + extra_w, 5.0)
 
     sample_colors: dict[str, tuple[float, float, float, float]] = {}
     sample_order: list[str] = []
-    color_by_sample = show_sample_legend and sample_col in df.columns
     if color_by_sample:
         sub_all = df.dropna(subset=[q4_col, sample_col])
         sample_order = sorted(sub_all[sample_col].astype(str).unique().tolist())
@@ -2522,6 +2726,19 @@ def plot_q4_clinical_comparison(
                     alpha=0.95,
                     zorder=3,
                 )
+            elif color_by_group:
+                cmap = plt.get_cmap("tab10")
+                group_colors = {lab: cmap(i % 10) for i, lab in enumerate(order)}
+                ax.scatter(
+                    x_vals,
+                    y_vals,
+                    s=point_size,
+                    c=[group_colors[str(g)]] * n_pts,
+                    edgecolors="0.35",
+                    linewidths=0.4,
+                    alpha=0.95,
+                    zorder=3,
+                )
             else:
                 ax.scatter(
                     x_vals,
@@ -2536,28 +2753,86 @@ def plot_q4_clinical_comparison(
         y_min, y_max = float(np.min(flat)), float(np.max(flat))
         y_span = max(y_max - y_min, 1e-9)
         pad_top = y_span * y_annotation_pad
-        ax.set_ylim(y_min - y_span * 0.06, y_max + pad_top)
+        y_hi = y_max + pad_top
 
         stat_row = stats_lookup.get(group_col)
-        if stat_row is not None and np.isfinite(stat_row.get("p_value", np.nan)):
+        pairwise_rows = []
+        if show_pairwise:
+            pw_raw = None if stat_row is None else stat_row.get("pairwise")
+            if isinstance(pw_raw, np.ndarray):
+                pairwise_rows = [x for x in pw_raw.tolist() if isinstance(x, dict)]
+            elif isinstance(pw_raw, (list, tuple)):
+                pairwise_rows = list(pw_raw)
+            if not pairwise_rows:
+                pw_groups, pw_labels = [], []
+                for lab, arr in zip(order, data):
+                    vals = np.asarray(arr, dtype=float)
+                    vals = vals[np.isfinite(vals)]
+                    if len(vals) >= 2:
+                        pw_groups.append(vals)
+                        pw_labels.append(str(lab))
+                method_key = "rank"
+                if stat_row is not None:
+                    method_key = str(stat_row.get("method", "rank") or "rank")
+                pairwise_rows = pairwise_group_metric_tests(
+                    pw_groups, pw_labels, method=method_key,
+                )
+            if pairwise_rows:
+                y_hi = max(
+                    y_hi,
+                    _annotate_pairwise_brackets(
+                        ax, pairwise_rows, order, y_max=y_max, y_span=y_span,
+                    ),
+                )
+
+        show_overall = (
+            stat_row is not None
+            and np.isfinite(stat_row.get("p_value", np.nan))
+            and not (show_pairwise and len(pairwise_rows) == 1)
+        )
+        if show_overall:
             p = float(stat_row["p_value"])
             stars = pvalue_to_stars(p)
+            y_text = y_hi + y_span * 0.04
             ax.text(
                 float(np.mean(positions)),
-                y_max + pad_top * 0.55,
+                y_text,
                 f"{stat_row['test']}\np={p:.3g} ({stars})",
                 ha="center",
-                va="center",
+                va="bottom",
                 fontsize=8,
                 bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.92},
                 clip_on=False,
             )
+            y_hi = y_text + y_span * 0.12
+
+        ax.set_ylim(y_min - y_span * 0.06, y_hi + y_span * 0.04)
 
         ax.set_xticks(positions)
         ax.set_xticklabels(order, rotation=25, ha="right", fontsize=9)
         ax.set_title(group_col, fontsize=10)
         ax.set_ylabel(ylabel if j == 0 else "")
         ax.grid(axis="y", alpha=0.25)
+        if color_by_group and order:
+            cmap = plt.get_cmap("tab10")
+            group_colors = {lab: cmap(i % 10) for i, lab in enumerate(order)}
+            ax.legend(
+                handles=[
+                    Line2D(
+                        [0], [0], marker="o", color="w",
+                        markerfacecolor=group_colors[lab],
+                        markeredgecolor="0.35", markeredgewidth=0.4,
+                        markersize=7, label=lab,
+                    )
+                    for lab in order
+                ],
+                title=group_col,
+                loc="best",
+                fontsize=8,
+                title_fontsize=8.5,
+                frameon=True,
+                borderaxespad=0.2,
+            )
 
     if suptitle is None:
         if q4_col == "active_niche_burden":

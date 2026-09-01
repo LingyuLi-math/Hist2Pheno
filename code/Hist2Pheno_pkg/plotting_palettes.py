@@ -461,6 +461,7 @@ def resolve_effective_scheme(
 
 ##########################################
 # 2026.08.14 clinical group order by pan_organ
+# 2026.09.01: add GIST clinical information
 ##########################################
 CLINICAL_GROUP_ORDER_BY_ORGAN: dict[str, dict[str, tuple[str, ...]]] = {
     "xenium_lung": {
@@ -477,6 +478,13 @@ CLINICAL_GROUP_ORDER_BY_ORGAN: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "codex_gist": {
         "coverslip": ("c009", "c011", "c013"),
+        "tma_block": ("2", "4"),
+        "site_group": ("Stomach", "Small intestine", "Other"),
+        "size_group": ("<5 cm", "5–10 cm", "≥10 cm"),
+        "mitotic_group": ("≤5 /50 HPF", ">5 /50 HPF"),
+        "mutation_group": ("KIT", "Non-KIT", "Unknown"),
+        "risk_group": ("Low", "Intermediate", "High"),
+        "primary_group": ("Primary", "Metastasis", "Unknown"),
     },
 }
 

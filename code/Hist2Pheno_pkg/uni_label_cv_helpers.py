@@ -316,6 +316,36 @@ def plot_stardist_label_spatial_heads(
         saved[head] = out
     return saved
 
+## 2026.08.28 LLY: Add the function to get the overview column legends
+def _overview_column_legends(loaded: Mapping[str, Mapping], heads: Sequence[str], pan_organ: str):
+    """One legend spec per head: (handles, ncol) using the model class list."""
+    from matplotlib.lines import Line2D
+    from plotting_palettes import resolve_palette
+
+    first = next(iter(loaded.values()))
+    specs = {}
+    for head in heads:
+        names = [str(x) for x in first["tiers"][head]["class_names"]]
+        palette = resolve_palette(
+            names,
+            pan_organ=pan_organ,
+            scheme=scheme_for_pan_organ(pan_organ, head=head),
+        )
+        handles = [
+            Line2D(
+                [0], [0],
+                linestyle="none",
+                marker="o",
+                markersize=7,
+                markerfacecolor=palette.get(name, (0.5, 0.5, 0.5, 1.0)),
+                markeredgecolor="none",
+                label=name,
+            )
+            for name in names
+        ]
+        specs[head] = (handles, 2 if len(names) > 6 else 1)
+    return specs
+
 
 def plot_stardist_label_spatial_overview(
     loaded: Mapping[str, Mapping],
@@ -327,8 +357,17 @@ def plot_stardist_label_spatial_overview(
     sample_labels: Mapping[str, str] | None = None,
     suptitle: str | None = None,
     show: bool = True,
+    show_legend: bool = True,
+    figsize: tuple[float, float] | None = None,
+    dpi: int = 200,
 ):
-    """Compact ``n_samples × n_heads`` pred-only spatial grid."""
+    """Compact ``n_samples × n_heads`` pred-only spatial grid.
+
+    When ``show_legend`` is True (default), each column gets its own cell-type
+    color legend (L2 / L12 / L1 palettes differ).
+    ``figsize`` is ``(width, height)`` in inches; default is ``(4.0 * n_cols, auto)``.
+    ``dpi`` is used for ``savefig`` (default 200).
+    """
     import matplotlib.pyplot as plt
     from plotting_palettes import resolve_palette
 
@@ -339,8 +378,31 @@ def plot_stardist_label_spatial_overview(
     n_row, n_col = len(samples), len(heads)
     if n_row == 0:
         raise ValueError("loaded is empty")
+    print(f"Overview datasets (n={n_row}):")
+    for i, sample in enumerate(samples, start=1):
+        n_obs = loaded[sample].get("n_obs")
+        n_txt = f"  n={n_obs:,}" if n_obs is not None else ""
+        print(f"  {i}. {sample}{n_txt}")
+
+    legend_specs = _overview_column_legends(loaded, heads, pan_organ) if show_legend else {}
+    extra_h = 0.0
+    if show_legend:
+        n_leg_rows = max(
+            int(np.ceil(len(handles) / max(ncol, 1)))
+            for handles, ncol in legend_specs.values()
+        )
+        extra_h = 0.28 * n_leg_rows + 0.45
+
+    height_ratios = [3.2] * n_row + ([extra_h] if show_legend else [])
+    n_ax_rows = n_row + int(show_legend)
+    if figsize is None:
+        figsize = (4.0 * n_col, sum(height_ratios))
+    print(f"  figsize={figsize[0]:.1f} × {figsize[1]:.1f} in  dpi={dpi}")
     fig, axes = plt.subplots(
-        n_row, n_col, figsize=(4.0 * n_col, 3.2 * n_row), squeeze=False,
+        n_ax_rows, n_col,
+        figsize=figsize,
+        squeeze=False,
+        gridspec_kw={"height_ratios": height_ratios},
     )
     for i, sample in enumerate(samples):
         rec = loaded[sample]
@@ -372,13 +434,32 @@ def plot_stardist_label_spatial_overview(
             if j == 0:
                 n_txt = f"\nn={n_obs:,}" if n_obs is not None else ""
                 ax.set_ylabel(f"{row_label}{n_txt}", fontsize=8)
+    
+    ## 2026.08.28 LLY: Add the function to show the legend
+    if show_legend:
+        for j, head in enumerate(heads):
+            ax = axes[n_row, j]
+            ax.axis("off")
+            handles, ncol = legend_specs[head]
+            ax.legend(
+                handles=handles,
+                loc="upper center",
+                fontsize=7,
+                frameon=False,
+                ncol=ncol,
+                columnspacing=0.8,
+                handletextpad=0.35,
+                borderaxespad=0.0,
+                labelspacing=0.35,
+            )
+
     if suptitle:
         fig.suptitle(suptitle, fontsize=12, y=1.002)
     fig.tight_layout()
     if save_path is not None:
         out = Path(save_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out, dpi=200, bbox_inches="tight")
+        fig.savefig(out, dpi=dpi, bbox_inches="tight")
         print(f"Overview → {out}")
     # Jupyter auto-displays a returned Figure; close after show so the
     # notebook cell does not render the same overview twice.
@@ -2547,14 +2628,21 @@ def test_metric_by_clinical_groups(
     method: Literal["rank", "parametric"] = "rank",
     alternative: Literal["two-sided", "less", "greater"] = "two-sided",
     min_group_size: int = 2,
+    pairwise: bool = True,
+    pairwise_correction: Literal["holm", "bonferroni", "none"] = "holm",
 ) -> pd.DataFrame:
     """Compare a sample-level metric across clinical groups.
 
     ``method="rank"``: Mann–Whitney U (2 groups) or Kruskal–Wallis (3+).
     ``method="parametric"``: Welch's t-test (2 groups) or one-way ANOVA (3+).
+    When ``pairwise=True`` (default), also run every two-group comparison
+    (same test family) with Holm / Bonferroni / no p-adjustment.
     ``pan_organ`` selects the x-axis group order (``xenium_lung`` / ``codex_hcc``).
     """
     from scipy.stats import f_oneway, kruskal, mannwhitneyu, ttest_ind
+
+    _ensure_xenium_lung_on_path()
+    from histology_derived_niche_index import pairwise_group_metric_tests
 
     order_map = clinical_group_order(pan_organ or "xenium_lung")
 
@@ -2592,6 +2680,7 @@ def test_metric_by_clinical_groups(
                     "statistic": float("nan"),
                     "n_groups": len(groups),
                     "group_labels": labels,
+                    "pairwise": [],
                 }
             )
             continue
@@ -2626,6 +2715,17 @@ def test_metric_by_clinical_groups(
             stat, p = kruskal(*groups)
             test_name = "Kruskal-Wallis"
         medians = [float(np.median(g)) for g in groups]
+        pair_rows = (
+            pairwise_group_metric_tests(
+                groups,
+                labels,
+                method=method_key,
+                alternative=alternative,
+                correction=pairwise_correction,
+            )
+            if pairwise
+            else []
+        )
         rows.append(
             {
                 "clinical_variable": group_col,
@@ -2638,6 +2738,7 @@ def test_metric_by_clinical_groups(
                 "group_labels": labels,
                 "group_median_q4": medians,
                 "group_median_values": medians,
+                "pairwise": pair_rows,
             }
         )
     import pandas as pd
@@ -2648,6 +2749,28 @@ def test_metric_by_clinical_groups(
     return out
 
 
+def _pairwise_stats_frame(stats: pd.DataFrame) -> pd.DataFrame:
+    """Flatten the ``pairwise`` list column into a tidy table."""
+    import pandas as pd
+
+    rows = []
+    for _, row in stats.iterrows():
+        items = row.get("pairwise", None)
+        if not isinstance(items, (list, tuple)):
+            continue
+        for item in items:
+            rec = dict(item)
+            rec["clinical_variable"] = row.get("clinical_variable")
+            rec["metric_col"] = row.get("metric_col")
+            rec["overall_test"] = row.get("test")
+            rec["overall_p"] = row.get("p_value")
+            rows.append(rec)
+    return pd.DataFrame(rows)
+
+
+########################################################
+# 2026.09.01: plot_gist_stardist_macro_auroc_by_clinical for GIST histology derived niche index
+########################################################
 def plot_stardist_macro_auroc_by_clinical(
     merged_auc: pd.DataFrame,
     *,
@@ -2661,6 +2784,9 @@ def plot_stardist_macro_auroc_by_clinical(
     legend_ncol: int = 2,
     show: bool = True,
     save_dir: str | Path | None = None,
+    color_by: Literal["sample", "group"] = "sample",
+    pairwise: bool = True,
+    pairwise_correction: Literal["holm", "bonferroni", "none"] = "holm",
 ) -> dict:
     """Boxplots of per-sample macro AUROC by clinical group, with significance tests."""
     import matplotlib.pyplot as plt
@@ -2698,6 +2824,8 @@ def plot_stardist_macro_auroc_by_clinical(
             pan_organ=pan_organ,
             method=method,
             alternative=alternative,
+            pairwise=pairwise,
+            pairwise_correction=pairwise_correction,
         )
         print(
             f"\n=== {tier_key.upper()} macro AUROC vs clinical groups "
@@ -2705,9 +2833,20 @@ def plot_stardist_macro_auroc_by_clinical(
             flush=True,
         )
         if display_fn is not None:
-            display_fn(stats)
+            display_fn(stats.drop(columns=["pairwise"], errors="ignore"))
         else:
-            print(stats.to_string(index=False))
+            print(stats.drop(columns=["pairwise"], errors="ignore").to_string(index=False))
+        pw_tbl = _pairwise_stats_frame(stats)
+        if len(pw_tbl):
+            adj = str(pairwise_correction) if pairwise else "off"
+            print(
+                f"\nPairwise two-group tests ({method}, p-adjust={adj})",
+                flush=True,
+            )
+            if display_fn is not None:
+                display_fn(pw_tbl)
+            else:
+                print(pw_tbl.to_string(index=False))
 
         tier_label = STARDIST_TIER_DISPLAY.get(tier_key, tier_key.upper())
         save_path = None
@@ -2729,10 +2868,18 @@ def plot_stardist_macro_auroc_by_clinical(
             ylabel=f"Macro AUROC ({tier_label})",
             suptitle=f"StarDist {tier_label} macro AUROC by clinical group",
             save_path=save_path,
+            color_by=color_by,
+            show_sample_legend=color_by == "sample",
+            show_pairwise=pairwise,
         )
         if show:
             plt.show()
-        by_tier[tier_key] = {"stats": stats, "fig": fig, "metric_col": metric_col}
+        by_tier[tier_key] = {
+            "stats": stats,
+            "pairwise": pw_tbl,
+            "fig": fig,
+            "metric_col": metric_col,
+        }
 
     return {"merged": plot_df, "by_tier": by_tier, "method": method}
 
@@ -2755,6 +2902,9 @@ def analyze_stardist_macro_auroc_by_clinical(
     legend_ncol: int = 2,
     show: bool = True,
     save_dir: str | Path | None = None,
+    color_by: Literal["sample", "group"] = "sample",
+    pairwise: bool = True,
+    pairwise_correction: Literal["holm", "bonferroni", "none"] = "holm",
 ) -> dict:
     """
     Compare sample-level StarDist macro AUROC across clinical groups.
@@ -2762,6 +2912,7 @@ def analyze_stardist_macro_auroc_by_clinical(
     Builds the per-sample AUROC table, joins clinical metadata, then plots
     boxplots with Mann–Whitney / Kruskal–Wallis (``method="rank"``) or
     Welch t / ANOVA (``method="parametric"``).
+    Pairwise two-group tests are included by default (Holm-adjusted).
     ``pan_organ`` selects clinical columns and x-axis group order
     (``xenium_lung`` or ``codex_hcc``).
     """
@@ -2793,6 +2944,9 @@ def analyze_stardist_macro_auroc_by_clinical(
         legend_ncol=legend_ncol,
         show=show,
         save_dir=save_dir,
+        color_by=color_by,
+        pairwise=pairwise,
+        pairwise_correction=pairwise_correction,
     )
     return {
         "auroc_df": auroc_df,

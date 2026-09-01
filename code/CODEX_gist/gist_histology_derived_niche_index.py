@@ -18,7 +18,11 @@ from s1167_histology_derived_niche_index import *  # noqa: F401,F403
 from s1167_histology_derived_niche_index import (  # noqa: E402
     DEFAULT_SPATIAL_RADIUS_UM,
     DEFAULT_UM_PER_HE_PIXEL,
+    GIST_TMA_CLINICAL_GROUP_COLUMNS,
+    GIST_TMA_CLINICAL_RAW_COLUMNS,
     ORGAN_CONFIGS,
+    recode_gist_tma_clinical,
+    summarize_gist_tma_clinical,
 )
 
 PAN_ORGAN = "codex_gist"

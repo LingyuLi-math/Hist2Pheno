@@ -12,7 +12,7 @@
 # All 550 annotated GIST cores:
 # conda run --no-capture-output -n SeededNTM python -u \
 #   code/CODEX_gist/transer_embedding_label_h5ad.py \
-#   --steps stardist_all_h5ad
+#   --steps stardist_h5ad stardist_all_h5ad
 
 #!/usr/bin/env python3
 """

@@ -22,7 +22,7 @@
 # python -u code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \
 #   --mode cross-dataset \
 #   --use-spatial-context --spatial-k 8 --spatial-mode mean \
-#   --pooled-save-result result_all_spatial \
+#   --pooled-save-result result_all_spatial_pdac \
 #   --ablation-tag D_emph_L2_spatial_bs4096
 
 ## StarDist-all h5ad (annotated):
@@ -58,7 +58,7 @@ Terminal usage (from repo root ``Hist2Pheno``):
 
   python -u code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \\
     --mode cross-dataset --use-spatial-context --spatial-k 8 --spatial-mode mean \\
-    --pooled-save-result result_all_spatial
+    --pooled-save-result result_all_spatial_pdac
 
 CSV outputs under ``s1167/{ACQUISITION_ID}/project_all_UNI/result/``.
 Incomplete_Cases StarDist-all labels go to
@@ -190,7 +190,7 @@ DEFAULT_SAVE_RESULT = "result"
 # Canonical organ selector for shared plotting APIs.
 PAN_ORGAN = "codex_pdac"
 DEFAULT_PER_SAMPLE_SAVE_RESULT = "result"
-DEFAULT_POOLED_SAVE_RESULT = "result_all"
+DEFAULT_POOLED_SAVE_RESULT = "result_all_spatial_pdac"
 DEFAULT_SPATIAL_K = 8
 DEFAULT_SPATIAL_MODE = "mean"
 DEFAULT_USE_SPATIAL_CONTEXT = True
@@ -1361,7 +1361,10 @@ def _load_sample_stardist_arrays(ctx: PooledRunContext, sample: str) -> dict:
 
     stardist_h5ad = ctx.cases_root / sample / f"{sample}_matched_features_stardist.h5ad"
     if not stardist_h5ad.is_file():
-        raise FileNotFoundError(stardist_h5ad)
+        raise FileNotFoundError(
+            f"Missing matched StarDist h5ad (file was never built, not corrupt): {stardist_h5ad}\n"
+            "Run: python -u code/CODEX_pdac/transer_embedding_label_h5ad.py --steps stardist_h5ad"
+        )
     adata_star = ad.read_h5ad(stardist_h5ad)
     spatial_key = "spatial" if "spatial" in adata_star.obsm else "spatial_HE"
     out = {

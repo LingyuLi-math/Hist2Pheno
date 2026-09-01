@@ -21,7 +21,7 @@
 # python -u code/CODEX_gist/GIST_train_validate_cv_UNIlabel.py \
 #   --mode cross-dataset \
 #   --use-spatial-context --spatial-k 8 --spatial-mode mean \
-#   --pooled-save-result result_all_spatial \
+#   --pooled-save-result result_all_spatial_gist \
 #   --ablation-tag D_emph_L2_spatial_bs4096
 
 ## StarDist-all h5ad (annotated):
@@ -50,7 +50,7 @@ Terminal usage (from repo root ``Hist2Pheno``):
 
   python -u code/CODEX_gist/GIST_train_validate_cv_UNIlabel.py \\
     --mode cross-dataset --use-spatial-context --spatial-k 8 --spatial-mode mean \\
-    --pooled-save-result result_all_spatial
+    --pooled-save-result result_all_spatial_gist
 
 CSV outputs under ``s1167/{ACQUISITION_ID}/project_all_UNI/result/``.
 There is no Incomplete_Cases track: all 550 GIST cores are annotated.
@@ -85,9 +85,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PKG_DIR = _REPO_ROOT / "code" / "Hist2Pheno_pkg"
 _CODEX_GIST_DIR = _REPO_ROOT / "code" / "CODEX_gist"
 _CODEX_PDAC_DIR = _REPO_ROOT / "code" / "CODEX_pdac"
-for _p in (_PKG_DIR, _CODEX_GIST_DIR, _CODEX_PDAC_DIR):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+
+
+def _prepend_sys_path(*dirs: Path) -> None:
+    """Last dir is searched first. GIST must beat PDAC for same-named modules."""
+    for d in dirs:
+        s = str(d)
+        if s in sys.path:
+            sys.path.remove(s)
+        sys.path.insert(0, s)
+
+
+_prepend_sys_path(_PKG_DIR, _CODEX_PDAC_DIR, _CODEX_GIST_DIR)
 
 import base  # noqa: E402
 from base import (  # noqa: E402
@@ -113,6 +122,13 @@ from match_codex_cells_with_pixel import (  # noqa: E402
     list_aligned_annotated_regions,
     stardist_csv_path,
 )
+import match_codex_cells_with_pixel as _gist_match  # noqa: E402
+
+if "CODEX_gist" not in Path(_gist_match.__file__).parts:
+    raise ImportError(
+        "GIST CLI imported PDAC match_codex_cells_with_pixel "
+        f"({_gist_match.__file__}). Keep CODEX_gist ahead of CODEX_pdac on sys.path."
+    )
 from model import (  # noqa: E402
     _build_spatial_neighbor_index_for_cv_data,
     get_select4_best_checkpoint_path,
@@ -178,7 +194,7 @@ DEFAULT_SAVE_RESULT = "result"
 # Canonical organ selector for shared plotting APIs.
 PAN_ORGAN = "codex_gist"
 DEFAULT_PER_SAMPLE_SAVE_RESULT = "result"
-DEFAULT_POOLED_SAVE_RESULT = "result_all"
+DEFAULT_POOLED_SAVE_RESULT = "result_all_spatial_gist"
 DEFAULT_SPATIAL_K = 8
 DEFAULT_SPATIAL_MODE = "mean"
 DEFAULT_USE_SPATIAL_CONTEXT = True
@@ -1349,7 +1365,10 @@ def _load_sample_stardist_arrays(ctx: PooledRunContext, sample: str) -> dict:
 
     stardist_h5ad = ctx.cases_root / sample / f"{sample}_matched_features_stardist.h5ad"
     if not stardist_h5ad.is_file():
-        raise FileNotFoundError(stardist_h5ad)
+        raise FileNotFoundError(
+            f"Missing matched StarDist h5ad (file was never built, not corrupt): {stardist_h5ad}\n"
+            "Run: python -u code/CODEX_gist/transer_embedding_label_h5ad.py --steps stardist_h5ad"
+        )
     adata_star = ad.read_h5ad(stardist_h5ad)
     spatial_key = "spatial" if "spatial" in adata_star.obsm else "spatial_HE"
     out = {
@@ -2195,7 +2214,7 @@ def main(argv: list[str] | None = None) -> int:
     column_rename = dict(HCC_COLUMN_RENAME)
 
     print(f"Cases root: {cases_root}", flush=True)
-    print(f"Samples:    {len(samples)} (ALIGNED annotated HCC)", flush=True)
+    print(f"Samples:    {len(samples)} (annotated GIST TMA)", flush=True)
     print(f"Steps:      {', '.join(sorted(steps))}", flush=True)
     print(f"Device:     {device}", flush=True)
     print(f"Train batch size: {args.train_batch_size}", flush=True)

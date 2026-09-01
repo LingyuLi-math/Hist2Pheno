@@ -57,7 +57,7 @@ HE 仍在每个 acquisition 文件夹内，与 HCC s4769 的 `MATCHED_HE` 布局
 | `transer_embedding_label_h5ad.py` | matched / all-nuclei h5ad |
 | `PDAC_train_validate_cv_UNIlabel.py` | per-sample + cross-dataset 训练 / StarDist 推断 |
 | `PDAC_train_validate_cv_UNIlabel_single.ipynb` | **单核** train / HE validate / StarDist（demo：`Charvill-94_c001_v001_r001_reg001`） |
-| `PDAC_train_validate_cv_UNIlabel_all.ipynb` | 跨核 CV notebook（§1–§6） |
+| `PDAC_train_validate_cv_UNIlabel_all.ipynb` | 跨核 CV notebook（§1–§6）；默认 **load** CLI 权重，不重训 |
 | `PDAC_histology_derived_niche_index.ipynb` | TLS / SRI / TNI 下游（matched StarDist） |
 | `Pred_statistic_visual_pdac_all.ipynb` | 278 核 pooled ROC + coverslip / SAMPLE_LABEL AUROC |
 | `demo.sh` | 全流程命令索引 |
@@ -66,12 +66,12 @@ HE 仍在每个 acquisition 文件夹内，与 HCC s4769 的 `MATCHED_HE` 布局
 
 ## 下游分析（对照 HCC）
 
-先跑完训练轨 `PDAC_train_validate_cv_UNIlabel_all.ipynb`（278 annotated → `result_all_spatial/stardist/`），再开这两个 notebook。环境：`SeededNTM`。
+先完成 cross-dataset 权重（CLI `demo.sh` 或 notebook `SKIP_POOLED_TRAIN=False`），输出在 `result_all_spatial_pdac/stardist/`。之后再开这两个 notebook。已有权重时用 `_all` notebook 的 `SKIP_POOLED_TRAIN=True` load 即可。环境：`SeededNTM`。
 
 | Notebook | 作用 | 输出 |
 |----------|------|------|
-| `PDAC_histology_derived_niche_index.ipynb` | TLS / SRI / TNI（matched StarDist softmax + `spatial_HE`） | `s1167/result_all_spatial/niche_index_pdac/` |
-| `Pred_statistic_visual_pdac_all.ipynb` | 278 核 pooled ROC；macro AUROC vs **coverslip** / **SAMPLE_LABEL** | `s1167/result_all_spatial/clinical_viz_pdac/` |
+| `PDAC_histology_derived_niche_index.ipynb` | TLS / SRI / TNI（matched StarDist softmax + `spatial_HE`） | `s1167/result_all_spatial_pdac/niche_index_pdac/` |
+| `Pred_statistic_visual_pdac_all.ipynb` | 278 核 pooled ROC；macro AUROC vs **coverslip** / **SAMPLE_LABEL** | `s1167/result_all_spatial_pdac/clinical_viz_pdac/` |
 
 与 HCC 的差别：没有 **Response**。临床分组只有 coverslip 与 SAMPLE_LABEL。TNI 的髓系项是 **Macrophages**（没有 M2-like）。§6 默认 `QUICK_VALIDATE = True`（先跑 6 个 core）；全队列把该开关改成 `False`。
 
@@ -166,10 +166,20 @@ CODEX↔HE alignment analog + hierarchy 已挪到这一节（HE TIFF/JPG 导出�
 
 - CLI：`PDAC_train_validate_cv_UNIlabel.py`（`--mode per-sample` 或 `cross-dataset`）
 - Notebook：`PDAC_train_validate_cv_UNIlabel_all.ipynb`
-  - §1–§3 训练 + 内部验证（278）
-  - §4 matched StarDist AUROC
-  - §5 all-nuclei → `s1167/{save_result}/stardist/`
-  - §6 Incomplete_Cases → `s1167/{save_result}/stardist_Incomplete_Cases/`
+  - **默认 `SKIP_POOLED_TRAIN = True`**：不重训，只 load `demo.sh` 写出的 checkpoint
+  - §1 prepare → §2 load `best_mlp_gpu.pt` → §3 打印已有 OOF 图（不重画）
+  - §4 / §5 / §6 StarDist 重预测默认注释掉；已有 JPG/PDF 在 `stardist/` 与 `stardist_Incomplete_Cases/`
+  - 只有要重新训练时才把 `SKIP_POOLED_TRAIN` 改成 `False`
+
+CLI 不传 `--ablation-tag` 时目录是 **`D_emph_L2`**（即使开了 `--use-spatial-context`）。Notebook 必须用同一个 tag，否则会写到 `D_emph_L2_spatial_bs4096/` 并再训一遍。
+
+```text
+s1167/result_all_spatial_pdac/cross_dataset_cv/D_emph_L2/best_mlp_gpu.pt
+s1167/result_all_spatial_pdac/roc_internal_level2_oof.pdf
+s1167/result_all_spatial_pdac/stardist/{ACQUISITION_ID}/
+```
+
+CLI 训完后看结果：Restart Kernel，再跑 config → §1 → §2。
 
 命令索引：`code/CODEX_pdac/demo.sh`。
 
@@ -189,6 +199,14 @@ plot_celltype_proportions_stacked(...)  # group by coverslip
 ```
 
 ## Changelog
+
+### 2026-08-28 — `_all` notebook load 已有权重（不重训）
+
+`PDAC_train_validate_cv_UNIlabel_all.ipynb` 默认 `SKIP_POOLED_TRAIN=True`，`POOLED_ABLATION_TAG=D_emph_L2`（与 `demo.sh` / CLI 默认一致）。§2 调 `_ensure_pooled_inference_ready` load `best_mlp_gpu.pt`；§3–§6 不自动重训或重预测。不要用 `D_emph_L2_spatial_bs4096`，那会另开一份 CV。
+
+### 2026-08-28 — split pooled outputs from GIST
+
+PDAC and GIST share `s1167/` but must not share `result_all_spatial/`. Cross-dataset weights now go to `result_all_spatial_pdac/`. Matched StarDist h5ad (`*_matched_features_stardist.h5ad`) is required for pooled StarDist validation; build it with `transer_embedding_label_h5ad.py --steps stardist_h5ad` (not only `stardist_all_h5ad`).
 
 ### 2026-08-20 — PDAC 下游：niche index + Pred statistic
 

@@ -1,7 +1,8 @@
 ## 2026.08.20 Hist2Pheno on CODEX PDAC (s1167 Pancreas TMA)
 ## Analog of code/CODEX_hcc/demo.sh
 
-%cd /home/lingyu/ssd2/Python/Hist2Pheno/
+# Run from Hist2Pheno repo root (not ~/ssd2/Python). %cd is IPython-only.
+cd /home/lingyu/ssd2/Python/Hist2Pheno/
   conda activate SeededNTM
   export CUDA_VISIBLE_DEVICES=1    # 换一张卡
 
@@ -38,7 +39,7 @@
     --steps he_h5ad stardist_csv stardist_h5ad stardist_all_h5ad
   conda run --no-capture-output -n SeededNTM python -u \
     code/CODEX_pdac/transer_embedding_label_h5ad.py \
-    --steps stardist_all_h5ad
+    --steps stardist_h5ad stardist_all_h5ad
   ## Incomplete_Cases all-nuclei h5ad only
   conda run --no-capture-output -n SeededNTM python -u \
     code/CODEX_pdac/transer_embedding_label_h5ad.py \
@@ -52,7 +53,7 @@
     code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \
     --mode cross-dataset \
     --use-spatial-context --spatial-k 8 --spatial-mode mean \
-    --pooled-save-result result_all_spatial
+    --pooled-save-result result_all_spatial_pdac
 
 4b_PDAC_train_validate_cv_UNIlabel_single.ipynb
   ## One annotated core: HE h5ad → K-fold train → HE validate → StarDist
@@ -64,8 +65,8 @@
 6_PDAC_histology_derived_niche_index.ipynb
   ## TLS / SRI / TNI on matched StarDist (demo: Charvill-94_c001_v001_r001_reg001)
   ## §6 QUICK_VALIDATE=True → first 6 cores; set False for all 278
-  ## out: s1167/result_all_spatial/niche_index_pdac/
+  ## out: s1167/result_all_spatial_pdac/niche_index_pdac/
 
 7_Pred_statistic_visual_pdac_all.ipynb
   ## 278 annotated: pooled ROC + macro AUROC vs coverslip / SAMPLE_LABEL
-  ## out: s1167/result_all_spatial/clinical_viz_pdac/
+  ## out: s1167/result_all_spatial_pdac/clinical_viz_pdac/

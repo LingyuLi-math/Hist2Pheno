@@ -1,6 +1,6 @@
 ## 20260706 copy from Xenium_lung/demo.sh
 
-%cd /home/lingyu/ssd2/Python/Hist2Pheno/
+cd /home/lingyu/ssd2/Python/Hist2Pheno/
   conda activate SeededNTM
 
 ## 2026.07.06 LLY: process the CODEX cell type annotation on the HE image
