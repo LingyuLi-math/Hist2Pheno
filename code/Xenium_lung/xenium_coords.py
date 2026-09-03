@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Sequence
 
+import numpy as np
 import pandas as pd
 
 # 10x Xenium File Format Documentation: morphology pixel size
@@ -155,3 +156,41 @@ def add_he_pixel_columns(
     out.insert(y_idx, "X_pix_HE", x_pix)
     out.insert(y_idx + 1, "Y_pix_HE", y_pix)
     return out
+
+
+def load_xenium_imagealignment_matrix(path: str | Path) -> np.ndarray:
+    """Load a 10x Explorer ``*_imagealignment.csv`` 3×3 affine matrix."""
+    matrix = np.loadtxt(path, delimiter=",")
+    if matrix.shape != (3, 3):
+        raise ValueError(f"Expected 3x3 alignment matrix in {path}, got {matrix.shape}")
+    return matrix.astype(float)
+
+
+def alignment_isotropic_scale(matrix: np.ndarray) -> float:
+    """Similarity scale of the 2×2 linear part (``sqrt(|det A|)``)."""
+    linear = np.asarray(matrix, dtype=float)[:2, :2]
+    return float(np.sqrt(abs(np.linalg.det(linear))))
+
+
+def microns_to_he_pixels_via_alignment(
+    x_um,
+    y_um,
+    matrix: np.ndarray,
+    *,
+    um_per_px: float = XENIUM_UM_PER_PX,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map Xenium micron centroids to H&E pixels using ``he_imagealignment.csv``.
+
+    10x documents ``C' = M @ C`` with **C** = H&E pixels and **C'** = Xenium
+    morphology pixels (microns / 0.2125). Therefore::
+
+        [x_he, y_he, 1] = M^{-1} @ [x_um / 0.2125, y_um / 0.2125, 1]
+    """
+    x_arr = np.asarray(x_um, dtype=float)
+    y_arr = np.asarray(y_um, dtype=float)
+    inverse = np.linalg.inv(np.asarray(matrix, dtype=float))
+    homogeneous = np.column_stack(
+        [x_arr / um_per_px, y_arr / um_per_px, np.ones(x_arr.shape, dtype=float)]
+    )
+    he_xy = homogeneous @ inverse.T
+    return he_xy[:, 0], he_xy[:, 1]

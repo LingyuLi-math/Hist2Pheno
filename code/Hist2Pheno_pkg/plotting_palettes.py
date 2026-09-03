@@ -157,6 +157,65 @@ DEFAULT_CELLTYPE_FILTER = DEFAULT_CODEX_HCC_EXCLUDED_LABELS
 DEFAULT_CELLTYPE_FILTER_CODEX_hcc = DEFAULT_CODEX_HCC_EXCLUDED_LABELS
 
 ##########################################
+# 2026.09.03 Xenium BRCA palettes (Janesick supervised + LY hierarchy)
+##########################################
+Cell_Type_COLORS_Xenium_brca_level2 = {
+    "DCIS_1": "#FE664D", "DCIS_2": "#fb34cd",
+    "Myoepi_ACTA2+": "#009203", "Myoepi_KRT15+": "#66c102",
+    "Invasive_Tumor": "#ff002a", "Prolif_Invasive_Tumor": "#8e0119",
+    "T_Cell_&_Tumor_Hybrid": "#CB6035", "Stromal": "#e5e022",
+    "Stromal_&_T_Cell_Hybrid": "#C1A029", "CD4+_T_Cells": "#4fa9ff",
+    "CD8+_T_Cells": "#1068be", "B_Cells": "#565DFD",
+    "Macrophages_1": "#10686f", "Macrophages_2": "#3694a8",
+    "IRF7+_DCs": "#9f50f9", "LAMP3+_DCs": "#AB76AE",
+    "Mast_Cells": "#999999", "Perivascular-Like": "#515151",
+    "Endothelial": "#01257b", "Unlabeled": "#ffa5aa",
+    "DCIS 1": "#FE664D", "DCIS 2": "#fb34cd",
+    "Myoepi ACTA2+": "#009203", "Myoepi KRT15+": "#66c102",
+    "Invasive Tumor": "#ff002a", "Prolif Invasive Tumor": "#8e0119",
+    "T Cell & Tumor Hybrid": "#CB6035", "Stromal & T Cell Hybrid": "#C1A029",
+    "CD4+ T Cells": "#4fa9ff", "CD8+ T Cells": "#1068be",
+    "B Cells": "#565DFD", "Macrophages 1": "#10686f",
+    "Macrophages 2": "#3694a8", "IRF7+ DCs": "#9f50f9",
+    "LAMP3+ DCs": "#AB76AE", "Mast Cells": "#999999",
+}
+Cell_Type_COLORS_Xenium_brca_level1 = {
+    "DCIS": "#fb34cd", "Invasive tumor": "#ff002a", "Myoepithelial": "#009203",
+    "Hybrid": "#CB6035",
+    "Tumor–T-cell hybrid": "#CB6035", "Tumor-T-cell hybrid": "#CB6035",
+    "Stromal–T-cell hybrid": "#C1A029", "Stromal-T-cell hybrid": "#C1A029",
+    "T cells": "#4fa9ff", "B cells": "#565DFD",
+    "Myeloid": "#10686f", "Fibroblasts": "#e5e022",
+    "Endothelial": "#01257b", "Perivascular": "#515151",
+}
+##########################################
+# 2026.09.03 CODEX GBM (WangLab Visium HD) palettes
+##########################################
+Cell_Type_COLORS_CODEX_gbm_level2 = {
+    "AC-like": "#e41a1c", "MES-like": "#ff7f00", "OC-like": "#a65628",
+    "NPC-like": "#f781bf", "G1S": "#e7298a", "G2M": "#984ea3",
+    "Mac_Tmr": "#377eb8", "Mac_SPP1": "#4daf4a", "Mac_other": "#a6d854",
+    "Mac_SEPP1": "#66c2a5", "Lymphocyte": "#984ea3",
+    "Oligodendrocyte": "#ffff33",
+    "Vascular": "#377eb8", "CAF": "#fc8d62", "Collagen_fibrils": "#8da0cb",
+    "lowQ_vas": "#999999", "Unknown": "#bdbdbd", "LowQ": "#d9d9d9",
+}
+Cell_Type_COLORS_CODEX_gbm_level1 = {
+    "Tumor": "#e41a1c", "Myeloid": "#377eb8", "Lymph": "#984ea3",
+    "Oligo": "#ffff33", "Vascular": "#fc8d62",
+    "Unknown": "#bdbdbd", "LowQ": "#d9d9d9",
+}
+# GBM has no coarser layer than cell_type; coarse palette aliases L1.
+Cell_Type_COLORS_CODEX_gbm_level0 = dict(Cell_Type_COLORS_CODEX_gbm_level1)
+DEFAULT_CODEX_GBM_EXCLUDED_LABELS = ("Unknown", "LowQ")
+DEFAULT_CELLTYPE_FILTER_CODEX_gbm = DEFAULT_CODEX_GBM_EXCLUDED_LABELS
+
+Cell_Type_COLORS_Xenium_brca_level0 = {
+    "Epithelial": "#ff002a", "Immune": "#4fa9ff",
+    "Stromal": "#e5e022", "Endothelial": "#01257b",
+}
+
+##########################################
 # 2026.08.20, add CODEX_PDAC palettes (s1167 Pancreas TMA)
 ##########################################
 Cell_Type_COLORS_CODEX_pdac_level2 = {
@@ -263,6 +322,8 @@ _DATASET_ALIASES = {
     "codex_hcc": "codex_hcc",
     "pdac": "codex_pdac", "codex_pdac": "codex_pdac", "pancreas": "codex_pdac",
     "gist": "codex_gist", "codex_gist": "codex_gist", "gist_tma": "codex_gist",
+    "brca": "xenium_brca", "xenium_brca": "xenium_brca", "breast": "xenium_brca",
+    "gbm": "codex_gbm", "codex_gbm": "codex_gbm", "glioma": "codex_gbm",
 }
 _SCHEME_DEFAULTS = {
     "codex_escc": ("codex_escc", None), "ncrt": ("codex_escc", None),
@@ -283,6 +344,14 @@ _SCHEME_DEFAULTS = {
     "codex_gist": ("codex_gist", "auto"), "codex_gist_fine": ("codex_gist", "fine"),
     "codex_gist_intermediate": ("codex_gist", "intermediate"),
     "codex_gist_coarse": ("codex_gist", "coarse"),
+    "xenium_brca": ("xenium_brca", "auto"),
+    "xenium_brca_fine": ("xenium_brca", "fine"),
+    "xenium_brca_intermediate": ("xenium_brca", "intermediate"),
+    "xenium_brca_coarse": ("xenium_brca", "coarse"),
+    "codex_gbm": ("codex_gbm", "auto"),
+    "codex_gbm_fine": ("codex_gbm", "fine"),
+    "codex_gbm_intermediate": ("codex_gbm", "intermediate"),
+    "codex_gbm_coarse": ("codex_gbm", "coarse"),
 }
 
 
@@ -396,6 +465,20 @@ _PAN_ORGAN_HEAD_SCHEMES: dict[str, dict[str, str]] = {
         "l12": "codex_gist_intermediate",
         "l3": "codex_gist_intermediate",
         "l4": "codex_gist_intermediate",
+    },
+    "xenium_brca": {
+        "l2": "xenium_brca_fine",
+        "l1": "xenium_brca_coarse",
+        "l12": "xenium_brca_intermediate",
+        "l3": "xenium_brca_intermediate",
+        "l4": "xenium_brca_intermediate",
+    },
+    "codex_gbm": {
+        "l2": "codex_gbm_fine",
+        "l1": "codex_gbm_coarse",
+        "l12": "codex_gbm_intermediate",
+        "l3": "codex_gbm_intermediate",
+        "l4": "codex_gbm_intermediate",
     },
 }
 
@@ -571,6 +654,8 @@ def _infer_tier(labels: list[str], dataset: str) -> str:
         "codex_hcc": ("coarse", "intermediate", "fine"),
         "codex_pdac": ("coarse", "intermediate", "fine"),
         "codex_gist": ("coarse", "intermediate", "fine"),
+        "xenium_brca": ("coarse", "intermediate", "fine"),
+        "codex_gbm": ("coarse", "intermediate", "fine"),
     }[dataset]
     label_set = set(labels)
     for candidate in candidates:
@@ -635,6 +720,20 @@ def get_palette(
             "intermediate": Cell_Type_COLORS_CODEX_gist_level1,
             "coarse": Cell_Type_COLORS_CODEX_gist_level0,
             "lineage": Cell_Type_COLORS_CODEX_gist_level0,
+        }.get(semantic_tier)
+    elif dataset_id == "xenium_brca":
+        palette = {
+            "fine": Cell_Type_COLORS_Xenium_brca_level2,
+            "intermediate": Cell_Type_COLORS_Xenium_brca_level1,
+            "coarse": Cell_Type_COLORS_Xenium_brca_level0,
+            "lineage": Cell_Type_COLORS_Xenium_brca_level0,
+        }.get(semantic_tier)
+    elif dataset_id == "codex_gbm":
+        palette = {
+            "fine": Cell_Type_COLORS_CODEX_gbm_level2,
+            "intermediate": Cell_Type_COLORS_CODEX_gbm_level1,
+            "coarse": Cell_Type_COLORS_CODEX_gbm_level0,
+            "lineage": Cell_Type_COLORS_CODEX_gbm_level0,
         }.get(semantic_tier)
     else:
         palette = {
