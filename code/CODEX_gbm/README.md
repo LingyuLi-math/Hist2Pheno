@@ -66,7 +66,7 @@ data/CODEX/GBM/
 |------|------|
 | `demo.sh` | 命令索引 |
 | `gbm_paths.py` | 样本注册、hierarchy、路径、Rec `cell_type` 去前缀 |
-| `Data_process_HEcelltype_GBM.ipynb` | join `cellID` ↔ loc；写 Results CSV；HE QC |
+| `Data_process_HEcelltype_GBM.ipynb` | join `cellID` ↔ loc + primary SN；写 Results CSV；HE QC |
 | `match_codex_cells_with_pixel.py` | GT + StarDist Cases CSV |
 | `demo_GT_feature_extraction_Single.sh` / `demo_UNI_feature_extraction_batch.sh` | UNI |
 | `transer_embedding_label_h5ad.py` | matched / StarDist h5ad（`stardist_all_h5ad` 在 Rec 上可选） |
@@ -99,6 +99,12 @@ Union：**7 L1 / 18 L2**。不要套 HCC 的 Malignant / Immune / Glial / Stroma
 - Bin-level spatial niches（SN1–SN9）在 `1_Bin`；核↔bin 对照在 `3_Mapping_bin_nuclei`（`intersect_ratio` / `cell_area`）。Ini 全表见 `0917_Ini_nuclei_bin_spatialNiches_joined.xlsx`。
 
 ## Changelog
+
+### 2026-09-04 — Preprocess notebook follows real 2-level labels
+
+- `Data_process_HEcelltype_GBM.ipynb` loads the moved hierarchy (7 L1 / 18 L2),
+  prints Ini×Rec crosstabs, and attaches primary `spatial_niche` from
+  `3_Mapping_bin_nuclei` (max `intersect_ratio`).
 
 ### 2026-09-03 — Ini join table + hierarchy from real counts
 

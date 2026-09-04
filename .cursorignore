@@ -1,0 +1,44 @@
+## large folders
+# data/
+# datasets/
+# results/
+# Results/
+# outputs/
+# output/
+# figures/
+# checkpoints/
+# models/
+# logs/
+
+## environments and caches
+# conda_envs/
+# env/
+# venv/
+# .venv/
+# .cache/
+# __pycache__/
+# .ipynb_checkpoints/
+
+## large file types
+# *.h5ad
+# *.h5
+# *.hdf5
+# *.loom
+# *.npy
+# *.npz
+# *.pt
+# *.pth
+# *.pkl
+# *.pickle
+# *.zip
+# *.tar
+# *.tar.gz
+# *.tif
+# *.tiff
+# *.svs
+# *.ndpi
+# *.png
+# *.jpg
+# *.jpeg
+# *.pdf
+

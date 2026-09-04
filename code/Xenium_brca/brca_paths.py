@@ -67,15 +67,29 @@ def sample_dir(sample: str, cases_root: Path | str | None = None) -> Path:
 
 
 def he_tif_path(sample: str) -> Path:
+    """Working HE ``.tif`` used by StarDist / UNI (may differ from OME canvas)."""
     cfg = sample_config(sample)
     prefix = str(cfg["prefix"])
     return Path(cfg["data_dir"]) / f"{prefix}_he_image.tif"
 
+###########################################################
+# 2026.09.04, for brca
+###########################################################
+def he_ome_tif_path(sample: str) -> Path:
+    """Official post-Xenium HE OME-TIFF that ``*_he_imagealignment.csv`` registers."""
+    cfg = sample_config(sample)
+    prefix = str(cfg["prefix"])
+    return Path(cfg["data_dir"]) / f"{prefix}_he_image.ome.tif"
+
 
 ###########################################################
 # 2026.09.03, Xenium alignment matrix (microns → H&E pixels)
+# 2026.09.04, for brca, add function to scale HE OME-TIFF pixels onto a separately exported working .tif
+# 10x Explorer HE↔morphology affine (NOT Visium).
+# spatial_HE = scale_ome_to_tif( inv(M) @ (µm / 0.2125) )
 ###########################################################
 def he_alignment_csv_path(sample: str) -> Path:
+    """Path to ``*_he_imagealignment.csv`` (post-Xenium HE ↔ Xenium morphology)."""
     cfg = sample_config(sample)
     prefix = str(cfg["prefix"])
     return Path(cfg["data_dir"]) / f"{prefix}_he_imagealignment.csv"

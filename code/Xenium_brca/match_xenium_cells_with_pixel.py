@@ -68,7 +68,11 @@ def build_cells_with_pixel(
     *,
     hierarchy_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Join supervised Cluster onto the LY hierarchy; drop Unlabeled."""
+    """Join supervised Cluster onto the LY hierarchy; drop Unlabeled.
+
+    Expects ``X_pix_HE`` / ``Y_pix_HE`` already in working HE ``*.tif`` pixels
+    (Explorer ``he_imagealignment`` + OME→tif scale from preprocess).
+    """
     cfg = sample_config(sample)
     src = Path(cfg["cell_info_csv"])
     if not src.is_file():

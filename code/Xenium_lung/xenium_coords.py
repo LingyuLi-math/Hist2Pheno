@@ -185,6 +185,10 @@ def microns_to_he_pixels_via_alignment(
     morphology pixels (microns / 0.2125). Therefore::
 
         [x_he, y_he, 1] = M^{-1} @ [x_um / 0.2125, y_um / 0.2125, 1]
+
+    The linear part of ``M`` often includes a reflection (negative Y), which is
+    the Explorer registration that makes post-Xenium HE match morphology
+    chirality — do **not** apply an extra manual Y flip on top of this.
     """
     x_arr = np.asarray(x_um, dtype=float)
     y_arr = np.asarray(y_um, dtype=float)
@@ -194,3 +198,67 @@ def microns_to_he_pixels_via_alignment(
     )
     he_xy = homogeneous @ inverse.T
     return he_xy[:, 0], he_xy[:, 1]
+
+###########################################################
+# 2026.09.04, for brca, add function to scale HE OME-TIFF pixels onto a separately exported working .tif
+###########################################################
+def scale_he_ome_pixels_to_working_tif(
+    x_ome,
+    y_ome,
+    *,
+    ome_width: int,
+    ome_height: int,
+    tif_width: int,
+    tif_height: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map HE OME-TIFF pixels onto a separately exported working ``.tif``.
+
+    Official ``*_he_imagealignment.csv`` is defined on ``*_he_image.ome.tif``.
+    StarDist / UNI often use a converted ``*_he_image.tif`` with a different
+    canvas; rescale independently on X/Y (simple resize, origin preserved).
+    """
+    x = np.asarray(x_ome, dtype=float) * (float(tif_width) / float(ome_width))
+    y = np.asarray(y_ome, dtype=float) * (float(tif_height) / float(ome_height))
+    return x, y
+
+
+def microns_to_he_working_tif_pixels(
+    x_um,
+    y_um,
+    matrix: np.ndarray,
+    *,
+    ome_width: int,
+    ome_height: int,
+    tif_width: int,
+    tif_height: int,
+    um_per_px: float = XENIUM_UM_PER_PX,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Xenium µm → working HE ``.tif`` pixels via Explorer alignment + OME→tif scale."""
+    x_ome, y_ome = microns_to_he_pixels_via_alignment(
+        x_um, y_um, matrix, um_per_px=um_per_px
+    )
+    return scale_he_ome_pixels_to_working_tif(
+        x_ome,
+        y_ome,
+        ome_width=ome_width,
+        ome_height=ome_height,
+        tif_width=tif_width,
+        tif_height=tif_height,
+    )
+
+
+def he_working_tif_um_per_px(
+    matrix: np.ndarray,
+    *,
+    ome_width: int,
+    ome_height: int,
+    tif_width: int,
+    tif_height: int,
+    um_per_px: float = XENIUM_UM_PER_PX,
+) -> float:
+    """Approximate µm/px on the working HE ``.tif`` after alignment + resize."""
+    ome_um = um_per_px * alignment_isotropic_scale(matrix)
+    sx = float(ome_width) / float(tif_width)
+    sy = float(ome_height) / float(tif_height)
+    return float(ome_um * np.sqrt(sx * sy))
+###########################################################

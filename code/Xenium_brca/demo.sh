@@ -14,7 +14,7 @@ cd /home/lingyu/ssd2/Python/Hist2Pheno/
   conda run --no-capture-output -n SeededNTM python -u \
     code/Xenium_brca/match_xenium_cells_with_pixel.py --sample rep1
 
-## 2. UNI embeddings (HE TIFF ≈ 0.364 µm/px → --scale 0.728, not lung 0.425)
+## 2. UNI embeddings (HE tif ≈ 0.42 µm/px after alignment → --scale ~0.84)
 2_demo_UNI_feature_extraction_batch.sh
   bash code/Xenium_brca/demo_UNI_feature_extraction_batch.sh gt
   bash code/Xenium_brca/demo_UNI_feature_extraction_batch.sh stardist

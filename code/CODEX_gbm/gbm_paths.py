@@ -45,6 +45,12 @@ SAMPLES: dict[str, dict[str, object]] = {
         "loc_csv": DEFAULT_LOC_DIR / "P174511_2_3_loc.csv",
         "annotation_xlsx": DEFAULT_ANNOTATION_DIR
         / "0917_Ini_sc_seg_celltypes.mapping.xlsx",
+        "bin_nuclei_mapping_xlsx": DEFAULT_ANNOTATION_ROOT
+        / "3_Mapping_bin_nuclei"
+        / "0917_200G_celltype_spatialNiches_mapping_Ini.xlsx",
+        "spatial_niches_xlsx": DEFAULT_ANNOTATION_ROOT
+        / "1_Bin"
+        / "0917_ST_HD_200G_Ini_SpatialNiches.xlsx",
         "cell_info_csv": DEFAULT_RESULTS_DIR
         / "gbm_P174511_Initial_cell_info_HE_by_annotation.csv",
         "bin_dir": DEFAULT_WANGLAB_ROOT / "1_Bin_Matrix" / "P174511_Initial",
@@ -56,6 +62,12 @@ SAMPLES: dict[str, dict[str, object]] = {
         "loc_csv": DEFAULT_LOC_DIR / "P179161_4_3_loc.csv",
         "annotation_xlsx": DEFAULT_ANNOTATION_DIR
         / "0917_Rec_sc_seg_celltypes.mapping.xlsx",
+        "bin_nuclei_mapping_xlsx": DEFAULT_ANNOTATION_ROOT
+        / "3_Mapping_bin_nuclei"
+        / "0917_200G_celltype_spatialNiches_mapping_Rec.xlsx",
+        "spatial_niches_xlsx": DEFAULT_ANNOTATION_ROOT
+        / "1_Bin"
+        / "0917_ST_HD_200G_Rec_SpatialNiches.xlsx",
         "cell_info_csv": DEFAULT_RESULTS_DIR
         / "gbm_P179161_Recurrent_cell_info_HE_by_annotation.csv",
         "bin_dir": DEFAULT_WANGLAB_ROOT / "1_Bin_Matrix" / "P179161_Recurrent",
@@ -88,6 +100,14 @@ def loc_csv_path(sample: str) -> Path:
 
 def annotation_xlsx_path(sample: str) -> Path:
     return Path(sample_config(sample)["annotation_xlsx"])
+
+
+def bin_nuclei_mapping_xlsx_path(sample: str) -> Path:
+    return Path(sample_config(sample)["bin_nuclei_mapping_xlsx"])
+
+
+def spatial_niches_xlsx_path(sample: str) -> Path:
+    return Path(sample_config(sample)["spatial_niches_xlsx"])
 
 
 def stardist_csv_path(

@@ -16,9 +16,11 @@ BRCA 已接入与 `code/Xenium_lung` / `code/CODEX_hcc` 同款的 **Hist2Pheno �
 坐标约定：
 
 - `obsm["spatial"]`：Xenium `x_centroid` / `y_centroid`（µm）
-- `obsm["spatial_HE"]`：post-Xenium **HE TIFF 像素**，`inv(he_imagealignment) @ (µm / 0.2125)`
-- 不要把 HE TIFF 当成 morphology 的 0.2125 µm/px（那会把坐标画到比 TIFF 更大的画布上）
-- UNI：HE ≈ 0.364 µm/px → `--scale 0.728`，`patch_size=16` → ~8 µm
+- `obsm["spatial_HE_ome"]`：官方 post-Xenium **OME HE** 像素，`inv(he_imagealignment) @ (µm/0.2125)`
+- `obsm["spatial_HE"]`：StarDist/UNI 用的工作 `*_he_image.tif` 像素 = 将 OME 坐标按画布比例缩放到 tif
+- `*_he_imagealignment.csv` 是 **Explorer 的 HE↔morphology 仿射**（来自 [10x breast preview](https://www.10xgenomics.com/products/xenium-in-situ/preview-dataset-human-breast)），**不是** Visium；矩阵已含 **Y 反射**（手性对齐），不要再手动翻 y / 翻 TIFF
+- 裸 `µm/0.2125` 是 morphology 画布（比 HE TIFF 大），只作 `X_pix_morph` 参考
+- UNI：按 `he_um_per_px`（约 0.42）→ `--scale ~0.84`（目标 0.5 µm/px），`patch_size=16` → ~8 µm
 - 注释按 `cell_id` ↔ `Barcode` join，不按行号对齐
 - `Unlabeled` 在 match 阶段排除（LY `celltype` 表中 L12/L1 为空）
 
@@ -133,17 +135,15 @@ LY sheet `celltype` 使用 Hist2Pheno 列名：`celltype_level2` → `celltype_l
 
 ## Changelog
 
-### 2026-09-03 — HE TIFF pixels via `he_imagealignment.csv` (not 0.2125 µm/px)
+### 2026-09-04 — HE pixels via Explorer alignment + OME→tif scale (Y flip inside M)
 
-Preprocess had used lung's morphology conversion `X_pix_HE = x_um / 0.2125`.
-The BRCA HE TIFF is smaller (rep1 27587×20511) than that canvas (~35400×25800),
-so StarDist (run on the TIFF) only matched ~54% of GT cells, with max distance
-thousands of pixels.
-
-Fix: map microns through 10x `*_he_imagealignment.csv`
-(`HE_px = inv(M) @ (um / 0.2125)`). Keep morphology pixels as `X_pix_morph`.
-UNI `--scale` is now **0.728** (HE ≈ 0.364 µm/px → 0.5 µm/px). StarDist match
-drops pairs farther than 50 HE px.
+`µm/0.2125` is morphology space and is larger than the working HE `*.tif`, so it
+cannot point-align StarDist. The breast preview ships
+`*_he_imagealignment.csv` for **post-Xenium HE ↔ morphology** (10x Explorer;
+not Visium). Use `HE_ome = inv(M)@(µm/0.2125)` then rescale onto
+`*_he_image.tif` (StarDist/UNI canvas). `M` already contains the Y reflection
+(approach A without rewriting the TIFF). Rep1 NN to StarDist ~17 px median after
+this map. UNI `--scale` ≈ **0.84** from `he_um_per_px`.
 
 ### 2026-09-03 — Hist2Pheno train path (UNI + three-head, lung/HCC 同款流程)
 

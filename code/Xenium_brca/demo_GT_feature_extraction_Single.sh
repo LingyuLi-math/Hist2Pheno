@@ -6,8 +6,8 @@
 #   bash code/Xenium_brca/demo_GT_feature_extraction_Single.sh stardist
 #   SAMPLE=rep2 bash code/Xenium_brca/demo_GT_feature_extraction_Single.sh gt
 #
-# HE TIFF is coarser than Xenium morphology (~0.364 µm/px from he_imagealignment scale).
-# Target 0.5 µm/px so patch_size=16 → ~8 µm: scale = he_um_per_px / 0.5 ≈ 0.728 (not lung 0.425).
+# Working HE *.tif after Explorer alignment + OME→tif resize ≈ 0.42 µm/px.
+# Target 0.5 µm/px so patch_size=16 → ~8 µm: scale ≈ 0.84.
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ SAMPLE="${SAMPLE:-rep1}"
 BRCA="${REPO}/data/Xemium/BRCA"
 CASES="${CASES_ROOT:-${BRCA}/Cases}"
 PATCH_SIZE=16
-SCALE="${SCALE:-0.728}"
+SCALE="${SCALE:-0.84}"    # he_um_per_px≈0.42
 METHOD=UNI
 
 COORD="${COORD:-gt}"
