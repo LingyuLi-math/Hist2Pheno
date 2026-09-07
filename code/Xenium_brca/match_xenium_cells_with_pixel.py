@@ -62,13 +62,20 @@ def list_aligned_annotated_regions() -> pd.DataFrame:
     ids = sample_ids()
     return pd.DataFrame({"MATCHED_HE": ids, "CODEX_ACQUISITION_ID": ids})
 
-
+###########################################################
+# 2026.09.03, Xenium BRCA (LY celltype sheet)
+# 2026.09.04, for brca, add function to build cells with pixel coordinates
+###########################################################
 def build_cells_with_pixel(
     sample: str,
     *,
     hierarchy_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Join supervised Cluster onto the LY hierarchy; drop Unlabeled.
+    """Join supervised Cluster onto the LY hierarchy.
+
+    Drops ``Unlabeled`` and red-excluded L2 types
+    (``T_Cell_&_Tumor_Hybrid``, ``Stromal_&_T_Cell_Hybrid``,
+    ``Perivascular-Like``) via ``load_brca_celltype_hierarchy``.
 
     Expects ``X_pix_HE`` / ``Y_pix_HE`` already in working HE ``*.tif`` pixels
     (Explorer ``he_imagealignment`` + OME→tif scale from preprocess).

@@ -22,7 +22,7 @@ BRCA 已接入与 `code/Xenium_lung` / `code/CODEX_hcc` 同款的 **Hist2Pheno �
 - 裸 `µm/0.2125` 是 morphology 画布（比 HE TIFF 大），只作 `X_pix_morph` 参考
 - UNI：按 `he_um_per_px`（约 0.42）→ `--scale ~0.84`（目标 0.5 µm/px），`patch_size=16` → ~8 µm
 - 注释按 `cell_id` ↔ `Barcode` join，不按行号对齐
-- `Unlabeled` 在 match 阶段排除（LY `celltype` 表中 L12/L1 为空）
+- `Unlabeled` 与标红三类（两个 hybrid + `Perivascular-Like`）在 match 阶段排除
 
 命令索引见 [`demo.sh`](demo.sh)。推荐评估命令（pool rep1+rep2 + spatial k=8 mean）：
 
@@ -119,21 +119,44 @@ LY sheet `celltype` 使用 Hist2Pheno 列名：`celltype_level2` → `celltype_l
 | Epithelial | DCIS | `DCIS_1`, `DCIS_2` |
 | Epithelial | Invasive tumor | `Invasive_Tumor`, `Prolif_Invasive_Tumor` |
 | Epithelial | Myoepithelial | `Myoepi_ACTA2+`, `Myoepi_KRT15+` |
-| Epithelial | Tumor–T-cell hybrid | `T_Cell_&_Tumor_Hybrid` |
 | Immune | T cells | `CD4+_T_Cells`, `CD8+_T_Cells` |
 | Immune | B cells | `B_Cells` |
 | Immune | Myeloid | `Macrophages_1`, `Macrophages_2`, `IRF7+_DCs`, `LAMP3+_DCs`, `Mast_Cells` |
-| Immune | Stromal–T-cell hybrid | `Stromal_&_T_Cell_Hybrid` |
-| Stromal | Fibroblasts | `Stromal` |
+| Stromal | Stromal | `Stromal` |
 | Endothelial | Endothelial | `Endothelial` |
-| Endothelial | Perivascular | `Perivascular-Like` |
 
 `Unlabeled` 保留在表中，但 intermediate / coarse 为空，match 时排除（同 HCC `Unknown`）。
 
-可训练层级：**19** fine / **11** intermediate / **4** coarse。
-两个 hybrid 现在有不同的 L12 名字，因此 L12→L0 是 1:1（不再共用一个 `Hybrid`）。
+另排除 LY 标红的三类（`brca_paths.EXCLUDED_LEVEL2_CELLTYPES`）：
+`T_Cell_&_Tumor_Hybrid`、`Stromal_&_T_Cell_Hybrid`、`Perivascular-Like`。
+
+可训练层级：**16** fine / **8** intermediate / **4** coarse。
 
 ## Changelog
+
+### 2026-09-07 — Fix OME→working-tif map: crop, not anisotropic resize
+
+Working `*_he_image.tif` is a **same-resolution crop** of `*_he_image.ome.tif`
+(rep1 origin ≈ `(2066, 2664)`), not a full-frame width/height rescale.
+The old rescale left a ~15–20 px structural offset vs StarDist (visible on the
+top-right “checkmark”). `xenium_coords` now defaults to `mode="crop"` with
+`estimate_he_ome_to_working_tif_crop_origin`. After this fix, rematch Cases and
+rebuild labeled h5ads before retrain.
+
+### 2026-09-07 — Exclude 3 red-marked L2 types from train
+
+LY `celltype` keeps the rows (still red in Excel) but
+`load_brca_celltype_hierarchy` drops:
+`T_Cell_&_Tumor_Hybrid`, `Stromal_&_T_Cell_Hybrid`, `Perivascular-Like`.
+Rematch Cases CSVs + rebuild labeled h5ads before retrain.
+
+### 2026-09-07 — LY `celltype` L12 rename: Fibroblasts → Stromal
+
+Updated `GSE243275_Barcode_Cell_Type_MatricesLY.xlsx` sheet `celltype`:
+L2 `Stromal` now maps to L12 **`Stromal`** (was `Fibroblasts`). Intermediate
+palette in `plotting_palettes.py` adds `Stromal` (keeps `Fibroblasts` as alias).
+`load_brca_celltype_hierarchy` / match still read the Excel live — rematch Cases
+CSVs + rebuild h5ad after this label change.
 
 ### 2026-09-04 — HE pixels via Explorer alignment + OME→tif scale (Y flip inside M)
 

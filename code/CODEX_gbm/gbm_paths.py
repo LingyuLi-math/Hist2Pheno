@@ -19,6 +19,10 @@ DEFAULT_MICROSCOPE_DIR = DEFAULT_WANGLAB_ROOT / "4_Images" / "Microscope_Image"
 DEFAULT_LOC_DIR = DEFAULT_WANGLAB_ROOT / "2_Single_Nuclei_Matrix"
 DEFAULT_HIERARCHY_XLSX = DEFAULT_ANNOTATION_ROOT / "GBM_sc_seg_celltypes_hierarchy.xlsx"
 DEFAULT_HIERARCHY_SHEET = "Celltype"
+DEFAULT_GD_LABEL_TXT = DEFAULT_ANNOTATION_ROOT / "1104_Rec_HD_GD_Label.txt"
+DEFAULT_NUCLEI_SN_GD_XLSX = (
+    DEFAULT_ANNOTATION_ROOT / "GBM_nuclei_primarySN_GD_annotation.xlsx"
+)
 # Training drops these L2 labels. Unknown is still a real annotated class in the xlsx.
 GBM_EXCLUDED_CELLTYPES = ("Unknown", "LowQ")
 STARDIST_CSV_SUFFIX = "_Float_prob0.01_nms_0.3.csv"

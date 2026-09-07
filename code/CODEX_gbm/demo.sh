@@ -3,6 +3,12 @@
 cd /home/lingyu/ssd2/Python/Hist2Pheno/
 # conda activate SeededNTM
 
+## 2026.09.07, for gbm, add function to build nuclei-level annotation table: cell type + primary SN (+ Rec GD)
+conda run --no-capture-output -n SeededNTM python -u \
+  code/CODEX_gbm/build_nuclei_sn_gd_annotation.py
+
+
+
 ## 0. Preprocess single-nuclei annotation + microscope HE pixels (Ini / Rec)
 0_Data_process_HEcelltype_GBM.ipynb
   ## writes data/CODEX/GBM/Results/gbm_{P174511_Initial,P179161_Recurrent}_*

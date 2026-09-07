@@ -16,6 +16,16 @@ DEFAULT_HIERARCHY_XLSX = (
     DEFAULT_ANNOTATION_DIR / "GSE243275_Barcode_Cell_Type_MatricesLY.xlsx"
 )
 DEFAULT_HIERARCHY_SHEET = "celltype"
+
+# L2 types marked red in LY ``celltype`` sheet — excluded from match / train
+# (ambiguous hybrids + rare Perivascular-Like).
+EXCLUDED_LEVEL2_CELLTYPES = frozenset(
+    {
+        "T_Cell_&_Tumor_Hybrid",
+        "Stromal_&_T_Cell_Hybrid",
+        "Perivascular-Like",
+    }
+)
 STARDIST_CSV_SUFFIX = "_Float_prob0.01_nms_0.3.csv"
 CELLS_WITH_PIXEL_SUFFIX = "_cells_with_pixel.csv"
 CELLS_MATCHED_STARDIST_SUFFIX = "_cells_matched_by_stardist.csv"
@@ -119,16 +129,27 @@ def load_brca_celltype_hierarchy(
     xlsx_path: str | Path | None = None,
     *,
     sheet_name: str = DEFAULT_HIERARCHY_SHEET,
+    exclude_level2: frozenset[str] | set[str] | None = None,
 ) -> pd.DataFrame:
-    """Load L2→L12→L1 mapping. Drops Unlabeled (empty parents).
+    """Load L2→L12→L1 mapping from the LY workbook.
 
-    The LY ``celltype`` sheet uses Hist2Pheno-style names
-    (``celltype_level2`` / ``celltype_level12`` / ``celltype_level1``).
-    The returned frame is normalized to the HCC-style names used by matching
+    Drops ``Unlabeled`` (empty parents) and L2 types in
+    ``EXCLUDED_LEVEL2_CELLTYPES`` (red-marked hybrids / Perivascular-Like).
+
+    Source of truth: ``Annotation/GSE243275_Barcode_Cell_Type_MatricesLY.xlsx``
+    sheet ``celltype`` (Hist2Pheno columns
+    ``celltype_level2`` / ``celltype_level12`` / ``celltype_level1``).
+
+    Normalized to matching/train names
     (``celltype_level2`` / ``celltype_level1`` / ``celltype_level0``), so
     ``final_sublineage`` = intermediate and ``final_lineage`` = coarse.
     """
     path = Path(xlsx_path) if xlsx_path is not None else DEFAULT_HIERARCHY_XLSX
+    drop_l2 = (
+        EXCLUDED_LEVEL2_CELLTYPES
+        if exclude_level2 is None
+        else frozenset(exclude_level2)
+    )
     df = pd.read_excel(path, sheet_name=sheet_name)
     hist2pheno_cols = ["celltype_level2", "celltype_level12", "celltype_level1"]
     hcc_excel_cols = ["celltype_level2", "celltype_level1", "celltype_level0"]
@@ -153,6 +174,8 @@ def load_brca_celltype_hierarchy(
             lambda value: str(value).strip() if pd.notna(value) else pd.NA
         )
     out = out.dropna(subset=["celltype_level1", "celltype_level0"])
+    if drop_l2:
+        out = out.loc[~out["celltype_level2"].isin(drop_l2)].copy()
     out = out.drop_duplicates().reset_index(drop=True)
     duplicated = out.loc[
         out["celltype_level2"].duplicated(keep=False), "celltype_level2"

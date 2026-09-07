@@ -201,7 +201,83 @@ def microns_to_he_pixels_via_alignment(
 
 ###########################################################
 # 2026.09.04, for brca, add function to scale HE OME-TIFF pixels onto a separately exported working .tif
+# 2026.09.04 / 2026.09.07: map official HE OME-TIFF → working ``*_he_image.tif``
+#
+# BRCA preview working TIFs are **same-resolution crops** of the OME (not
+# anisotropic full-frame resizes). Using width/height ratios alone left a
+# systematic ~15–20 px structural offset vs StarDist (visible on tissue
+# landmarks). Prefer ``mode="crop"`` with an estimated top-left origin.
 ###########################################################
+def estimate_he_ome_to_working_tif_crop_origin(
+    ome_path: str | Path,
+    tif_path: str | Path,
+    *,
+    downsample: int = 8,
+) -> tuple[int, int]:
+    """Estimate top-left crop origin mapping OME → working TIF (same pixel size).
+
+    Uses FFT cross-correlation on downsampled grayscale, then a small full-res
+    NCC refine (±4 px). Returns ``(x0, y0)`` such that
+    ``working ≈ ome[y0:y0+H, x0:x0+W]``.
+    """
+    import tifffile
+    from PIL import Image
+    from scipy.signal import fftconvolve
+
+    with tifffile.TiffFile(ome_path) as tiff:
+        ome = tiff.pages[0].asarray()
+    with tifffile.TiffFile(tif_path) as tiff:
+        tif = tiff.pages[0].asarray()
+    ome_h, ome_w = ome.shape[:2]
+    tif_h, tif_w = tif.shape[:2]
+    ds = max(int(downsample), 1)
+    ome_ds = np.asarray(
+        Image.fromarray(ome).resize((max(1, ome_w // ds), max(1, ome_h // ds)), Image.BILINEAR)
+    )
+    tif_ds = np.asarray(
+        Image.fromarray(tif).resize((max(1, tif_w // ds), max(1, tif_h // ds)), Image.BILINEAR)
+    )
+    ome_g = ome_ds.mean(-1).astype(np.float64) if ome_ds.ndim == 3 else ome_ds.astype(np.float64)
+    tif_g = tif_ds.mean(-1).astype(np.float64) if tif_ds.ndim == 3 else tif_ds.astype(np.float64)
+    corr = fftconvolve(ome_g - ome_g.mean(), (tif_g - tif_g.mean())[::-1, ::-1], mode="valid")
+    jy, jx = np.unravel_index(int(np.argmax(corr)), corr.shape)
+    ox0, oy0 = int(jx * ds), int(jy * ds)
+
+    def _ncc(a: np.ndarray, b: np.ndarray) -> float:
+        a0 = a.astype(np.float64) - float(a.mean())
+        b0 = b.astype(np.float64) - float(b.mean())
+        return float((a0 * b0).mean() / (a0.std() * b0.std() + 1e-8))
+
+    best = (-1.0, (ox0, oy0))
+    probes = (
+        (tif_h // 2, tif_w // 2),
+        (min(900, tif_h // 4), max(tif_w - 900, 0)),
+        (max(tif_h - 900, 0), min(900, tif_w // 4)),
+    )
+    for dy in range(-4, 5):
+        for dx in range(-4, 5):
+            x0, y0 = ox0 + dx, oy0 + dy
+            scores: list[float] = []
+            for ty, tx in probes:
+                size = 256
+                if ty + size > tif_h or tx + size > tif_w:
+                    continue
+                if y0 + ty + size > ome_h or x0 + tx + size > ome_w:
+                    continue
+                if y0 + ty < 0 or x0 + tx < 0:
+                    continue
+                tp = tif[ty : ty + size, tx : tx + size]
+                op = ome[y0 + ty : y0 + ty + size, x0 + tx : x0 + tx + size]
+                tp = tp.mean(-1) if tp.ndim == 3 else tp
+                op = op.mean(-1) if op.ndim == 3 else op
+                scores.append(_ncc(tp, op))
+            if scores:
+                score = float(np.mean(scores))
+                if score > best[0]:
+                    best = (score, (x0, y0))
+    return int(best[1][0]), int(best[1][1])
+###########################################################
+
 def scale_he_ome_pixels_to_working_tif(
     x_ome,
     y_ome,
@@ -210,16 +286,37 @@ def scale_he_ome_pixels_to_working_tif(
     ome_height: int,
     tif_width: int,
     tif_height: int,
+    mode: Literal["crop", "resize"] = "crop",
+    crop_origin: tuple[int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Map HE OME-TIFF pixels onto a separately exported working ``.tif``.
 
     Official ``*_he_imagealignment.csv`` is defined on ``*_he_image.ome.tif``.
-    StarDist / UNI often use a converted ``*_he_image.tif`` with a different
-    canvas; rescale independently on X/Y (simple resize, origin preserved).
+    StarDist / UNI use ``*_he_image.tif``.
+
+    Parameters
+    ----------
+    mode
+        ``"crop"`` (default): same-resolution window; ``tif = ome - origin``.
+        ``"resize"``: independent X/Y full-frame scale (legacy; usually wrong
+        for the BRCA preview exports).
+    crop_origin
+        ``(x0, y0)`` top-left of the working TIF inside the OME. Required for
+        ``mode="crop"`` (use :func:`estimate_he_ome_to_working_tif_crop_origin`).
     """
-    x = np.asarray(x_ome, dtype=float) * (float(tif_width) / float(ome_width))
-    y = np.asarray(y_ome, dtype=float) * (float(tif_height) / float(ome_height))
-    return x, y
+    x = np.asarray(x_ome, dtype=float)
+    y = np.asarray(y_ome, dtype=float)
+    if mode == "resize":
+        return (
+            x * (float(tif_width) / float(ome_width)),
+            y * (float(tif_height) / float(ome_height)),
+        )
+    if mode != "crop":
+        raise ValueError(f"Unknown mode={mode!r}; expected 'crop' or 'resize'")
+    if crop_origin is None:
+        raise ValueError("mode='crop' requires crop_origin=(x0, y0)")
+    x0, y0 = float(crop_origin[0]), float(crop_origin[1])
+    return x - x0, y - y0
 
 
 def microns_to_he_working_tif_pixels(
@@ -232,8 +329,10 @@ def microns_to_he_working_tif_pixels(
     tif_width: int,
     tif_height: int,
     um_per_px: float = XENIUM_UM_PER_PX,
+    mode: Literal["crop", "resize"] = "crop",
+    crop_origin: tuple[int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Xenium µm → working HE ``.tif`` pixels via Explorer alignment + OME→tif scale."""
+    """Xenium µm → working HE ``.tif`` pixels via Explorer alignment + OME→tif map."""
     x_ome, y_ome = microns_to_he_pixels_via_alignment(
         x_um, y_um, matrix, um_per_px=um_per_px
     )
@@ -244,6 +343,8 @@ def microns_to_he_working_tif_pixels(
         ome_height=ome_height,
         tif_width=tif_width,
         tif_height=tif_height,
+        mode=mode,
+        crop_origin=crop_origin,
     )
 
 
@@ -255,9 +356,13 @@ def he_working_tif_um_per_px(
     tif_width: int,
     tif_height: int,
     um_per_px: float = XENIUM_UM_PER_PX,
+    mode: Literal["crop", "resize"] = "crop",
 ) -> float:
-    """Approximate µm/px on the working HE ``.tif`` after alignment + resize."""
+    """Approximate µm/px on the working HE ``.tif`` after alignment + OME→tif map."""
     ome_um = um_per_px * alignment_isotropic_scale(matrix)
+    if mode == "crop":
+        # Same pixel size as OME HE after Explorer registration.
+        return float(ome_um)
     sx = float(ome_width) / float(tif_width)
     sy = float(ome_height) / float(tif_height)
     return float(ome_um * np.sqrt(sx * sy))

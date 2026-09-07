@@ -185,7 +185,9 @@ Cell_Type_COLORS_Xenium_brca_level1 = {
     "Tumor–T-cell hybrid": "#CB6035", "Tumor-T-cell hybrid": "#CB6035",
     "Stromal–T-cell hybrid": "#C1A029", "Stromal-T-cell hybrid": "#C1A029",
     "T cells": "#4fa9ff", "B cells": "#565DFD",
-    "Myeloid": "#10686f", "Fibroblasts": "#e5e022",
+    "Myeloid": "#10686f",
+    # LY celltype sheet: L2 Stromal → L12 "Stromal" (was "Fibroblasts")
+    "Stromal": "#e5e022", "Fibroblasts": "#e5e022",
     "Endothelial": "#01257b", "Perivascular": "#515151",
 }
 ##########################################
@@ -207,6 +209,19 @@ Cell_Type_COLORS_CODEX_gbm_level1 = {
 }
 # GBM has no coarser layer than cell_type; coarse palette aliases L1.
 Cell_Type_COLORS_CODEX_gbm_level0 = dict(Cell_Type_COLORS_CODEX_gbm_level1)
+
+##########################################
+# 2026.09.07, add CODEX GBM (SN + GD) palettes
+##########################################
+Cell_Type_COLORS_CODEX_gbm_sn = {
+    "SN1": "#e41a1c", "SN2": "#377eb8", "SN3": "#4daf4a",
+    "SN4": "#984ea3", "SN5": "#ff7f00", "SN6": "#17becf",
+    "SN7": "#a65628", "SN8": "#f781bf", "SN9": "#bcbd22",
+    "LowQ": "#d9d9d9",
+}
+Cell_Type_COLORS_CODEX_gbm_gd = {
+    "GD": "#d62728", "nonGD": "#1f77b4",
+}
 DEFAULT_CODEX_GBM_EXCLUDED_LABELS = ("Unknown", "LowQ")
 DEFAULT_CELLTYPE_FILTER_CODEX_gbm = DEFAULT_CODEX_GBM_EXCLUDED_LABELS
 

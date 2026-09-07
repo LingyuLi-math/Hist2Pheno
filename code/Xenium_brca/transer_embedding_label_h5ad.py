@@ -170,6 +170,13 @@ def _h5ad_cache_usable(
     """Validate schema and source identity before accepting a cached h5ad."""
     if not h5ad_path.is_file():
         return False
+    # Label rematches rewrite the CSV in place (same path / row count). Treat a
+    # newer source CSV as stale so DCIS / hierarchy fixes are not skipped.
+    try:
+        if source_csv.is_file() and source_csv.stat().st_mtime > h5ad_path.stat().st_mtime:
+            return False
+    except OSError:
+        return False
     try:
         import anndata as ad
 
