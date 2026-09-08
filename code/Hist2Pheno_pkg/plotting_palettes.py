@@ -192,31 +192,45 @@ Cell_Type_COLORS_Xenium_brca_level1 = {
 }
 ##########################################
 # 2026.09.03 CODEX GBM (WangLab Visium HD) palettes
+# 2026.09.09: heads are subcluster (L2) / spatial_niche (L12) / cell_type (L1)
 ##########################################
+# L2 / fine / final_CT = subcluster
 Cell_Type_COLORS_CODEX_gbm_level2 = {
     "AC-like": "#e41a1c", "MES-like": "#ff7f00", "OC-like": "#a65628",
     "NPC-like": "#f781bf", "G1S": "#e7298a", "G2M": "#984ea3",
     "Mac_Tmr": "#377eb8", "Mac_SPP1": "#4daf4a", "Mac_other": "#a6d854",
-    "Mac_SEPP1": "#66c2a5", "Lymphocyte": "#984ea3",
-    "Oligodendrocyte": "#ffff33",
-    "Vascular": "#377eb8", "CAF": "#fc8d62", "Collagen_fibrils": "#8da0cb",
+    "Mac_SEPP1": "#66c2a5", "Lymphocyte": "#6a3d9a",
+    "Oligodendrocyte": "#c9a227",
+    "Vascular": "#1f78b4", "CAF": "#fc8d62", "Collagen_fibrils": "#8da0cb",
     "lowQ_vas": "#999999", "Unknown": "#bdbdbd", "LowQ": "#d9d9d9",
 }
-Cell_Type_COLORS_CODEX_gbm_level1 = {
-    "Tumor": "#e41a1c", "Myeloid": "#377eb8", "Lymph": "#984ea3",
-    "Oligo": "#ffff33", "Vascular": "#fc8d62",
-    "Unknown": "#bdbdbd", "LowQ": "#d9d9d9",
-}
-# GBM has no coarser layer than cell_type; coarse palette aliases L1.
-Cell_Type_COLORS_CODEX_gbm_level0 = dict(Cell_Type_COLORS_CODEX_gbm_level1)
 
 ##########################################
-# 2026.09.07, add CODEX GBM (SN + GD) palettes
+# L12 / intermediate / final_sublineage = spatial_niche
+# Colors follow Tang et al. Cancer Cell 2025 Fig C (Tumor vs TME niches).
 ##########################################
 Cell_Type_COLORS_CODEX_gbm_sn = {
-    "SN1": "#e41a1c", "SN2": "#377eb8", "SN3": "#4daf4a",
-    "SN4": "#984ea3", "SN5": "#ff7f00", "SN6": "#17becf",
-    "SN7": "#a65628", "SN8": "#f781bf", "SN9": "#bcbd22",
+    "SN1": "#8FDB7A", "Tumor-NonGD1": "#8FDB7A",
+    "SN2": "#F09A9A", "Tumor-GD": "#F09A9A",
+    "SN3": "#F3B27A", "Tumor-NonGD2": "#F3B27A",
+    "SN4": "#7EC8E3", "Tumor-Cycling": "#7EC8E3",
+    "SN5": "#C5B3E6", "TME-Vasculature": "#C5B3E6",
+    "SN6": "#E6C84A", "TME-Oligodendrocyte": "#E6C84A",
+    "SN7": "#C4A574", "TME-LymphVessel": "#C4A574",
+    "SN8": "#F5C0CC", "TME-Erythrocyte": "#F5C0CC",
+    "SN9": "#7ED9C8", "TME-PLC": "#7ED9C8",
+    "LowQ": "#D0D0D0", "LQ": "#D0D0D0", "Low Quality (LQ)": "#D0D0D0",
+    "unlabeled": "#D0D0D0",
+}
+Cell_Type_COLORS_CODEX_gbm_level1 = dict(Cell_Type_COLORS_CODEX_gbm_sn)
+# L1 / coarse / final_lineage = cell_type
+Cell_Type_COLORS_CODEX_gbm_level0 = {
+    "Tumor": "#e41a1c",
+    "Myeloid": "#377eb8",
+    "Lymph": "#984ea3",
+    "Oligo": "#c9a227",
+    "Vascular": "#fc8d62",
+    "Unknown": "#bdbdbd",
     "LowQ": "#d9d9d9",
 }
 Cell_Type_COLORS_CODEX_gbm_gd = {
@@ -630,11 +644,21 @@ def normalize_tier(
     """Normalize legacy column/head names to a semantic tier."""
     dataset_id = normalize_dataset_id(dataset)
     raw = str(tier_hint or tier or "fine").strip().lower().replace("-", "_")
+    if dataset_id == "codex_gbm" and raw in (
+        "sn", "spatial_niche", "cell_type", "subcluster"
+    ):
+        return {
+            "sn": "intermediate",
+            "spatial_niche": "intermediate",
+            "cell_type": "coarse",
+            "subcluster": "fine",
+        }[raw]
     semantic = {
         "fine": "fine", "ct": "fine", "final_ct": "fine", "l2": "fine",
         "intermediate": "intermediate", "sublineage": "intermediate",
         "final_sublineage": "intermediate", "l12": "intermediate",
         "lineage": "lineage", "coarse": "coarse", "lineage_bucket": "lineage_bucket",
+        "sn": "coarse", "spatial_niche": "coarse",
         "cniche": "cniche", "c_niche": "cniche", "l3": "cniche",
         "tniche": "tniche", "t_niche": "tniche", "l4": "tniche",
     }
@@ -749,6 +773,7 @@ def get_palette(
             "intermediate": Cell_Type_COLORS_CODEX_gbm_level1,
             "coarse": Cell_Type_COLORS_CODEX_gbm_level0,
             "lineage": Cell_Type_COLORS_CODEX_gbm_level0,
+            "sn": Cell_Type_COLORS_CODEX_gbm_sn,
         }.get(semantic_tier)
     else:
         palette = {

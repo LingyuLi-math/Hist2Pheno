@@ -233,15 +233,37 @@ def _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx):
         result_fold[key_full] = enc
     return result_fold
 
+########################################################
+# 2026.09.08, revise the hierarchy xlsx and update cell level labels
+########################################################
+def _child_to_parent_majority(y_l2, y_l1, num_classes):
+    """Majority L1 parent per L2 class.
+
+    Tree hierarchies (BRCA/HCC) stay unique. GBM L1 is spatial niche, which is
+    many-to-many with cell type; majority is only used when mapping NLL is off.
+    Returns ``(child_to_parent, n_conflict_classes)``.
+    """
+    y_l2 = np.asarray(y_l2, dtype=np.int64)
+    y_l1 = np.asarray(y_l1, dtype=np.int64)
+    n_l2 = int(num_classes)
+    child_to_parent = np.full(n_l2, -1, dtype=np.int64)
+    n_conflict = 0
+    for l2 in range(n_l2):
+        mask = y_l2 == l2
+        if not np.any(mask):
+            continue
+        vals, counts = np.unique(y_l1[mask], return_counts=True)
+        child_to_parent[l2] = int(vals[int(np.argmax(counts))])
+        if len(vals) > 1:
+            n_conflict += 1
+    return child_to_parent, n_conflict
+########################################################
 
 def _build_l2_to_l1_map(num_classes, y_enc_full, y_l1_full, device):
-    """Return (child_to_parent, map_l2_to_l1) for hierarchical L1 aggregation from L2 softmax."""
-    child_to_parent = np.full(num_classes, -1, dtype=np.int64)
-    for l2, l1 in zip(y_enc_full, y_l1_full):
-        if child_to_parent[int(l2)] == -1:
-            child_to_parent[int(l2)] = int(l1)
-        elif child_to_parent[int(l2)] != int(l1):
-            raise ValueError(f"Inconsistent hierarchy at L2={l2}")
+    """Return ``map_l2_to_l1`` for hierarchical L1 aggregation from L2 softmax."""
+    child_to_parent, _n_conflict = _child_to_parent_majority(
+        y_enc_full, y_l1_full, num_classes
+    )
     num_l1 = int(np.max(y_l1_full)) + 1
     map_l2_to_l1 = torch.zeros(num_classes, num_l1, dtype=torch.float32, device=device)
     for k, p in enumerate(child_to_parent):
@@ -1126,15 +1148,22 @@ def train_and_save_model(
     class_weights_l1_tensor = torch.as_tensor(full_weights_l1, dtype=torch.float32, device=device)
 
     # Build level2 -> level1 mapping from the filtered dataset.
-    child_to_parent = np.full(num_classes, -1, dtype=np.int64)
-    for l2, l1 in zip(y_encoded_f, y_level1_encoded_f):
-        if child_to_parent[int(l2)] == -1:
-            child_to_parent[int(l2)] = int(l1)
-        elif child_to_parent[int(l2)] != int(l1):
-            raise ValueError(f"Inconsistent hierarchy: level2 class {l2} maps to multiple level1 classes")
+    child_to_parent, n_l2_l1_conflict = _child_to_parent_majority(
+        y_encoded_f, y_level1_encoded_f, num_classes
+    )
     if np.any(child_to_parent < 0):
         missing = np.where(child_to_parent < 0)[0]
         raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
+    if n_l2_l1_conflict:
+        # GBM: Mac_SEPP1 (L2 subcluster) maps to both Myeloid and Vascular (L1).
+        # Mapping NLL would pin that class onto one parent; keep independent CE.
+        if float(hce_w12) != 0.0:
+            print(
+                f"L2→L1 is many-to-many ({n_l2_l1_conflict} L2 classes with >1 L1); "
+                f"hce_w12 {float(hce_w12):.3f}→0 (L1 trained by CE head only)",
+                flush=True,
+            )
+            hce_w12 = 0.0
 
     criterion = UnifiedHCELoss(
         child_to_parent=child_to_parent,
@@ -2189,6 +2218,87 @@ def train_hce_group_kfold_cv(
     return summary
 ########################################################
 
+########################################################
+# 2026.09.08, revise the hierarchy xlsx and update cell level labels
+########################################################
+def _hce_stratify_keys(y_enc, y_l1_enc, stratify_target: str):
+    """Labels used by StratifiedKFold: level2, level1, or joint ``\"{l1}|{l2}\"``."""
+    y_enc = np.asarray(y_enc)
+    y_l1_enc = np.asarray(y_l1_enc)
+    if stratify_target == "level2":
+        return y_enc
+    if stratify_target == "level1":
+        return y_l1_enc
+    if stratify_target == "joint":
+        return np.asarray(
+            [f"{int(a)}|{int(b)}" for a, b in zip(y_l1_enc, y_enc)],
+            dtype=object,
+        )
+    raise ValueError("stratify_target must be one of: level2, level1, joint")
+
+
+def _min_stratum_count(cv_data: dict, stratify_target: str) -> int:
+    y_strat = _hce_stratify_keys(
+        cv_data["y_encoded_f"], cv_data["y_level1_encoded_f"], stratify_target
+    )
+    _, counts = np.unique(y_strat, return_counts=True)
+    return int(np.min(counts)) if counts.size else 0
+
+
+def resolve_stratified_cv_params(
+    cv_data: dict,
+    cv_k: int,
+    stratify_target: str,
+    *,
+    auto_adjust: bool = True,
+) -> tuple[int, str]:
+    """Pick ``n_splits`` and ``stratify_target`` that StratifiedKFold can run.
+
+    With ``auto_adjust=True`` (default), coarsens joint→level2→level1 and reduces
+    ``cv_k`` to the smallest stratum count when rare L1|L2 pairs block k-fold
+    (GBM: SN9×Oligo can have n=1).
+    """
+    if int(cv_k) < 2:
+        raise ValueError(f"n_splits must be >=2, got {cv_k}")
+
+    if stratify_target == "joint":
+        targets = ["joint", "level2", "level1"]
+    elif stratify_target == "level2":
+        targets = ["level2", "level1"]
+    elif stratify_target == "level1":
+        targets = ["level1"]
+    else:
+        raise ValueError("stratify_target must be one of: level2, level1, joint")
+
+    if not auto_adjust:
+        min_count = _min_stratum_count(cv_data, stratify_target)
+        if min_count < cv_k:
+            raise ValueError(
+                f"Cannot run StratifiedKFold(n_splits={cv_k}): minimum class/group "
+                f"count in stratification target is {min_count}. Reduce n_splits or "
+                f"use a coarser stratify_target."
+            )
+        return cv_k, stratify_target
+
+    for target in targets:
+        min_count = _min_stratum_count(cv_data, target)
+        if min_count < 2:
+            continue
+        effective_k = min(int(cv_k), min_count)
+        if effective_k != int(cv_k) or target != stratify_target:
+            print(
+                f"  Auto CV: n_splits {cv_k}→{effective_k}, "
+                f"stratify {stratify_target!r}→{target!r} "
+                f"(min stratum count={min_count})",
+                flush=True,
+            )
+        return effective_k, target
+
+    raise ValueError(
+        "Cannot run StratifiedKFold: some strata have <2 cells even at level1. "
+        "Filter rare labels or train on pooled samples."
+    )
+########################################################
 
 def train_hce_stratified_kfold_cv(
     device,
@@ -2198,6 +2308,7 @@ def train_hce_stratified_kfold_cv(
     save_bestmodel_path_pattern=None,
     n_splits=5,
     stratify_target="level2",
+    auto_adjust_stratify=True,
     min_train_l2_classes=2,
     min_train_samples=1,
     loader_kwargs=None,
@@ -2231,6 +2342,7 @@ def train_hce_stratified_kfold_cv(
     - ``"level2"``: stratify by level2 labels (recommended default).
     - ``"level1"``: stratify by level1 labels.
     - ``"joint"``: stratify by joint key ``"{l1}|{l2}"`` for tighter hierarchy balance.
+      Rare L1×L2 pairs (n < n_splits) automatically fall back to level2 / level1.
 
     ``use_spatial_context`` (default False): fuse kNN neighbor UNI embeddings before the MLP.
     Requires ``cv_data['X_coords_f']`` from ``prepare_data_leave_one_group_out(..., X_coords=...)``.
@@ -2270,22 +2382,13 @@ def train_hce_stratified_kfold_cv(
     if int(n_splits) < 2:
         raise ValueError(f"n_splits must be >=2, got {n_splits}")
 
-    if stratify_target == "level2":
-        y_strat = np.asarray(y_enc)
-    elif stratify_target == "level1":
-        y_strat = np.asarray(y_l1_enc)
-    elif stratify_target == "joint":
-        y_strat = np.asarray([f"{int(a)}|{int(b)}" for a, b in zip(y_l1_enc, y_enc)], dtype=object)
-    else:
-        raise ValueError("stratify_target must be one of: level2, level1, joint")
-
-    unique_keys, key_counts = np.unique(y_strat, return_counts=True)
-    min_count = int(np.min(key_counts)) if key_counts.size else 0
-    if min_count < n_splits:
-        raise ValueError(
-            f"Cannot run StratifiedKFold(n_splits={n_splits}): minimum class/group count in "
-            f"stratification target is {min_count}. Reduce --cv_k or use coarser stratify target."
-        )
+    n_splits, stratify_target = resolve_stratified_cv_params(
+        cv_data,
+        int(n_splits),
+        stratify_target,
+        auto_adjust=auto_adjust_stratify,
+    )
+    y_strat = _hce_stratify_keys(y_enc, y_l1_enc, stratify_target)
 
     if save_bestmodel_path_pattern is None:
         tdir = os.environ.get("NCRT_TMPDIR", os.path.join(os.path.expanduser("~"), "ssd2", "tmp"))
@@ -2922,6 +3025,199 @@ def run_group_kfold_cv_with_oof_report(
         )
     merged = {**ctx, **oof}
     return merged
+
+########################################################
+# 2026.09.09, fit the small dataset
+########################################################
+def group_cv_n_train_groups(n_groups, train_group_frac=0.7):
+    """Train-group count per fold (same formula as ``train_hce_group_kfold_cv``)."""
+    n_groups = int(n_groups)
+    if n_groups < 2:
+        return 0
+    n_train_groups = int(np.ceil(n_groups * float(train_group_frac)))
+    return int(min(max(n_train_groups, 1), n_groups - 1))
+
+
+def should_refit_pooled_on_all_samples(n_groups, requested_cv_k, train_group_frac=0.7):
+    """True when group CV cannot use the requested fold count on enough sections.
+
+    ``n_groups < requested_cv_k`` is leave-one-section-out after ``n_splits`` is
+    clamped. Notebooks that set ``cv_k = n_groups`` still LORO when each fold
+    trains on a single section (``n_train_groups == 1``).
+    """
+    n_groups = int(n_groups)
+    requested_cv_k = int(requested_cv_k)
+    if n_groups < 2:
+        return False
+    if n_groups < requested_cv_k:
+        return True
+    return group_cv_n_train_groups(n_groups, train_group_frac) == 1
+
+
+def maybe_refit_pooled_deployment_if_few_sections(
+    ctx,
+    dest,
+    *,
+    loader_kwargs=None,
+    evaluate_fn=None,
+):
+    """Overwrite ``best_mlp_gpu.pt`` with an all-sample fit when sections < folds.
+
+    Group-CV OOF in ``ctx.g`` is left unchanged. The previous best-fold weights
+    are copied to ``best_mlp_gpu_loro.pt``. Returns True if a refit ran.
+    """
+    import shutil
+
+    if evaluate_fn is None:
+        evaluate_fn = evaluate
+
+    dest = Path(dest)
+    g = ctx.g
+    cv_data = g["cv_data"]
+    if "groups_f" in cv_data:
+        n_groups = int(len(np.unique(cv_data["groups_f"])))
+    else:
+        n_groups = int(len(getattr(ctx, "samples", []) or []))
+    requested_cv_k = int(getattr(ctx, "cv_k", 5))
+    train_group_frac = float(getattr(ctx, "train_group_frac", 0.7))
+    n_train_groups = group_cv_n_train_groups(n_groups, train_group_frac)
+    if not should_refit_pooled_on_all_samples(
+        n_groups, requested_cv_k, train_group_frac
+    ):
+        print(
+            f"  [Pooled deploy] n_sections={n_groups} vs cv_k={requested_cv_k} "
+            f"(~{n_train_groups} train sections/fold); keeping best CV fold "
+            f"as {dest.name}",
+            flush=True,
+        )
+        g["pooled_refit_all_samples"] = False
+        return False
+
+    loro_dest = dest.with_name("best_mlp_gpu_loro.pt")
+    shutil.copy2(dest, loro_dest)
+    print(
+        f"  [Pooled deploy] n_sections={n_groups} < cv_k={requested_cv_k} "
+        f"or LORO (train sections/fold={n_train_groups}); "
+        f"kept group-CV weights at {loro_dest.name}",
+        flush=True,
+    )
+    refit_pooled_model_all_samples(
+        ctx, dest, loader_kwargs=loader_kwargs, evaluate_fn=evaluate_fn
+    )
+    return True
+
+
+def refit_pooled_model_all_samples(
+    ctx,
+    dest,
+    *,
+    loader_kwargs=None,
+    evaluate_fn=None,
+):
+    """Train on all pooled cells (stratified 85/15) and write ``dest``.
+
+    Used for StarDist / new-section deployment when group CV never trains on
+    every section in one fold. OOF metrics in ``ctx.g`` stay as group CV.
+    """
+    from sklearn.model_selection import StratifiedShuffleSplit
+
+    from base import loader_train_test
+
+    if evaluate_fn is None:
+        evaluate_fn = evaluate
+    dest = Path(dest)
+    g = ctx.g
+    cv_data = g["cv_data"]
+    scaler = g["scaler"]
+    class_names = g["class_names"]
+    y_enc = np.asarray(cv_data["y_encoded_f"])
+    n = int(y_enc.shape[0])
+    splitter = StratifiedShuffleSplit(
+        n_splits=1, test_size=0.15, random_state=int(ctx.seed)
+    )
+    tr_idx, va_idx = next(splitter.split(np.zeros((n, 1)), y_enc))
+    X_all = scaler.transform(cv_data["X_f"])
+    result_fold = {
+        "X_train_scaled": X_all[tr_idx],
+        "X_test_scaled": X_all[va_idx],
+        "y_train_encoded": y_enc[tr_idx],
+        "y_test_encoded": y_enc[va_idx],
+        "y_train_level1_encoded": cv_data["y_level1_encoded_f"][tr_idx],
+        "y_test_level1_encoded": cv_data["y_level1_encoded_f"][va_idx],
+        "y_train": cv_data["y_f"][tr_idx],
+        "y_test": cv_data["y_f"][va_idx],
+        "y_train_level1": cv_data["y_level1_f"][tr_idx],
+        "y_test_level1": cv_data["y_level1_f"][va_idx],
+        "y_encoded_f": y_enc,
+        "y_level1_encoded_f": cv_data["y_level1_encoded_f"],
+    }
+    _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx)
+    if getattr(ctx, "use_spatial_context", False):
+        nbr = g.get("spatial_neighbor_index")
+        if nbr is None:
+            nbr = _build_spatial_neighbor_index_for_cv_data(
+                cv_data, k_neighbors=int(getattr(ctx, "spatial_k", 8))
+            )
+        result_fold.update(
+            {
+                "use_spatial_context": True,
+                "spatial_mode": getattr(ctx, "spatial_mode", "mean"),
+                "spatial_k": int(getattr(ctx, "spatial_k", 8)),
+                "spatial_neighbor_index": nbr,
+                "X_all_scaled": X_all,
+                "train_global_indices": tr_idx,
+                "val_global_indices": va_idx,
+            }
+        )
+    if loader_kwargs is None:
+        loader_kwargs = {
+            "seed": int(ctx.seed),
+            "train_balance_sampler": False,
+            "num_workers_cuda": 0,
+            "batch_size_cuda": int(getattr(ctx, "train_batch_size", 4096)),
+        }
+    loaders = loader_train_test(result_fold, **loader_kwargs)
+    n_sections = len(getattr(ctx, "samples", []) or [])
+    print(
+        f"\n[Pooled refit] all {n_sections or 'pooled'} samples, "
+        f"stratified 85/15 (n_train={len(tr_idx):,}, n_val={len(va_idx):,}) "
+        f"→ {dest.name} for StarDist / new sections",
+        flush=True,
+    )
+    save_path = str(dest)
+    train_and_save_model_from_split(
+        device=ctx.device,
+        loaders=loaders,
+        result=result_fold,
+        evaluate=evaluate_fn,
+        save_bestmodel_path=save_path,
+        class_names=class_names,
+        hce_w1=ctx.hce_w1,
+        hce_w2=ctx.hce_w2,
+        hce_w12=ctx.hce_w12,
+        hce_w_l12head=ctx.hce_w_l12head,
+        hce_w_l3=ctx.hce_w_l3,
+        hce_w_l4=ctx.hce_w_l4,
+        patience=ctx.patience,
+        max_epochs=ctx.max_epochs,
+        hidden_dims=ctx.hidden_dims,
+        dropout=float(getattr(ctx, "dropout", 0.2)),
+        val_selection_metric=ctx.val_selection_metric,
+    )
+    model, _n = _load_fold_model_for_eval(
+        save_path,
+        ctx.device,
+        result_fold,
+        class_names,
+        ctx.hidden_dims,
+        float(getattr(ctx, "dropout", 0.2)),
+    )
+    g["model"] = model
+    g["BEST_MLP_CHECKPOINT"] = save_path
+    g["pooled_refit_all_samples"] = True
+    print(f"  StarDist checkpoint (all-sample refit): {save_path}", flush=True)
+
+
 ########################################################
 
 def run_logo_cv_and_load_best_model(

@@ -8,6 +8,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import glob
+import numpy as np
 
 
 ## 2026.08.13, add plotting_palettes for HCC dataset
@@ -36,6 +37,27 @@ from plotting_utils import (
     plot_final_ct_by_lineage,
     pooled_celltype_counts,
 )
+
+########################################################
+# 2026.09.08, revise the hierarchy xlsx and update cell level labels
+########################################################
+def _child_to_parent_majority_plot(class_names, y_encoded_f, y_level1_encoded_f):
+    """Majority L1 parent per L2 class. GBM SN is many-to-many with cell type."""
+    num_l2 = len(class_names)
+    y_l2 = np.asarray(y_encoded_f, dtype=np.int64)
+    y_l1 = np.asarray(y_level1_encoded_f, dtype=np.int64)
+    child_to_parent = np.full(num_l2, -1, dtype=np.int64)
+    for l2 in range(num_l2):
+        mask = y_l2 == l2
+        if not np.any(mask):
+            continue
+        vals, counts = np.unique(y_l1[mask], return_counts=True)
+        child_to_parent[l2] = int(vals[int(np.argmax(counts))])
+    if np.any(child_to_parent < 0):
+        missing = np.where(child_to_parent < 0)[0]
+        raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
+    return child_to_parent
+########################################################
 
 def _legend_markerscale(s: float) -> float:
     """Keep legend dots readable when scatter ``s`` is TMA-sized."""
@@ -1101,13 +1123,17 @@ def plot_level1_spatial_distribution(
     title_true=None,
     spatial_title_pred_l1=None,
     spatial_title_true_l1=None,
+    preds_level1=None,
 ):
     """
     Plot level1 spatial distribution from all-data predictions.
 
     Args:
         matched_features_path (str): Path to .npz file containing coordinates and true labels.
-        all_preds (array-like): Predicted level2 class indices for all cells.
+        all_preds (array-like): Predicted level2 class indices (used only when
+            ``preds_level1`` is None, via L2→L1 hierarchy mapping).
+        preds_level1: optional encoded L1-head predictions. When set, L2→L1 mapping
+            is skipped (GBM spatial niches are not parents of cell type).
         class_names_level1 (list): List of level1 class names (for display).
         class_names (list): List of level2 class names (for mapping).
         y_encoded_f (array-like): Level2 encoded labels for mapping (use HE ``cv_data`` encodings;
@@ -1132,14 +1158,19 @@ def plot_level1_spatial_distribution(
     if spatial_point_size is None:
         spatial_point_size = default_spatial_point_size(pan_organ)
 
-    all_preds_l2 = np.asarray(all_preds)
+    all_preds_l2 = np.asarray(all_preds) if all_preds is not None else None
+    preds_l1_direct = None if preds_level1 is None else np.asarray(preds_level1, dtype=np.int64)
     y_l1_true_for_plot = None
+    pred_len = len(preds_l1_direct) if preds_l1_direct is not None else len(all_preds_l2)
 
     if X_coords_matched is not None:
         X_coords_all = np.asarray(X_coords_matched, dtype=np.float64)
-        n = min(len(X_coords_all), len(all_preds_l2))
+        n = min(len(X_coords_all), pred_len)
         X_coords_all = X_coords_all[:n]
-        all_preds_l2 = all_preds_l2[:n]
+        if preds_l1_direct is not None:
+            preds_l1_direct = preds_l1_direct[:n]
+        else:
+            all_preds_l2 = all_preds_l2[:n]
         if y_level1_f is not None:
             y_l1_true_for_plot = np.asarray(y_level1_f)[:n]
         else:
@@ -1151,9 +1182,12 @@ def plot_level1_spatial_distribution(
         if "X_coords" not in loaded_data:
             raise ValueError(f"X_coords not found in {matched_features_path}")
         X_coords_all = loaded_data["X_coords"]
-        n = min(len(X_coords_all), len(all_preds_l2))
+        n = min(len(X_coords_all), pred_len)
         X_coords_all = X_coords_all[:n]
-        all_preds_l2 = all_preds_l2[:n]
+        if preds_l1_direct is not None:
+            preds_l1_direct = preds_l1_direct[:n]
+        else:
+            all_preds_l2 = all_preds_l2[:n]
         if "y_level1" in loaded_data:
             y_l1_raw = loaded_data["y_level1"][:n]
             if y_l1_raw.dtype.kind in ["U", "S", "O"]:
@@ -1167,34 +1201,31 @@ def plot_level1_spatial_distribution(
                     ]
                 )
 
-    # Build level2->level1 mapping (majority vote per L2 class; works for Xenium fine→lineage).
-    num_l2_classes = len(class_names)
-    child_to_parent = np.full(num_l2_classes, -1, dtype=np.int64)
-    y_enc = np.asarray(y_encoded_f)
-    y_l1_enc = np.asarray(y_level1_encoded_f)
-    for l2_id in range(num_l2_classes):
-        mask = y_enc == l2_id
-        if not np.any(mask):
-            continue
-        vals, counts = np.unique(y_l1_enc[mask], return_counts=True)
-        child_to_parent[l2_id] = int(vals[int(np.argmax(counts))])
-    if np.any(child_to_parent < 0):
-        missing = np.where(child_to_parent < 0)[0]
-        raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
-
-    # Guard against out-of-range predicted level2 indices (e.g. Unknown_39).
-    valid_pred_mask = (all_preds_l2 >= 0) & (all_preds_l2 < num_l2_classes)
-    if not np.all(valid_pred_mask):
-        n_bad = int((~valid_pred_mask).sum())
-        bad_vals = np.unique(all_preds_l2[~valid_pred_mask])[:10]
-        print(
-            f"  ⚠ Found {n_bad} out-of-range level2 predictions for level1 mapping; "
-            f"dropping them. Sample bad indices: {bad_vals}"
+    n_l1 = len(class_names_level1)
+    if preds_l1_direct is not None:
+        print("  Level1 spatial: L1 head predictions (no L2→L1 mapping).")
+        valid_pred_mask = (preds_l1_direct >= 0) & (preds_l1_direct < n_l1)
+        if not np.all(valid_pred_mask):
+            n_bad = int((~valid_pred_mask).sum())
+            print(f"  ⚠ Dropping {n_bad} out-of-range L1-head predictions.")
+        X_coords_all = X_coords_all[valid_pred_mask]
+        preds_l1 = preds_l1_direct[valid_pred_mask]
+    else:
+        # Tree datasets (BRCA/HCC): aggregate L2 argmax onto a unique L1 parent.
+        child_to_parent = _child_to_parent_majority_plot(
+            class_names, y_encoded_f, y_level1_encoded_f
         )
-    X_coords_all = X_coords_all[valid_pred_mask]
-    all_preds_l2 = all_preds_l2[valid_pred_mask]
-
-    preds_l1 = child_to_parent[all_preds_l2]
+        valid_pred_mask = (all_preds_l2 >= 0) & (all_preds_l2 < len(child_to_parent))
+        if not np.all(valid_pred_mask):
+            n_bad = int((~valid_pred_mask).sum())
+            bad_vals = np.unique(all_preds_l2[~valid_pred_mask])[:10]
+            print(
+                f"  ⚠ Found {n_bad} out-of-range level2 predictions for level1 mapping; "
+                f"dropping them. Sample bad indices: {bad_vals}"
+            )
+        X_coords_all = X_coords_all[valid_pred_mask]
+        all_preds_l2 = all_preds_l2[valid_pred_mask]
+        preds_l1 = child_to_parent[all_preds_l2]
     pred_celltype_l1 = np.array([class_names_level1[int(i)] for i in preds_l1])
 
     pred_df_l1 = pd.DataFrame({
@@ -1794,20 +1825,9 @@ def plot_level1_accuracy_from_level2_predictions(
 
     y_true_l1_raw = loaded_data["y_level1"]
 
-    num_l2_classes = len(class_names)
-    child_to_parent = np.full(num_l2_classes, -1, dtype=np.int64)
-    for l2, l1 in zip(y_encoded_f, y_level1_encoded_f):
-        l2_i, l1_i = int(l2), int(l1)
-        if child_to_parent[l2_i] == -1:
-            child_to_parent[l2_i] = l1_i
-        elif child_to_parent[l2_i] != l1_i:
-            raise ValueError(
-                f"Inconsistent hierarchy mapping for level2 class {l2_i}: "
-                f"{child_to_parent[l2_i]} vs {l1_i}"
-            )
-    if np.any(child_to_parent < 0):
-        missing = np.where(child_to_parent < 0)[0]
-        raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
+    child_to_parent = _child_to_parent_majority_plot(
+        class_names, y_encoded_f, y_level1_encoded_f
+    )
 
     preds_l2 = np.asarray(all_preds).astype(np.int64)
     preds_l1 = child_to_parent[preds_l2]
@@ -2138,20 +2158,9 @@ def plot_level1_f1_from_level2_predictions(
 
     y_true_l1_raw = loaded_data["y_level1"]
 
-    num_l2_classes = len(class_names)
-    child_to_parent = np.full(num_l2_classes, -1, dtype=np.int64)
-    for l2, l1 in zip(y_encoded_f, y_level1_encoded_f):
-        l2_i, l1_i = int(l2), int(l1)
-        if child_to_parent[l2_i] == -1:
-            child_to_parent[l2_i] = l1_i
-        elif child_to_parent[l2_i] != l1_i:
-            raise ValueError(
-                f"Inconsistent hierarchy mapping for level2 class {l2_i}: "
-                f"{child_to_parent[l2_i]} vs {l1_i}"
-            )
-    if np.any(child_to_parent < 0):
-        missing = np.where(child_to_parent < 0)[0]
-        raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
+    child_to_parent = _child_to_parent_majority_plot(
+        class_names, y_encoded_f, y_level1_encoded_f
+    )
 
     preds_l2 = np.asarray(all_preds).astype(np.int64)
     preds_l1 = child_to_parent[preds_l2]
@@ -3300,20 +3309,9 @@ def plot_level1_roc_from_level2_scores(
             print(f"  ⚠ y_level1 not found in {matched_features_path}; skip level1 ROC.")
             return None
         y_true_l1_raw = loaded_data["y_level1"]
-    num_l2_classes = len(class_names)
-    child_to_parent = np.full(num_l2_classes, -1, dtype=np.int64)
-    for l2, l1 in zip(y_encoded_f, y_level1_encoded_f):
-        l2_i, l1_i = int(l2), int(l1)
-        if child_to_parent[l2_i] == -1:
-            child_to_parent[l2_i] = l1_i
-        elif child_to_parent[l2_i] != l1_i:
-            raise ValueError(
-                f"Inconsistent hierarchy mapping for level2 class {l2_i}: "
-                f"{child_to_parent[l2_i]} vs {l1_i}"
-            )
-    if np.any(child_to_parent < 0):
-        missing = np.where(child_to_parent < 0)[0]
-        raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
+    child_to_parent = _child_to_parent_majority_plot(
+        class_names, y_encoded_f, y_level1_encoded_f
+    )
 
     probs_l2 = np.asarray(y_score_l2, dtype=float)
     n_l1 = len(class_names_level1)

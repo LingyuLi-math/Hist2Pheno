@@ -27,12 +27,19 @@ for _p in (_SCRIPT_DIR, _PKG_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+
+##################################################
+# 2026.09.08, revise the hierarchy xlsx and update cell level labels
+##################################################
 from base import load_cell_pixcoords, match_celltype2stardist  # noqa: E402
 from gbm_paths import (  # noqa: E402
     DEFAULT_CASES_ROOT,
     DEFAULT_HIERARCHY_XLSX,
     DEFAULT_STARDIST_ROOT,
     GBM_COLUMN_RENAME,
+    fill_gbm_spatial_niche,    # 2026.09.08, revise the hierarchy
+    filter_usable_gbm_cell_labels,  # 2026.09.09, drop Unknown/LowQ
+    filter_usable_gbm_sn,      # 2026.09.08, revise the hierarchy
     he_tif_path,
     load_gbm_celltype_hierarchy,
     sample_config,
@@ -69,7 +76,13 @@ def build_cells_with_pixel(
     *,
     hierarchy_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Join preprocessed subcluster onto the 2-level GBM hierarchy."""
+    """Join preprocessed nuclei onto the 3-level GBM hierarchy.
+
+    ``final_CT`` = ``subcluster`` (fine), ``final_sublineage`` = ``spatial_niche``
+    (intermediate), ``final_lineage`` = ``cell_type`` (coarse). Rows whose
+    triple is absent from the trainable hierarchy (Unknown / LowQ cell labels,
+    or LowQ / missing SN) are dropped.
+    """
     cfg = sample_config(sample)
     src = Path(cfg["cell_info_csv"])
     if not src.is_file():
@@ -82,15 +95,46 @@ def build_cells_with_pixel(
         if hierarchy_df is not None
         else load_gbm_celltype_hierarchy()
     )
-    hierarchy_map = hierarchy_df.set_index("celltype_level2")
+    need = {"cell_type", "subcluster", "spatial_niche", "bin_barcode"}
     cells = pd.read_csv(src)
-    if "subcluster" not in cells.columns:
-        raise KeyError(f"{src.name} needs subcluster")
+    missing_src = sorted(need - set(cells.columns))
+    if missing_src:
+        raise KeyError(f"{src.name} needs {missing_src}")
+    n_raw = len(cells)
+    cells = filter_usable_gbm_sn(cells)
+    n_after_sn = len(cells)
+    cells = filter_usable_gbm_cell_labels(cells)
+    print(
+        f"  drop SN LowQ/missing (and empty bin_barcode): "
+        f"{n_raw - n_after_sn:,}/{n_raw:,} → {n_after_sn:,}; "
+        f"drop Unknown/LowQ cell labels: "
+        f"{n_after_sn - len(cells):,} → {len(cells):,}"
+    )
     cells = cells.copy()
-    cells["final_CT"] = cells["subcluster"].astype(str).str.strip()
-    cells = cells[cells["final_CT"].isin(hierarchy_map.index)].copy()
-    cells["final_sublineage"] = cells["final_CT"].map(hierarchy_map["celltype_level1"])
-    cells["final_lineage"] = cells["final_CT"].map(hierarchy_map["celltype_level0"])
+    cells["final_CT"] = cells["subcluster"].map(
+        lambda v: str(v).strip() if pd.notna(v) else ""
+    )
+    cells["final_sublineage"] = cells["spatial_niche"].map(fill_gbm_spatial_niche)
+    cells["final_lineage"] = cells["cell_type"].map(
+        lambda v: str(v).strip() if pd.notna(v) else ""
+    )
+    keys = hierarchy_df[
+        ["celltype_level2", "celltype_level1", "celltype_level0"]
+    ].drop_duplicates()
+    n_before = len(cells)
+    cells = cells.merge(
+        keys,
+        left_on=["final_CT", "final_sublineage", "final_lineage"],
+        right_on=["celltype_level2", "celltype_level1", "celltype_level0"],
+        how="inner",
+    )
+    cells = cells.drop(
+        columns=["celltype_level2", "celltype_level1", "celltype_level0"]
+    )
+    print(
+        f"  hierarchy triples kept {len(cells):,}/{n_before:,} "
+        f"(drop Unknown/LowQ and SN LowQ/missing)"
+    )
     cells["tma"] = sample
     required = {"cell_id", "X_pix_HE", "Y_pix_HE", "x_centroid", "y_centroid"}
     missing = sorted(required - set(cells.columns))
@@ -179,7 +223,8 @@ def process_sample(
             f"  wrote {out_gt.name} n={len(cells):,} | "
             f"L2={cells['final_CT'].nunique()}, "
             f"L12={cells['final_sublineage'].nunique()}, "
-            f"L1={cells['final_lineage'].nunique()}"
+            f"L1={cells['final_lineage'].nunique()} | "
+            f"bin_barcode non-null={cells['bin_barcode'].notna().all()}"
         )
     written = {"cells_with_pixel": out_gt}
     if not write_stardist:

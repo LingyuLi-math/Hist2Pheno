@@ -11,8 +11,8 @@ Hist2Pheno 流程与 [`code/CODEX_hcc`](../CODEX_hcc) / [`code/Xenium_brca`](../
 
 ## Current status
 
-- 层次 Excel：[`WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx`](../../data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx) sheet **`Celltype`**（两层：L2=`subcluster` **18** / L1=`cell_type` **7**，含 `Unknown`+`LowQ`）
-- 可训练：**16** fine / **5** `cell_type`（`Unknown` / `LowQ` 排除；无 HCC 式第三层，L12 与 L1 相同）
+- 层次 Excel：[`WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx`](../../data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx) sheet **`Celltype`**（三层观测三元组：L2=`cell_type` / L12=`subcluster` / L1=`spatial_niche` SN1–SN9；**丢掉 SN LowQ 与缺失**）
+- 可训练：L2 **5** `cell_type` / L12 **16** `subcluster` / L1 **9** SN（再排除 `Unknown` / `LowQ`）
 - `loc.csv` 的 `x,y` **已是显微镜 HE 像素**（与 StarDist 同画布；无需 BRCA affine）
 - StarDist 匹配（≤50 px）：Ini **46,689**（median **0.66** px）；Rec **155,794**（median **0.78** px）
 - UNI / 训练脚本已就绪，**默认不跑**（Ini HE ~2G；Rec HE ~4G；Rec StarDist ~1.16M 核）
@@ -99,6 +99,12 @@ Union：**7 L1 / 18 L2**。不要套 HCC 的 Malignant / Immune / Glial / Stroma
 - Bin-level spatial niches（SN1–SN9）在 `1_Bin`；核↔bin 对照在 `3_Mapping_bin_nuclei`（`intersect_ratio` / `cell_area`）。Ini 全表见 `0917_Ini_nuclei_bin_spatialNiches_joined.xlsx`。
 
 ## Changelog
+
+### 2026-09-08 — GT tables drop SN LowQ / missing
+
+- Hierarchy, Results CSVs, match, and GT `h5ad` all drop `spatial_niche` LowQ or missing,
+  so `bin_barcode` is complete on labeled h5ad. Source annotation xlsx is unchanged.
+  StarDist-all (unlabeled) is not filtered.
 
 ### 2026-09-04 — Preprocess notebook follows real 2-level labels
 

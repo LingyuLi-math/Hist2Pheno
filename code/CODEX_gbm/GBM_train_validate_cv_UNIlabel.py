@@ -111,9 +111,11 @@ from model import (  # noqa: E402
     _build_spatial_neighbor_index_for_cv_data,
     get_select4_best_checkpoint_path,
     load_model_for_predict,
+    maybe_refit_pooled_deployment_if_few_sections,
     predict_all_label_heads,
     run_group_kfold_cv_with_oof_report,
     run_stratified_kfold_cv_with_insample_report,
+    resolve_stratified_cv_params,
     sync_best_mlp_from_logo_fold,
 )
 from plot import (  # noqa: E402
@@ -501,79 +503,6 @@ def resolve_steps(raw: list[str]) -> set[str]:
     if "all" in raw:
         return {"he_h5ad", "train", "he_validate", "stardist"}
     return set(raw)
-
-
-def _min_stratum_count(cv_data: dict, stratify_target: str) -> int:
-    y_enc = np.asarray(cv_data["y_encoded_f"])
-    y_l1_enc = np.asarray(cv_data["y_level1_encoded_f"])
-    if stratify_target == "level2":
-        y_strat = y_enc
-    elif stratify_target == "level1":
-        y_strat = y_l1_enc
-    elif stratify_target == "joint":
-        y_strat = np.array(
-            [f"{int(a)}|{int(b)}" for a, b in zip(y_l1_enc, y_enc)],
-            dtype=object,
-        )
-    else:
-        raise ValueError(f"Unknown stratify_target: {stratify_target!r}")
-    _, counts = np.unique(y_strat, return_counts=True)
-    return int(np.min(counts)) if counts.size else 0
-
-
-def resolve_stratified_cv_params(
-    cv_data: dict,
-    cv_k: int,
-    stratify_target: str,
-    *,
-    auto_adjust: bool = True,
-) -> tuple[int, str]:
-    """
-    Pick ``n_splits`` and ``stratify_target`` valid for StratifiedKFold.
-
-    With ``auto_adjust=True`` (default), coarsens joint→level2→level1 and reduces
-    ``cv_k`` to the smallest stratum count when rare L1|L2 pairs block k-fold.
-    """
-    if int(cv_k) < 2:
-        raise ValueError(f"--cv-k must be >= 2, got {cv_k}")
-
-    if stratify_target == "joint":
-        targets = ["joint", "level2", "level1"]
-    elif stratify_target == "level2":
-        targets = ["level2", "level1"]
-    elif stratify_target == "level1":
-        targets = ["level1"]
-    else:
-        raise ValueError(f"Unknown stratify_target: {stratify_target!r}")
-
-    if not auto_adjust:
-        min_count = _min_stratum_count(cv_data, stratify_target)
-        if min_count < cv_k:
-            raise ValueError(
-                f"Cannot run StratifiedKFold(n_splits={cv_k}): minimum class/group "
-                f"count in stratification target is {min_count}. Reduce --cv-k, use "
-                f"coarser --stratify-target, or omit --no-auto-cv-k."
-            )
-        return cv_k, stratify_target
-
-    for target in targets:
-        min_count = _min_stratum_count(cv_data, target)
-        if min_count < 2:
-            continue
-        effective_k = min(cv_k, min_count)
-        if effective_k != cv_k or target != stratify_target:
-            print(
-                f"  ⚠ Auto CV: n_splits {cv_k}→{effective_k}, "
-                f"stratify {stratify_target!r}→{target!r} "
-                f"(min stratum count={min_count})",
-                flush=True,
-            )
-        return effective_k, target
-
-    raise ValueError(
-        "Cannot run StratifiedKFold: some strata have <2 cells even at level1. "
-        "Filter rare labels or train on pooled samples."
-    )
 
 
 def step_he_h5ad(ctx: RunContext) -> None:
@@ -1306,12 +1235,24 @@ def step_pooled_train(ctx: PooledRunContext) -> None:
     import shutil
 
     shutil.copy2(best_ckpt, dest)
-    print(f"  Best fold={lp['best_fold']['fold']}  checkpoint={dest}", flush=True)
+    print(f"  Best LORO fold={lp['best_fold']['fold']}  checkpoint={dest}", flush=True)
+    for row in (lp.get("logo_summary") or lp.get("group_summary") or {}).get("folds") or []:
+        held = row.get("held_groups")
+        print(
+            f"    fold {row.get('fold')}: n_train={row.get('n_train'):,} "
+            f"n_val={row.get('n_val'):,} held_groups={held}",
+            flush=True,
+        )
 
     ctx.g.update(lp)
     ctx.g["LP"] = lp
     ctx.g["BEST_MLP_CHECKPOINT"] = str(dest)
     ctx.g["model"] = lp["model"]
+    maybe_refit_pooled_deployment_if_few_sections(
+        ctx,
+        dest,
+        loader_kwargs=_train_loader_kwargs(ctx.seed, ctx.train_batch_size),
+    )
 
 
 def step_pooled_he_validate(ctx: PooledRunContext) -> None:
@@ -1911,6 +1852,7 @@ def _ensure_pooled_inference_ready(ctx: PooledRunContext, *, require_train_if_mi
     Prepare scaler/class names and resolve ``BEST_MLP_CHECKPOINT`` for StarDist inference.
 
     Loads ``{ckpt_dir}/best_mlp_gpu.pt`` when present; optionally runs full training if missing.
+    Does not resume group-CV folds or run the all-sample refit.
     """
     if "scaler" not in ctx.g or "class_names" not in ctx.g:
         step_pooled_prepare(ctx)
@@ -1925,6 +1867,16 @@ def _ensure_pooled_inference_ready(ctx: PooledRunContext, *, require_train_if_mi
             raise FileNotFoundError(
                 f"No checkpoint at {ckpt}. Run --steps train first or set --ablation-tag correctly."
             )
+    if ctx.g.get("model") is None and ctx.g.get("BEST_MLP_CHECKPOINT"):
+        ctx.g["model"] = load_model_for_predict(
+            str(ctx.python_root),
+            ctx.samples[0] if ctx.samples else "pooled",
+            DEFAULT_THERAPY_MODEL,
+            parent_dir=True,
+            checkpoint_path=ctx.g["BEST_MLP_CHECKPOINT"],
+            device=ctx.device,
+            hidden_dims=ctx.hidden_dims,
+        )
 ########################################################
 
 def process_pooled(ctx: PooledRunContext, steps: set[str]) -> tuple[bool, str | None]:
@@ -2079,7 +2031,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--stratify-target",
         choices=("level2", "level1", "joint"),
-        default="joint",
+        default="level2",
+        help="Default level2 (subcluster). Joint L1×L2 is cell_type×subcluster; Mac_SEPP1 splits across Myeloid/Vascular.",
     )
     p.add_argument("--patience", type=int, default=10)
     p.add_argument("--max-epochs", type=int, default=50)

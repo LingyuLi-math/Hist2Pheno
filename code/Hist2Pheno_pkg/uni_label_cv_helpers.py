@@ -799,17 +799,26 @@ def metrics_triplet(y_true, y_pred):
     }
 
 
-def plot_he_confusion_matrices(plot_confusion_matrix, result_fig, cv_data=None, g=None):
+def plot_he_confusion_matrices(
+    plot_confusion_matrix, result_fig, cv_data=None, g=None, *, include_l2_to_l1_agg=True
+):
     """In-sample confusion matrices for L2/L1/L12/L3/L4 (+ L1 head if available)."""
     g = g or {}
     rows = [
         ("L2 celltype", "val_labels", "val_preds", "class_names", "conf_matrix_level2", (10, 8)),
-        ("L1 lineage (L2→L1 agg)", "val_labels_level1", "val_preds_level1", "class_names_level1", "conf_matrix_level1", (4, 4)),
-        ("L1 lineage (L1 head)", "val_labels_level1_head", "val_preds_level1_head", "class_names_level1", "conf_matrix_level1_L1head", (4, 4)),
-        ("L12 sublineage", "val_labels_level12", "val_preds_level12", "class_names_level12", "conf_matrix_level12", (6, 5)),
-        ("L3 CNiche", "val_labels_level3", "val_preds_level3", "class_names_level3", "conf_matrix_level3", (8, 7)),
-        ("L4 TNiche", "val_labels_level4", "val_preds_level4", "class_names_level4", "conf_matrix_level4", (8, 7)),
     ]
+    if include_l2_to_l1_agg:
+        rows.append(
+            ("L1 lineage (L2→L1 agg)", "val_labels_level1", "val_preds_level1", "class_names_level1", "conf_matrix_level1", (4, 4)),
+        )
+    rows.extend(
+        [
+            ("L1 lineage (L1 head)", "val_labels_level1_head", "val_preds_level1_head", "class_names_level1", "conf_matrix_level1_L1head", (4, 4)),
+            ("L12 sublineage", "val_labels_level12", "val_preds_level12", "class_names_level12", "conf_matrix_level12", (6, 5)),
+            ("L3 CNiche", "val_labels_level3", "val_preds_level3", "class_names_level3", "conf_matrix_level3", (8, 7)),
+            ("L4 TNiche", "val_labels_level4", "val_preds_level4", "class_names_level4", "conf_matrix_level4", (8, 7)),
+        ]
+    )
     for title, lk, pk, nk, fig_key, figsize in rows:
         y_true, y_pred = g.get(lk), g.get(pk)
         if y_pred is None:
@@ -834,6 +843,8 @@ def plot_he_confusion_matrices(plot_confusion_matrix, result_fig, cv_data=None, 
             continue
         print(f"\n{title}")
         plot_confusion_matrix(y_true, y_pred, names, figsize=figsize, save_path=result_fig(fig_key))
+    if not include_l2_to_l1_agg:
+        return
     l1_agg = g.get("val_preds_level1")
     l1_head = g.get("val_preds_level1_head")
     if l1_agg is not None and l1_head is not None:
@@ -1183,20 +1194,9 @@ def _stardist_l1_from_l2_triplet(
         return None
 
     y_true_l1_raw = loaded["y_level1"]
-    num_l2 = len(class_names)
-    child_to_parent = np.full(num_l2, -1, dtype=np.int64)
-    for l2, l1 in zip(y_encoded_f, y_level1_encoded_f):
-        l2_i, l1_i = int(l2), int(l1)
-        if child_to_parent[l2_i] == -1:
-            child_to_parent[l2_i] = l1_i
-        elif child_to_parent[l2_i] != l1_i:
-            raise ValueError(
-                f"Inconsistent hierarchy mapping for level2 class {l2_i}: "
-                f"{child_to_parent[l2_i]} vs {l1_i}"
-            )
-    if np.any(child_to_parent < 0):
-        missing = np.where(child_to_parent < 0)[0]
-        raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
+    child_to_parent = _child_to_parent_majority(
+        class_names, y_encoded_f, y_level1_encoded_f
+    )
 
     preds_l2 = np.asarray(all_preds, dtype=np.int64)
     preds_l1 = child_to_parent[preds_l2]
@@ -1361,22 +1361,26 @@ def macro_auc_ovr(y_true, y_score, n_classes):
     return float(np.mean(aucs)) if aucs else float("nan")
 
 
-def _child_to_parent_map(class_names, y_encoded_f, y_level1_encoded_f):
+def _child_to_parent_majority(class_names, y_encoded_f, y_level1_encoded_f):
+    """Majority L1 parent per L2 class (GBM SN is many-to-many with cell type)."""
     num_l2 = len(class_names)
+    y_l2 = np.asarray(y_encoded_f, dtype=np.int64)
+    y_l1 = np.asarray(y_level1_encoded_f, dtype=np.int64)
     child_to_parent = np.full(num_l2, -1, dtype=np.int64)
-    for l2, l1 in zip(y_encoded_f, y_level1_encoded_f):
-        l2_i, l1_i = int(l2), int(l1)
-        if child_to_parent[l2_i] == -1:
-            child_to_parent[l2_i] = l1_i
-        elif child_to_parent[l2_i] != l1_i:
-            raise ValueError(
-                f"Inconsistent hierarchy mapping for level2 class {l2_i}: "
-                f"{child_to_parent[l2_i]} vs {l1_i}"
-            )
+    for l2 in range(num_l2):
+        mask = y_l2 == l2
+        if not np.any(mask):
+            continue
+        vals, counts = np.unique(y_l1[mask], return_counts=True)
+        child_to_parent[l2] = int(vals[int(np.argmax(counts))])
     if np.any(child_to_parent < 0):
         missing = np.where(child_to_parent < 0)[0]
         raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
     return child_to_parent
+
+
+def _child_to_parent_map(class_names, y_encoded_f, y_level1_encoded_f):
+    return _child_to_parent_majority(class_names, y_encoded_f, y_level1_encoded_f)
 
 
 def _encode_level1_labels(y_raw, class_names_level1):
@@ -2526,6 +2530,52 @@ def sample_macro_auroc_from_auroc_csv(auroc_csv_path) -> float:
     y_true = df["ground_truth_idx"].to_numpy(dtype=np.int64)
     y_score = df[prob_cols].to_numpy(dtype=np.float64)
     return macro_auc_ovr(y_true, y_score, len(prob_cols))
+
+
+def stardist_per_class_table_from_auroc_csv(
+    auroc_csv_path,
+    names_csv_path=None,
+) -> pd.DataFrame:
+    """Per-class ``n``, ``n_pred``, and OvR AUROC from a StarDist AUROC CSV."""
+    import pandas as pd
+    from sklearn.metrics import roc_auc_score
+
+    auroc_csv_path = Path(auroc_csv_path)
+    df = pd.read_csv(auroc_csv_path)
+    if names_csv_path is None:
+        names_csv_path = auroc_csv_path.with_name(
+            auroc_csv_path.name.replace(".csv", "_class_names.csv")
+        )
+    names_df = pd.read_csv(names_csv_path)
+    class_names = [str(v) for v in names_df.iloc[:, -1].tolist()]
+    prob_cols = sorted(
+        [c for c in df.columns if c.startswith("prob_")],
+        key=lambda c: int(c.split("_", 1)[1]),
+    )
+    y = df["ground_truth_idx"].to_numpy(dtype=np.int64)
+    scores = df[prob_cols].to_numpy(dtype=np.float64)
+    pred = scores.argmax(axis=1)
+    n_classes = len(prob_cols)
+    rows = []
+    for k, name in enumerate(class_names[:n_classes]):
+        n_true = int((y == k).sum())
+        n_pred = int((pred == k).sum())
+        auc = float("nan")
+        if n_true > 0 and n_true < len(y):
+            try:
+                auc = float(roc_auc_score((y == k).astype(np.int64), scores[:, k]))
+            except ValueError:
+                auc = float("nan")
+        rows.append(
+            {
+                "class": name,
+                "n": n_true,
+                "n_pred": n_pred,
+                "auc_ovr": auc,
+                "present": n_true > 0,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def build_stardist_sample_macro_auroc_table(

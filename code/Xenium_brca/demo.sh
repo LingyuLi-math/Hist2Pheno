@@ -63,6 +63,14 @@ done
       --pooled-save-result result_all_spatial \
       --ablation-tag D_emph_L2_spatial_brca
 
+  conda run --no-capture-output -n SeededNTM python -u \
+    code/Xenium_brca/BRCA_train_validate_cv_UNIlabel.py \
+      --mode cross-dataset \
+      --use-spatial-context --spatial-k 8 --spatial-mode mean \
+      --pooled-save-result result_all_spatial \
+      --ablation-tag D_emph_L2_spatial_brca \
+      --no-resume-from-checkpoints
+
 ## 5. Notebooks
 5_BRCA_train_validate_cv_UNIlabel_single.ipynb
   ## debug one replicate (default SAMPLE=rep1)

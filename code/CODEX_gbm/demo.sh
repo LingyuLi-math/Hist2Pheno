@@ -12,6 +12,7 @@ conda run --no-capture-output -n SeededNTM python -u \
 ## 0. Preprocess single-nuclei annotation + microscope HE pixels (Ini / Rec)
 0_Data_process_HEcelltype_GBM.ipynb
   ## writes data/CODEX/GBM/Results/gbm_{P174511_Initial,P179161_Recurrent}_*
+  ## drops SN LowQ/missing and Unknown/LowQ cell labels so GT triples are trainable
 
 ## 1. Join Celltype hierarchy + match StarDist
 1_match_codex_cells_with_pixel.py
@@ -31,9 +32,9 @@ conda run --no-capture-output -n SeededNTM python -u \
   conda run --no-capture-output -n SeededNTM python -u \
     code/CODEX_gbm/transer_embedding_label_h5ad.py --sample P174511_Initial
   # Optional / expensive on Rec (~1.16M nuclei):
-  # conda run --no-capture-output -n SeededNTM python -u \
-  #   code/CODEX_gbm/transer_embedding_label_h5ad.py \
-  #   --sample P179161_Recurrent --steps stardist_all_h5ad
+  conda run --no-capture-output -n SeededNTM python -u \
+    code/CODEX_gbm/transer_embedding_label_h5ad.py \
+    --sample P179161_Recurrent --steps stardist_all_h5ad
 
 ## 4. Train / validate (three-head L2/L12/L1, spatial k=8 mean)
 4_GBM_train_validate_cv_UNIlabel.py
@@ -49,7 +50,7 @@ conda run --no-capture-output -n SeededNTM python -u \
       --mode cross-dataset \
       --use-spatial-context --spatial-k 8 --spatial-mode mean \
       --pooled-save-result result_all_spatial \
-      --ablation-tag D_emph_L2_spatial_bs4096
+      --ablation-tag D_emph_L2_spatial_gbm
 
 ## 5. Notebooks
 5_GBM_train_validate_cv_UNIlabel_single.ipynb

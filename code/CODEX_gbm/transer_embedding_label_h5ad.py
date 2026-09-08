@@ -69,6 +69,19 @@ from match_codex_cells_with_pixel import (  # noqa: E402
     stardist_csv_path,
 )
 
+
+##################################################
+# 2026.09.08, revise the hierarchy xlsx and update cell level labels
+##################################################
+# GT h5ad obs: three heads plus the 16 µm barcode (non-null after SN LowQ/missing drop).
+GBM_H5AD_OBS_COLUMNS = HCC_H5AD_OBS_COLUMNS + (
+    "cell_id",
+    "cell_type",
+    "subcluster",
+    "spatial_niche",
+    "bin_barcode",
+)
+
 DEFAULT_CASES_ROOT = _REPO_ROOT / "data/CODEX/GBM/Cases"
 DEFAULT_STARDIST_ROOT = _REPO_ROOT / "data/CODEX/GBM/WangLab/StarDist_Segment"
 DEFAULT_THERAPY_MODEL = "project_all_UNI"
@@ -281,7 +294,7 @@ def _build_matched_h5ad(
         output,
         source_csv=source_csv,
         source_rows=source_rows,
-        required_obs=tuple(HCC_H5AD_OBS_COLUMNS),
+        required_obs=tuple(GBM_H5AD_OBS_COLUMNS),
     )
     if cache_ok and not force_rebuild:
         print(f"  cache valid, skip: {output.name}")
@@ -300,7 +313,7 @@ def _build_matched_h5ad(
         column_rename=dict(HCC_COLUMN_RENAME),
         auto_rename=False,
         force_rebuild=True,
-        obs_columns=HCC_H5AD_OBS_COLUMNS,
+        obs_columns=GBM_H5AD_OBS_COLUMNS,
         cell_id_col="cell_id",
         spatial_cols=spatial_cols,
         spatial_he_cols=spatial_he_cols,
@@ -344,7 +357,7 @@ def _matched_csv_usable(path: Path) -> bool:
             "cell_id",
             "centroid_x",
             "centroid_y",
-            *HCC_H5AD_OBS_COLUMNS,
+            *GBM_H5AD_OBS_COLUMNS,
         }
         return required.issubset(columns) and _source_row_count(path) > 0
     except Exception:

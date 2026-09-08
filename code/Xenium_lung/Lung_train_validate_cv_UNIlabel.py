@@ -210,6 +210,7 @@ from model import (  # noqa: E402
     _build_spatial_neighbor_index_for_cv_data,
     get_select4_best_checkpoint_path,
     load_model_for_predict,
+    maybe_refit_pooled_deployment_if_few_sections,
     predict_all_label_heads,
     run_group_kfold_cv_with_oof_report,
     run_stratified_kfold_cv_with_insample_report,
@@ -1239,6 +1240,11 @@ def step_pooled_train(ctx: PooledRunContext) -> None:
     ctx.g["LP"] = lp
     ctx.g["BEST_MLP_CHECKPOINT"] = str(dest)
     ctx.g["model"] = lp["model"]
+    maybe_refit_pooled_deployment_if_few_sections(
+        ctx,
+        dest,
+        loader_kwargs=_train_loader_kwargs(ctx.seed, ctx.train_batch_size),
+    )
 
 
 def step_pooled_he_validate(ctx: PooledRunContext) -> None:

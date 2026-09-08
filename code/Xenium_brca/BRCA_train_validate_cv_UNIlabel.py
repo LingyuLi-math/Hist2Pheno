@@ -111,6 +111,7 @@ from model import (  # noqa: E402
     _build_spatial_neighbor_index_for_cv_data,
     get_select4_best_checkpoint_path,
     load_model_for_predict,
+    maybe_refit_pooled_deployment_if_few_sections,
     predict_all_label_heads,
     run_group_kfold_cv_with_oof_report,
     run_stratified_kfold_cv_with_insample_report,
@@ -1312,6 +1313,11 @@ def step_pooled_train(ctx: PooledRunContext) -> None:
     ctx.g["LP"] = lp
     ctx.g["BEST_MLP_CHECKPOINT"] = str(dest)
     ctx.g["model"] = lp["model"]
+    maybe_refit_pooled_deployment_if_few_sections(
+        ctx,
+        dest,
+        loader_kwargs=_train_loader_kwargs(ctx.seed, ctx.train_batch_size),
+    )
 
 
 def step_pooled_he_validate(ctx: PooledRunContext) -> None:
@@ -1911,6 +1917,7 @@ def _ensure_pooled_inference_ready(ctx: PooledRunContext, *, require_train_if_mi
     Prepare scaler/class names and resolve ``BEST_MLP_CHECKPOINT`` for StarDist inference.
 
     Loads ``{ckpt_dir}/best_mlp_gpu.pt`` when present; optionally runs full training if missing.
+    Does not resume group-CV folds or run the all-sample refit.
     """
     if "scaler" not in ctx.g or "class_names" not in ctx.g:
         step_pooled_prepare(ctx)
@@ -1925,6 +1932,16 @@ def _ensure_pooled_inference_ready(ctx: PooledRunContext, *, require_train_if_mi
             raise FileNotFoundError(
                 f"No checkpoint at {ckpt}. Run --steps train first or set --ablation-tag correctly."
             )
+    if ctx.g.get("model") is None and ctx.g.get("BEST_MLP_CHECKPOINT"):
+        ctx.g["model"] = load_model_for_predict(
+            str(ctx.python_root),
+            ctx.samples[0] if ctx.samples else "pooled",
+            DEFAULT_THERAPY_MODEL,
+            parent_dir=True,
+            checkpoint_path=ctx.g["BEST_MLP_CHECKPOINT"],
+            device=ctx.device,
+            hidden_dims=ctx.hidden_dims,
+        )
 ########################################################
 
 def process_pooled(ctx: PooledRunContext, steps: set[str]) -> tuple[bool, str | None]:

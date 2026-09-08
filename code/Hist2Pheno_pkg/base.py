@@ -4096,15 +4096,18 @@ def export_all_data_prediction_confidence(
     else:
         X_scaled = X_np
 
-    # Build fixed L2 -> L1 mapping from the filtered label space used by training.
+    # Build L2 -> L1 mapping (majority vote; GBM SN is many-to-many with cell type).
     num_l2 = len(class_names)
     num_l1 = len(class_names_level1)
+    y_l2 = np.asarray(y_encoded_f, dtype=np.int64)
+    y_l1 = np.asarray(y_level1_encoded_f, dtype=np.int64)
     child_to_parent = np.full(num_l2, -1, dtype=np.int64)
-    for l2, l1 in zip(np.asarray(y_encoded_f), np.asarray(y_level1_encoded_f)):
-        if child_to_parent[int(l2)] == -1:
-            child_to_parent[int(l2)] = int(l1)
-        elif child_to_parent[int(l2)] != int(l1):
-            raise ValueError(f"Inconsistent hierarchy for L2 class {l2}")
+    for l2 in range(num_l2):
+        mask = y_l2 == l2
+        if not np.any(mask):
+            continue
+        vals, counts = np.unique(y_l1[mask], return_counts=True)
+        child_to_parent[l2] = int(vals[int(np.argmax(counts))])
     if np.any(child_to_parent < 0):
         missing = np.where(child_to_parent < 0)[0]
         raise ValueError(f"Missing L1 mapping for L2 classes: {missing}")
