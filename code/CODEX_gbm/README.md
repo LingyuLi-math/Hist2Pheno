@@ -11,11 +11,20 @@ Hist2Pheno 流程与 [`code/CODEX_hcc`](../CODEX_hcc) / [`code/Xenium_brca`](../
 
 ## Current status
 
-- 层次 Excel：[`WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx`](../../data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx) sheet **`Celltype`**（三层观测三元组：L2=`cell_type` / L12=`subcluster` / L1=`spatial_niche` SN1–SN9；**丢掉 SN LowQ 与缺失**）
-- 可训练：L2 **5** `cell_type` / L12 **16** `subcluster` / L1 **9** SN（再排除 `Unknown` / `LowQ`）
+- 层次 Excel：[`WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx`](../../data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx) sheet **`Celltype`**
+  （观测三元组，按细胞类型语义挂 head，**不是**把 SN 当 coarsest）：
+  - **L2** fine = `subcluster` → `final_CT`
+  - **L12** intermediate = `spatial_niche` SN1–SN9 → `final_sublineage`
+  - **L1** coarse = `cell_type` → `final_lineage`
+  - 丢掉 SN **LowQ / missing**，以及 `Unknown` / `LowQ` cell labels
+- 可训练：L2 **16** `subcluster` / L12 **9** SN / L1 **5** `cell_type`
 - `loc.csv` 的 `x,y` **已是显微镜 HE 像素**（与 StarDist 同画布；无需 BRCA affine）
 - StarDist 匹配（≤50 px）：Ini **46,689**（median **0.66** px）；Rec **155,794**（median **0.78** px）
+- Per-sample / 小样本：`resolve_stratified_cv_params`（默认 `auto_cv_k=True`）会在稀有 strata 上
+  自动 coarsen `joint→level2→level1` 并降低 `cv_k`，避免 `StratifiedKFold` 崩掉
+- Cross-dataset（Ini+Rec）：leave-one-section-out（`cv_k` clamp 到样本数）
 - UNI / 训练脚本已就绪，**默认不跑**（Ini HE ~2G；Rec HE ~4G；Rec StarDist ~1.16M 核）
+- `_all.ipynb` §5：`step_pooled_stardist_all` → `*_all_features_stardist_label.h5ad`（全 nuclei；无 GT AUROC）
 
 命令索引见 [`demo.sh`](demo.sh)。
 
@@ -34,7 +43,7 @@ python -u code/CODEX_gbm/GBM_train_validate_cv_UNIlabel.py \
   --mode cross-dataset \
   --use-spatial-context --spatial-k 8 --spatial-mode mean \
   --pooled-save-result result_all_spatial \
-  --ablation-tag D_emph_L2_spatial_bs4096
+  --ablation-tag D_emph_L2_spatial_gbm
 ```
 
 ## Data layout
@@ -72,16 +81,24 @@ data/CODEX/GBM/
 | `transer_embedding_label_h5ad.py` | matched / StarDist h5ad（`stardist_all_h5ad` 在 Rec 上可选） |
 | `GBM_train_validate_cv_UNIlabel.py` | three-head 训练 CLI |
 | `GBM_train_validate_cv_UNIlabel_single.ipynb` | 单样本（默认 Initial） |
-| `GBM_train_validate_cv_UNIlabel_all.ipynb` | pool Ini+Rec |
+| `GBM_train_validate_cv_UNIlabel_all.ipynb` | pool Ini+Rec；§5 all-nuclei；小样本 stratify/`cv_k` 自动调整 |
 | `Pred_statistic_visual_gbm_all.ipynb` | Initial vs Recurrent macro AUROC |
 
 Palette：`PAN_ORGAN="codex_gbm"`（`plotting_palettes.py`）。
 
 ## Hierarchy (`Celltype` sheet)
 
-WangLab 单核表只有两层：`cell_type`（L1）和 `subcluster`（L2）。
-Ini 的 `cell_type` 过滤器是 **7** 类（含 `LowQ`）；Rec 是 **6** 类（无 `LowQ`）。
-Union：**7 L1 / 18 L2**。不要套 HCC 的 Malignant / Immune / Glial / Stromal。
+训练用 **观测三元组**（`gbm_paths.GBM_HIERARCHY_SOURCE_COLS` / `match_codex_cells_with_pixel`）：
+
+| Head | 源列 | Cases 列 | 说明 |
+|------|------|----------|------|
+| L2 fine | `subcluster` | `final_CT` | AC-like / Mac_* / …（约 16，去 Unknown/LowQ） |
+| L12 intermediate | `spatial_niche` | `final_sublineage` | SN1–SN9（去 LowQ / missing） |
+| L1 coarse | `cell_type` | `final_lineage` | Tumor / Myeloid / Lymph / Oligo / Vascular |
+
+不要套 HCC 的 Malignant / Immune / Glial / Stromal。SN 不是 coarsest lineage。
+
+`cell_type` × `subcluster` 仍是生物学父子关系（示意）：
 
 | L1 `cell_type` | L2 `subcluster` | Ini | Rec |
 |----------------|-----------------|-----|-----|
@@ -94,11 +111,22 @@ Union：**7 L1 / 18 L2**。不要套 HCC 的 Malignant / Immune / Glial / Stroma
 | LowQ | LowQ（Ini `subcluster` 为空） | 649 | 0 |
 
 - Rec 原始 `cell_type` 带数字前缀（`0Tumor`…）；`normalize_gbm_cell_type` 去掉。
-- Ini 把 `Mac_SEPP1` 标在 Vascular（443），Rec 标在 Myeloid（2309）；层次表按多数票挂 **Myeloid**。
-- 训练排除 `Unknown` / `LowQ` 后为 16 L2 / 5 L1。three-head 脚本里 L12 与 L1 都写 `cell_type`。
-- Bin-level spatial niches（SN1–SN9）在 `1_Bin`；核↔bin 对照在 `3_Mapping_bin_nuclei`（`intersect_ratio` / `cell_area`）。Ini 全表见 `0917_Ini_nuclei_bin_spatialNiches_joined.xlsx`。
+- Ini 把 `Mac_SEPP1` 标在 Vascular（443），Rec 标在 Myeloid（2309）；层次表允许多 parent（duplicate L2）。
+- Bin-level SN 在 `1_Bin`；核↔bin 在 `3_Mapping_bin_nuclei`。Ini 全表见 `0917_Ini_nuclei_bin_spatialNiches_joined.xlsx`。
+- 改 hierarchy / rematch 后需重建 matched h5ad（`--force-rebuild`），再训练。
 
 ## Changelog
+
+### 2026-09-09 — Three-head mapping + small-data CV auto-adjust
+
+- **Head 语义**（`gbm_paths`）：`subcluster`→L2，`spatial_niche`→L12，`cell_type`→L1
+  （修正早期 README 把 L2/L12/L1 写反 / 把 SN 当 L1 的表述）。
+- Match CSV：`final_CT` / `final_sublineage` / `final_lineage` 与上表一致。
+- Per-sample 训练：`resolve_stratified_cv_params` + `--no-auto-cv-k` 开关；稀有
+  strata 时自动降 `cv_k` / coarsen `stratify_target`（Ini 等小样本需要）。
+- Ablation tag 与 `demo.sh` 对齐：`D_emph_L2_spatial_gbm`。
+- Cross-dataset notebook §5 保留 all-nuclei 推理；与 BRCA 一样，§4 matched
+  评估细胞数 ≈ GT，全 nuclei 看 `*_all_features_stardist_label.h5ad`。
 
 ### 2026-09-08 — GT tables drop SN LowQ / missing
 

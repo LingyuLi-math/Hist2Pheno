@@ -17,12 +17,14 @@ BRCA 已接入与 `code/Xenium_lung` / `code/CODEX_hcc` 同款的 **Hist2Pheno �
 
 - `obsm["spatial"]`：Xenium `x_centroid` / `y_centroid`（µm）
 - `obsm["spatial_HE_ome"]`：官方 post-Xenium **OME HE** 像素，`inv(he_imagealignment) @ (µm/0.2125)`
-- `obsm["spatial_HE"]`：StarDist/UNI 用的工作 `*_he_image.tif` 像素 = 将 OME 坐标按画布比例缩放到 tif
+- `obsm["spatial_HE"]`：工作 `*_he_image.tif` 像素 = OME 坐标减去 **crop origin**（同分辨率裁剪，**不是**全幅 anisotropic resize）
 - `*_he_imagealignment.csv` 是 **Explorer 的 HE↔morphology 仿射**（来自 [10x breast preview](https://www.10xgenomics.com/products/xenium-in-situ/preview-dataset-human-breast)），**不是** Visium；矩阵已含 **Y 反射**（手性对齐），不要再手动翻 y / 翻 TIFF
 - 裸 `µm/0.2125` 是 morphology 画布（比 HE TIFF 大），只作 `X_pix_morph` 参考
 - UNI：按 `he_um_per_px`（约 0.42）→ `--scale ~0.84`（目标 0.5 µm/px），`patch_size=16` → ~8 µm
-- 注释按 `cell_id` ↔ `Barcode` join，不按行号对齐
+- 注释按 `cell_id` ↔ `Barcode` join，不按行号对齐；rep2 GT 用 LY sheet（DCIS_1 / DCIS_2 已校正）
 - `Unlabeled` 与标红三类（两个 hybrid + `Perivascular-Like`）在 match 阶段排除
+- Rematch Cases CSV 后必须 **重建** `*_matched_features(_stardist).h5ad`（仅文件存在不够；见 changelog 2026-09-07 stale h5ad）
+- `_all.ipynb` §5：`step_pooled_stardist_all` 预测全部 StarDist nuclei → `*_all_features_stardist_label.h5ad`，并出 `{sample}_stardist_pred_{l2,l12,l1}.jpg`（与 §4 matched `celltype_pred_stardist_level*.jpg` 不同）
 
 命令索引见 [`demo.sh`](demo.sh)。推荐评估命令（pool rep1+rep2 + spatial k=8 mean）：
 
@@ -38,7 +40,7 @@ python -u code/Xenium_brca/BRCA_train_validate_cv_UNIlabel.py \
   --mode cross-dataset \
   --use-spatial-context --spatial-k 8 --spatial-mode mean \
   --pooled-save-result result_all_spatial \
-  --ablation-tag D_emph_L2_spatial_bs4096
+  --ablation-tag D_emph_L2_spatial_brca
 ```
 
 HE TIFF ~1.5G / replicate，StarDist 核约 25 万，UNI 与训练都是长 GPU 任务；不要在没指定 GPU 的情况下误跑。
@@ -88,7 +90,7 @@ data/Xemium/BRCA/
 | `transer_embedding_label_h5ad.py` | GT / StarDist matched h5ad，以及 all-nuclei StarDist h5ad |
 | `BRCA_train_validate_cv_UNIlabel.py` | three-head 训练 CLI（per-sample 或 `--mode cross-dataset`） |
 | `BRCA_train_validate_cv_UNIlabel_single.ipynb` | 单 replicate 训练 / 验证 / StarDist（默认 `rep1`） |
-| `BRCA_train_validate_cv_UNIlabel_all.ipynb` | pool rep1+rep2；`SKIP_POOLED_TRAIN=True` 可只加载 CLI 权重 |
+| `BRCA_train_validate_cv_UNIlabel_all.ipynb` | pool rep1+rep2；§4 matched StarDist；§5 all-nuclei pred + spatial JPGs |
 | `Pred_statistic_visual_brca_all.ipynb` | pooled StarDist ROC + 两 replicate macro AUROC |
 | `BRCA_plot.py` | 论文 cell-type hex palette（`ctype_hex_map`） |
 | `companion_notebook_compare_ROI_istar.ipynb` | 历史 10x companion 副本（路径已过时） |
@@ -133,6 +135,30 @@ LY sheet `celltype` 使用 Hist2Pheno 列名：`celltype_level2` → `celltype_l
 可训练层级：**16** fine / **8** intermediate / **4** coarse。
 
 ## Changelog
+
+### 2026-09-09 — All-nuclei StarDist spatial plots in `_all.ipynb`
+
+- §5 在 `step_pooled_stardist_all` 之后增加 pred-only 出图：
+  `plot_stardist_label_spatial_maps` / `plot_stardist_label_spatial_overview`
+  （`uni_label_cv_helpers`）。
+- 输出：`Results/{save_result}/stardist/{sample}/{sample}_stardist_pred_{l2,l12,l1}.jpg`
+  与 overview `stardist/stardist_all_pred_overview.jpg`。
+- 勿与 §4 `step_pooled_stardist`（仅 GT-matched nuclei + AUROC）混淆；后者细胞数 ≈ GT。
+
+### 2026-09-07 — Stale StarDist h5ad flipped rep2 DCIS_1 / DCIS_2
+
+- LY rematch 已把 `*_cells_matched_by_stardist.csv` 标成正确 DCIS，但
+  `rep2_matched_features_stardist.h5ad` 仍是 rematch **之前**的缓存 → 空间图上
+  DCIS 橙/粉对调（palette 本身未反：`DCIS_1=#FE664D`，`DCIS_2=#fb34cd`）。
+- 修复：对 rep2 `--force-rebuild` 重建 StarDist matched h5ad；HE h5ad 当时已正确。
+- `transer_embedding_label_h5ad._h5ad_cache_usable`：源 CSV **mtime 新于** h5ad 时视为 stale
+  （仅比 path / row count 不够，因为 LY 校正可 in-place 改标签）。
+- `_all.ipynb` `ensure_stardist_h5ads`：CSV 新于 h5ad 时自动 `force_rebuild_h5ad`。
+
+### 2026-09-07 — Ablation tag `D_emph_L2_spatial_brca`
+
+- Cross-dataset / notebook 默认 tag 与 `demo.sh` 对齐为 `D_emph_L2_spatial_brca`
+  （不再用误写的 `D_emph_L2_spatial_bs4096`）。
 
 ### 2026-09-07 — Fix OME→working-tif map: crop, not anisotropic resize
 
