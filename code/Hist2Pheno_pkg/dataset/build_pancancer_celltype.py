@@ -6,8 +6,8 @@ Run from the Hist2Pheno repo root (or anywhere; paths are absolute to this file)
     conda activate Hist2Pheno
     python code/Hist2Pheno_pkg/dataset/build_pancancer_celltype.py
 
-The ``celltype`` sheet is the fine synonym inventory (5 / 11 / 59).
-``celltype_v1`` is the HE-realistic training ontology (5 / 8 / 20).
+The ``celltype`` sheet is the HE-realistic training ontology (5 / 8 / 20 = 17 core + 3 lung extras).
+``celltype_fine`` is the v0 synonym inventory (5 / 11 / 59).
 Each cancer keeps its original multi-level table plus v0 and v1 mapping columns.
 CODEX ESCC (in-house) is intentionally omitted.
 """
@@ -596,14 +596,16 @@ def main() -> None:
         [
             ("Purpose", "Shared 3-level cell annotation for a pan-cancer Hist2Pheno (Fu/Gerstung PC-CHiP and Kather et al., Nat Cancer 2020: one H&E model across organs)."),
             ("Not included", "CODEX ESCC (in-house NCRT). Do not mix that hierarchy into this workbook."),
-            ("celltype sheet", "v0 synonym inventory: 5 L1 / 11 L12 / 59 trainable L2. Too fine for a 16 px H&E patch."),
-            ("celltype_v1 sheet", "HE-realistic training ontology: 5 L1 / 8 L12 / 20 L2. Use this for pan-cancer Hist2Pheno."),
+            ("celltype sheet", "HE-realistic training ontology: 5 L1 / 8 L12 / 20 L2 = 17-class 5-cancer union (core) + 3 coarse lung extras. Use this for pan-cancer Hist2Pheno."),
+            ("celltype_fine sheet", "v0 synonym inventory: 5 L1 / 11 L12 / 59 trainable L2. Too fine for a 16 px H&E patch."),
             ("L1", "Same in v0 and v1: Epithelial | Immune | Stromal | Endothelial | Neural."),
             ("L12 v1", "Tumor / Epithelial / T_cell / B_Plasma / Myeloid / Stromal / Endothelial / Neural."),
-            ("L2 v1", "Tumor, DCIS, Alveolar, Epithelial, Injury_epithelial, Myoepithelial, CD4_T, CD8_T, T_cell, B_cell, Plasma, DC, Macrophage, Macrophage_activated, Neutrophil, Fibroblast, Myofibroblast, Stromal, Endothelial, Neural."),
+            ("L2 v1 core", "5-cancer union (17): Tumor, DCIS, Epithelial, Myoepithelial, CD4_T, CD8_T, T_cell, B_cell, Plasma, DC, Macrophage, Macrophage_activated, Neutrophil, Fibroblast, Stromal, Endothelial, Neural."),
+            ("L2 v1 lung extras", "Coarse only: Alveolar (AT1+AT2+prolif AT2), Injury_epithelial (KRT5-/KRT17++RASC+transitional AT2), Myofibroblast (myofibroblast+activated/inflammatory/prolif FBs). Do not add AT1 vs AT2 or FB subtypes."),
+            ("Lung merge", "Airway / mesothelial → Epithelial; homeostatic FBs → Fibroblast; T/B/DC/mac/neutrophil/endothelial synonyms → matching core class. See l2_scope on celltype."),
             ("Dataset sheets", "Original multi-level table + v0 columns L1/L12/L2 + v1 columns L1_v1/L12_v1/L2_v1."),
             ("GBM L12", "Native L12 is spatial niche SN1–SN9. Unified L12 ignores SN and uses cell_type / subcluster biology."),
-            ("How to add CRC / Prostate", "New sheet with native labels. Map onto celltype_v1 L2 (Tumor / Epithelial / Neural / Stromal). Do not add new v1 L2 rows."),
+            ("How to add CRC / Prostate", "New sheet with native labels. Map onto celltype L2 (Tumor / Epithelial / Neural / Stromal). Do not add new celltype L2 rows."),
             ("Head names", "Hist2Pheno train heads: L2=fine=final_CT, L12=intermediate=final_sublineage, L1=coarse=final_lineage."),
             ("Counts", "GT_cells_on_HE from Hist2Pheno_Datasets.xlsx (2026-09-09 snapshot). Lung GT cells = Complete_Cases only."),
         ],
@@ -617,8 +619,8 @@ def main() -> None:
     ws["A1"].font = TITLE_FONT
     ws.merge_cells("A1:B1")
     ws["A2"] = (
-        "One workbook: sheet celltype = v0 inventory (5/11/59); "
-        "sheet celltype_v1 = HE-realistic training heads (5/8/20). CODEX ESCC omitted."
+        "One workbook: sheet celltype = HE-realistic training heads (5/8/20 = 17 core + 3 lung); "
+        "sheet celltype_fine = v0 inventory (5/11/59). CODEX ESCC omitted."
     )
     ws["A2"].font = NOTE_FONT
     ws.merge_cells("A2:B2")
@@ -640,16 +642,16 @@ def main() -> None:
     ws.freeze_panes = "A5"
 
     ws = wb.create_sheet("celltype", 1)
-    write_df(ws, celltype)
-    ws.column_dimensions["D"].width = 55
-    ws.column_dimensions["E"].width = 28
-    ws.column_dimensions["H"].width = 70
-
-    ws = wb.create_sheet("celltype_v1", 2)
     write_df(ws, celltype_v1)
     ws.column_dimensions["D"].width = 70
     ws.column_dimensions["H"].width = 28
     ws.column_dimensions["I"].width = 72
+
+    ws = wb.create_sheet("celltype_fine", 2)
+    write_df(ws, celltype)
+    ws.column_dimensions["D"].width = 55
+    ws.column_dimensions["E"].width = 28
+    ws.column_dimensions["H"].width = 70
 
     ws = wb.create_sheet("summary", 3)
     write_df(ws, summary, l1_col=None, trainable_col=None)
@@ -704,11 +706,14 @@ def main() -> None:
 
     wb.save(OUT)
     print(f"Wrote {OUT}")
-    print(f"celltype    L1={celltype['L1'].nunique()} L12={celltype['L12'].nunique()} L2={celltype['L2'].nunique()}")
-    v1_train = celltype_v1[celltype_v1["trainable"] == "Y"]
+    train = celltype_v1[celltype_v1["trainable"] == "Y"]
     print(
-        f"celltype_v1 L1={v1_train['L1'].nunique()} L12={v1_train['L12'].nunique()} "
-        f"L2={v1_train['L2'].nunique()}"
+        f"celltype      L1={train['L1'].nunique()} L12={train['L12'].nunique()} "
+        f"L2={train['L2'].nunique()}"
+    )
+    print(
+        f"celltype_fine L1={celltype['L1'].nunique()} L12={celltype['L12'].nunique()} "
+        f"L2={celltype['L2'].nunique()}"
     )
     native_key = {
         "Lung": "final_CT",

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """v1 (HE-realistic) mapping used by ``build_pancancer_celltype.py``.
 
-Writes the ``celltype_v1`` sheet inside ``PanCancerCellType.xlsx``.
+Writes the ``celltype`` sheet (training ontology) inside ``PanCancerCellType.xlsx``.
+The fine synonym inventory is ``celltype_fine``.
 Do not emit a separate workbook.
 """
 
@@ -41,9 +42,34 @@ L12_PARENT = {
 }
 
 # Native source label → (L2, L12). L1 follows L12_PARENT.
-# Remodeling fibroblasts (ARI/FRI stromal numerator) → Myofibroblast.
-# Homeostatic / generic fibroblasts → Fibroblast.
+#
+# Pan-cancer L2 core = BRCA ∪ HCC ∪ PDAC ∪ GIST ∪ GBM (17 classes).
+# Lung labels that match a core class are merged there (airway → Epithelial,
+# homeostatic FBs → Fibroblast, immune / endothelial synonyms, etc.).
+# Lung-only biology is added as 3 coarse extras — not native-fine (no AT1 vs AT2,
+# no RASC vs KRT5, no adventitial vs alveolar FB).
 # Profibrotic macs (M2, SPP1, IFN, Monocytes/MDMs) → Macrophage_activated.
+
+CORE_L2 = frozenset({
+    "Tumor",
+    "DCIS",
+    "Epithelial",
+    "Myoepithelial",
+    "CD4_T",
+    "CD8_T",
+    "T_cell",
+    "B_cell",
+    "Plasma",
+    "DC",
+    "Macrophage",
+    "Macrophage_activated",
+    "Neutrophil",
+    "Fibroblast",
+    "Stromal",
+    "Endothelial",
+    "Neural",
+})
+LUNG_UNIQUE_L2 = frozenset({"Alveolar", "Injury_epithelial", "Myofibroblast"})
 NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     # ---- tumor ----
     "Invasive_Tumor": ("Tumor", "Tumor"),
@@ -68,11 +94,10 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     "PNEC": ("Epithelial", "Epithelial"),
     "Proliferating Airway": ("Epithelial", "Epithelial"),
     "Mesothelial": ("Epithelial", "Epithelial"),
-    # FRI/ARI denominator
+    # Lung-unique extras (coarse): alveolar parenchyma vs injury / failed regeneration
     "AT1": ("Alveolar", "Epithelial"),
     "AT2": ("Alveolar", "Epithelial"),
     "Proliferating AT2": ("Alveolar", "Epithelial"),
-    # FRI injury epithelium
     "KRT5-/KRT17+": ("Injury_epithelial", "Epithelial"),
     "RASC": ("Injury_epithelial", "Epithelial"),
     "Transitional AT2": ("Injury_epithelial", "Epithelial"),
@@ -169,9 +194,9 @@ L2_NOTES = {
     "DCIS": "BRCA DCIS (DCIS_1 + DCIS_2). One class: the 1/2 split is BRCA-only and not needed pan-cancer.",
     "CD4_T": "Helper / CD4 T (incl. Treg). Split from CD8 because nuclear size and helper vs cytotoxic cues are weakly visible on H&E.",
     "CD8_T": "Cytotoxic / CD8 T.",
-    "Epithelial": "Residual / airway / mixed epithelium (PDAC, GIST, lung secretory/basal/goblet). CRC Enterocyte / Prostate Luminal map here.",
-    "Alveolar": "FRI/ARI denominator: AT1 + AT2 + proliferating AT2.",
-    "Injury_epithelial": "FRI numerator: KRT5-/KRT17+, RASC, transitional AT2.",
+    "Epithelial": "Residual / airway / mixed epithelium (PDAC, GIST, lung secretory/basal/goblet/mesothelial). CRC Enterocyte / Prostate Luminal map here.",
+    "Alveolar": "Lung-unique extra (coarse): AT1 + AT2 + proliferating AT2. FRI/ARI denominator. Not in the 5-cancer union.",
+    "Injury_epithelial": "Lung-unique extra (coarse): KRT5-/KRT17+ + RASC + transitional AT2. FRI injury numerator. Not AT1 vs RASC vs KRT5 as separate heads.",
     "Myoepithelial": "Breast myoepithelium (WSI-visible as a layer; hard on a 16 px patch).",
     "T_cell": "Unspecified T / NK / GBM Lymphocyte / proliferating T / INFg+. Use when the source does not split CD4 vs CD8.",
     "B_cell": "TLS B compartment (incl. proliferating B).",
@@ -180,8 +205,8 @@ L2_NOTES = {
     "Macrophage": "Generic macrophages + GIST monocytes. TNI myeloid = this + Macrophage_activated.",
     "Macrophage_activated": "TNI M2 / FRI profibrotic macs: M2-like, SPP1+, IFN-activated, Monocytes/MDMs.",
     "Neutrophil": "Granulocytes (neutrophil + basophil + mast). Mast granules are H&E-visible but too rare to keep a head.",
-    "Fibroblast": "Quiescent / tissue fibroblasts (lung alveolar/adventitial/subpleural; CODEX Fibroblasts).",
-    "Myofibroblast": "ARI + FRI fibrotic-stromal numerator: myofibroblasts + activated/inflammatory/proliferating FBs.",
+    "Fibroblast": "Quiescent / tissue fibroblasts (lung alveolar/adventitial/subpleural FBs; CODEX Fibroblasts).",
+    "Myofibroblast": "Lung-unique extra (coarse): myofibroblasts + activated/inflammatory/proliferating FBs. ARI + FRI fibrotic-stromal numerator. One class, not four FB states.",
     "Stromal": "CAF, collagen, GIST stromal/tumor, SMC/pericyte. GIST tumor stays here (mesenchymal).",
     "Endothelial": "Blood + lymphatic + GBM Vascular. TNI endothelium.",
     "Neural": "Oligodendrocyte; reserved Nerve for prostate / CRC / PDAC.",
@@ -243,6 +268,7 @@ def build_celltype_sheet(
                 "L2": l2,
                 "L2_aliases": "; ".join(aliases),
                 "present_in": "; ".join(present_by_l2.get(l2, [])),
+                "l2_scope": "lung_unique" if l2 in LUNG_UNIQUE_L2 else "core_5union",
                 "reserved_for": RESERVED_ON_EXISTING.get(l2, ""),
                 "trainable": "Y",
                 "index_role": {
@@ -250,9 +276,9 @@ def build_celltype_sheet(
                     "DCIS": "in situ tumor",
                     "CD4_T": "TLS T",
                     "CD8_T": "TLS T",
-                    "Epithelial": "normal / residual epithelium",
-                    "Alveolar": "FRI/ARI denominator",
-                    "Injury_epithelial": "FRI numerator",
+                    "Epithelial": "normal / residual / airway epithelium",
+                    "Alveolar": "FRI/ARI denominator (lung extra)",
+                    "Injury_epithelial": "FRI numerator (lung extra)",
                     "Myoepithelial": "breast architecture",
                     "T_cell": "TLS",
                     "B_cell": "TLS",
@@ -262,7 +288,7 @@ def build_celltype_sheet(
                     "Macrophage_activated": "TNI M2 / FRI profibrotic mac",
                     "Neutrophil": "inflammation",
                     "Fibroblast": "SRI / baseline stroma",
-                    "Myofibroblast": "ARI + FRI fibrotic stroma",
+                    "Myofibroblast": "ARI + FRI fibrotic stroma (lung extra)",
                     "Stromal": "SRI / GIST tumor",
                     "Endothelial": "TNI endothelium",
                     "Neural": "glia / reserved nerve",
@@ -277,6 +303,7 @@ def build_celltype_sheet(
             "L2": "Other",
             "L2_aliases": "Unknown; Unlabeled; Other; Stroma Uncharacterized; LowQ",
             "present_in": "Lung; BRCA; HCC; PDAC; GIST; GBM",
+            "l2_scope": "excluded",
             "reserved_for": "",
             "trainable": "N",
             "index_role": "excluded",
@@ -291,6 +318,10 @@ def build_celltype_sheet(
     if dup:
         raise ValueError(f"L2 must be unique: {dup}")
     n_train = int((out["trainable"] == "Y").sum())
+    train_set = set(out.loc[out["trainable"] == "Y", "L2"].astype(str))
+    expected = CORE_L2 | LUNG_UNIQUE_L2
+    if train_set != expected:
+        raise ValueError(f"v1 L2 {sorted(train_set)} != core∪lung extras {sorted(expected)}")
     if n_train > 24:
         raise ValueError(f"v1 L2 trainable={n_train} exceeds 24")
     return out
@@ -299,7 +330,7 @@ def build_celltype_sheet(
 def celltype_v1_from_native(
     native_cols: dict[str, tuple[str, pd.DataFrame]],
 ) -> pd.DataFrame:
-    """Build the ``celltype_v1`` table from frames that already have ``L2_v1``."""
+    """Build the training ``celltype`` table from frames that already have ``L2_v1``."""
     aliases: dict[str, list[str]] = {}
     present: dict[str, list[str]] = {}
     for cancer, (col, df) in native_cols.items():

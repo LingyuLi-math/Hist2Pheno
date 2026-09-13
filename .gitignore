@@ -32,6 +32,7 @@ code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bi
 data/
 manuscript/
 manuscript_260911/
+code/Hist2Pheno_pkg/dataset/figures_l2_overlap/
 tools/
 code_git0725/
 *.h5ad
