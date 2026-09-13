@@ -1617,6 +1617,52 @@ def _write_h5ad_atomic(adata, out_path: Path) -> None:
         tmp_path.unlink(missing_ok=True)
         raise
 
+########################################################
+## 2026.09.11 LLY: Add the function to build the all_features_stardist.h5ad for GBM
+########################################################
+def ensure_stardist_all_h5ad(
+    sample: str,
+    *,
+    cases_root: Path | None = None,
+    stardist_root: Path | None = None,
+    match_tolerance: float = 1.0,
+    force_rebuild: bool = False,
+) -> Path:
+    """Build ``Cases/{sample}/{sample}_all_features_stardist.h5ad`` from full-HE UNI.
+
+    Training GT lives only on the Visium HD chip. StarDist + UNI already cover the
+    microscope WSI under ``project_all_UNI/ImgEmbeddings_all_stardist/sc_pth_16_16``.
+    """
+    import transer_embedding_label_h5ad as gbm_h5ad
+
+    cases_root = Path(cases_root or DEFAULT_CASES_ROOT)
+    stardist_root = Path(stardist_root or DEFAULT_STARDIST_ROOT)
+    acq_map = gbm_h5ad.load_acquisition_map(cases_root, aligned_only=False)
+    if sample not in acq_map:
+        raise KeyError(
+            f"Unknown GBM sample {sample!r}; choose P174511_Initial or P179161_Recurrent"
+        )
+    paths = gbm_h5ad.SamplePaths(
+        he_key=sample,
+        acq_id=acq_map[sample],
+        cases_root=cases_root,
+        stardist_root=stardist_root,
+        therapy_model=DEFAULT_THERAPY_MODEL,
+    )
+    print(
+        f"\n[StarDist all h5ad] {sample}  "
+        f"embeddings={paths.stardist_embedding_dir}",
+        flush=True,
+    )
+    gbm_h5ad.build_stardist_all_h5ad(
+        paths,
+        match_tolerance=match_tolerance,
+        force_rebuild=force_rebuild,
+    )
+    if not paths.stardist_all_h5ad.is_file():
+        raise FileNotFoundError(f"Failed to write {paths.stardist_all_h5ad}")
+    return paths.stardist_all_h5ad
+########################################################
 
 def _load_sample_stardist_all_arrays(
     ctx: PooledRunContext,
@@ -1630,8 +1676,8 @@ def _load_sample_stardist_all_arrays(
     all_h5ad = root / sample / f"{sample}_all_features_stardist.h5ad"
     if not all_h5ad.is_file():
         raise FileNotFoundError(
-            f"{all_h5ad} not found. Run "
-            "code/CODEX_gbm/transer_embedding_label_h5ad.py "
+            f"{all_h5ad} not found. Run ensure_stardist_all_h5ad({sample!r}) "
+            "or code/CODEX_gbm/transer_embedding_label_h5ad.py "
             f"--sample {sample} --steps stardist_all_h5ad."
         )
     adata = ad.read_h5ad(all_h5ad)
@@ -1723,8 +1769,78 @@ def step_pooled_stardist_all(ctx: PooledRunContext) -> None:
         print(f"\n  StarDist-all failures: {len(failures)}/{len(ctx.samples)}", flush=True)
 
 
+
 ########################################################
-## StarDist all-nuclei inference for extra StarDist-only regions (none for GBM preview)
+#2026.09.11, add Function to plot the spatial maps for GBM
+########################################################
+GBM_STARDIST_HEADS = ("l2", "l12", "l1")
+
+
+def plot_gbm_full_he_stardist_spatial_maps(
+    data_root,
+    samples: list[str],
+    save_result: str = "result_all_spatial",
+    *,
+    heads: tuple[str, ...] = GBM_STARDIST_HEADS,
+    pan_organ: str = PAN_ORGAN,
+    spatial_point_size: float = 0.15,
+    fig_size: tuple[float, float] = (10, 8),
+    show: bool = False,
+) -> dict:
+    """Pred-only L2/L12/L1 maps for full-microscope-HE StarDist label h5ads."""
+    from uni_label_cv_helpers import (
+        plot_stardist_label_spatial_maps,
+        stardist_all_label_h5ad_path,
+    )
+
+    return plot_stardist_label_spatial_maps(
+        data_root,
+        samples,
+        save_result,
+        label_h5ad_path_fn=stardist_all_label_h5ad_path,
+        heads=heads,
+        pan_organ=pan_organ,
+        spatial_point_size=spatial_point_size,
+        fig_size=fig_size,
+        show=show,
+        missing_error="No full-HE label h5ads. Run the §5/§6 inference cell first.",
+    )
+
+
+def plot_gbm_full_he_stardist_spatial_overview(
+    loaded: dict,
+    data_root,
+    save_result: str = "result_all_spatial",
+    *,
+    heads: tuple[str, ...] = GBM_STARDIST_HEADS,
+    pan_organ: str = PAN_ORGAN,
+    point_size: float = 0.2,
+    show: bool = True,
+    save_path=None,
+):
+    """n×3 overview of Ini/Rec full-HE predicted spatial maps."""
+    from uni_label_cv_helpers import plot_stardist_label_spatial_overview
+
+    if save_path is None:
+        save_path = (
+            Path(data_root)
+            / save_result
+            / "stardist"
+            / "full_he_spatial_pred_overview_l2_l12_l1.jpg"
+        )
+    return plot_stardist_label_spatial_overview(
+        loaded,
+        heads=heads,
+        pan_organ=pan_organ,
+        save_path=save_path,
+        point_size=point_size,
+        suptitle="GBM full microscope HE StarDist-all predicted spatial maps",
+        show=show,
+    )
+########################################################
+
+########################################################
+## Extra StarDist-only regions (none for GBM; full HE of Ini/Rec is §5/§6)
 ########################################################
 def discover_brca_rest_samples(
     cases_root: Path | None = None,
@@ -1732,7 +1848,7 @@ def discover_brca_rest_samples(
     *,
     require_h5ad: bool = False,
 ) -> list[str]:
-    """GBM WangLab has only annotated P174511_Initial/P179161_Recurrent; no unlabeled rest regions."""
+    """No HCC-style rest slides. Full-HE nuclei of Ini/Rec are predicted in §5/§6."""
     return []
 
 

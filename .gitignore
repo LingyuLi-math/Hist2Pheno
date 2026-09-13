@@ -31,6 +31,7 @@ __pycache__/
 code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
 data/
 manuscript/
+manuscript_260911/
 tools/
 code_git0725/
 *.h5ad
@@ -47,3 +48,6 @@ code_git0725/
 
 *.bin
 *.safetensors
+
+# Cursor
+.cursorignore

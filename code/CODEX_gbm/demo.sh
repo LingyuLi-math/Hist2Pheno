@@ -57,5 +57,6 @@ conda run --no-capture-output -n SeededNTM python -u \
   ## debug one sample (default P174511_Initial)
 5_GBM_train_validate_cv_UNIlabel_all.ipynb
   ## pool Ini+Rec; set SKIP_POOLED_TRAIN=True to load CLI weights
+  ## §5/§6: predict full microscope HE (Visium HD chip ⊂ WSI); Rec ~1.16M nuclei
 5_Pred_statistic_visual_gbm_all.ipynb
   ## Initial vs Recurrent StarDist macro AUROC

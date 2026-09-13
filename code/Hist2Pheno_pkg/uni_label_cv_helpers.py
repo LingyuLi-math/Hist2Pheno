@@ -237,41 +237,48 @@ def load_stardist_label_head_predictions(
     import anndata as ad
 
     path = Path(h5ad_path)
-    adata = ad.read_h5ad(path)
-    names_map = adata.uns.get("pred_prob_class_names") or {}
-    coords = None
-    for key in (obsm_key, "spatial_HE", "spatial"):
-        if key in adata.obsm:
-            coords = np.asarray(adata.obsm[key], dtype=np.float64)[:, :2]
-            break
-    if coords is None and {"centroid_x", "centroid_y"}.issubset(adata.obs.columns):
-        coords = adata.obs[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
-    if coords is None:
-        raise KeyError(f"{path.name}: no spatial coords in obsm or centroid_x/y.")
-    tiers = {}
-    for head in heads:
-        if head not in names_map:
-            raise KeyError(
-                f"{path.name}: missing head {head!r} in pred_prob_class_names; "
-                f"available={list(names_map)}"
-            )
-        class_names = [str(x) for x in names_map[head]]
-        prob_cols = [f"{head}_prob_{j}" for j in range(len(class_names))]
-        missing = [c for c in prob_cols if c not in adata.obs.columns]
-        if missing:
-            raise ValueError(f"{path.name}: missing {missing[:4]}")
-        probs = adata.obs[prob_cols].to_numpy(dtype=np.float64)
-        tiers[head] = {
-            "class_names": class_names,
-            "pred_encoded": probs.argmax(axis=1).astype(np.int64),
+    ########################################################
+    # 2026.09.11, add Function to load the all_features_stardist_label.h5ad for GBM
+    ########################################################
+    adata = ad.read_h5ad(path, backed="r")
+    try:
+        names_map = dict(adata.uns.get("pred_prob_class_names") or {})
+        coords = None
+        for key in (obsm_key, "spatial_HE", "spatial"):
+            if key in adata.obsm:
+                coords = np.asarray(adata.obsm[key], dtype=np.float64)[:, :2].copy()
+                break
+        if coords is None and {"centroid_x", "centroid_y"}.issubset(adata.obs.columns):
+            coords = adata.obs[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
+        if coords is None:
+            raise KeyError(f"{path.name}: no spatial coords in obsm or centroid_x/y.")
+        tiers = {}
+        for head in heads:
+            if head not in names_map:
+                raise KeyError(
+                    f"{path.name}: missing head {head!r} in pred_prob_class_names; "
+                    f"available={list(names_map)}"
+                )
+            class_names = [str(x) for x in names_map[head]]
+            prob_cols = [f"{head}_prob_{j}" for j in range(len(class_names))]
+            missing = [c for c in prob_cols if c not in adata.obs.columns]
+            if missing:
+                raise ValueError(f"{path.name}: missing {missing[:4]}")
+            probs = adata.obs[prob_cols].to_numpy(dtype=np.float64)
+            tiers[head] = {
+                "class_names": class_names,
+                "pred_encoded": probs.argmax(axis=1).astype(np.int64),
+            }
+        return {
+            "path": path,
+            "coords": coords,
+            "tiers": tiers,
+            "n_obs": int(adata.n_obs),
         }
-    return {
-        "path": path,
-        "coords": coords,
-        "tiers": tiers,
-        "n_obs": int(adata.n_obs),
-    }
-
+    finally:
+        if getattr(adata, "file", None) is not None:
+            adata.file.close()
+    ########################################################
 
 def plot_stardist_label_spatial_heads(
     rec: Mapping,

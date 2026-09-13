@@ -22,9 +22,11 @@ Hist2Pheno 流程与 [`code/CODEX_hcc`](../CODEX_hcc) / [`code/Xenium_brca`](../
 - StarDist 匹配（≤50 px）：Ini **46,689**（median **0.66** px）；Rec **155,794**（median **0.78** px）
 - Per-sample / 小样本：`resolve_stratified_cv_params`（默认 `auto_cv_k=True`）会在稀有 strata 上
   自动 coarsen `joint→level2→level1` 并降低 `cv_k`，避免 `StratifiedKFold` 崩掉
-- Cross-dataset（Ini+Rec）：leave-one-section-out（`cv_k` clamp 到样本数）
+- Cross-dataset（Ini+Rec）：**LORO OOF** 作诚实 Ini↔Rec 迁移指标；`n_sections < cv_k` 时再 **all-sample refit** 写 `best_mlp_gpu.pt`（部署 / StarDist），LORO 最佳折另存 `best_mlp_gpu_loro.pt`
+- `_all.ipynb`：`SKIP_POOLED_TRAIN=True` **只 load** `best_mlp_gpu.pt`（不调用 `step_pooled_train`，避免误触发 refit）
 - UNI / 训练脚本已就绪，**默认不跑**（Ini HE ~2G；Rec HE ~4G；Rec StarDist ~1.16M 核）
-- `_all.ipynb` §5：`step_pooled_stardist_all` → `*_all_features_stardist_label.h5ad`（全 nuclei；无 GT AUROC）
+- 可训练核（去 Unknown/LowQ / SN LowQ）：Ini **37,371** + Rec **137,839**。全 HE StarDist UNI：Ini **~178k** / Rec **~1.16M**（GT 只覆盖 Visium HD 芯片区）
+- `_all.ipynb` §5/§6：从 `ImgEmbeddings_all_stardist` 建 `*_all_features_stardist.h5ad`，再 `step_pooled_stardist_all` → `*_all_features_stardist_label.h5ad`（整张显微镜 HE；无 GT AUROC）
 
 命令索引见 [`demo.sh`](demo.sh)。
 
@@ -64,8 +66,12 @@ data/CODEX/GBM/
 ├── Cases/{P174511_Initial,P179161_Recurrent}/
 │   ├── {sample}_cells_with_pixel.csv
 │   ├── {sample}_cells_matched_by_stardist.csv
-│   ├── {sample}_matched_features.h5ad            # after transfer
-│   └── project_all_UNI/...
+│   ├── {sample}_matched_features.h5ad            # Visium HD chip GT
+│   ├── {sample}_matched_features_stardist.h5ad
+│   ├── {sample}_all_features_stardist.h5ad       # full HE; after stardist_all_h5ad
+│   └── project_all_UNI/
+│       ├── ImgEmbeddings_all/                    # chip GT UNI
+│       └── ImgEmbeddings_all_stardist/           # full-HE StarDist UNI
 └── Results/                              # 预处理 CSV + cross-dataset 训练输出
 ```
 
@@ -81,7 +87,7 @@ data/CODEX/GBM/
 | `transer_embedding_label_h5ad.py` | matched / StarDist h5ad（`stardist_all_h5ad` 在 Rec 上可选） |
 | `GBM_train_validate_cv_UNIlabel.py` | three-head 训练 CLI |
 | `GBM_train_validate_cv_UNIlabel_single.ipynb` | 单样本（默认 Initial） |
-| `GBM_train_validate_cv_UNIlabel_all.ipynb` | pool Ini+Rec；§5 all-nuclei；小样本 stratify/`cv_k` 自动调整 |
+| `GBM_train_validate_cv_UNIlabel_all.ipynb` | pool Ini+Rec；`SKIP_POOLED_TRAIN`；§5/§6 整张 HE StarDist-all |
 | `Pred_statistic_visual_gbm_all.ipynb` | Initial vs Recurrent macro AUROC |
 
 Palette：`PAN_ORGAN="codex_gbm"`（`plotting_palettes.py`）。
@@ -116,6 +122,20 @@ Palette：`PAN_ORGAN="codex_gbm"`（`plotting_palettes.py`）。
 - 改 hierarchy / rematch 后需重建 matched h5ad（`--force-rebuild`），再训练。
 
 ## Changelog
+
+### 2026-09-11 — LORO vs deploy weights + full-HE StarDist (§5/§6)
+
+**Why.** 2-slide group CV is leave-one-replicate-out. Copying the best LORO fold to `best_mlp_gpu.pt` left Rec-only classes (L2 `G1S`/`G2M`/`NPC-like`; L12 `SN3`/`SN4`/`SN7`) unseen, so Rec StarDist collapsed. Training GT also covers only the **Visium HD chip**; StarDist+UNI already exist for the rest of the same microscope HE.
+
+- **Deploy refit** (`Hist2Pheno_pkg/model.py`：`should_refit_pooled_on_all_samples` / `maybe_refit_pooled_deployment_if_few_sections`)：`n_sections < cv_k` 或 fold 只训 1 张片时，OOF 仍是诚实 LORO；LORO 最佳折 → `best_mlp_gpu_loro.pt`；再在 **全部细胞** 上 85/15 分层 refit → `best_mlp_gpu.pt`（StarDist / 新 section）。Spatial kNN **按 slide**（`groups_f`），refit 不会跨 Ini↔Rec 取邻居。
+- **`SKIP_POOLED_TRAIN=True`**：`_ensure_pooled_inference_ready(..., require_train_if_missing=False)` 只 load CLI `best_mlp_gpu.pt`，**不要**再调 `step_pooled_train`（那仍会 refit）。
+- 推荐 tag：`D_emph_L2_spatial_gbm`（`--no-resume-from-checkpoints` 才重训；默认 resume 会复用旧 LORO folds）。
+- **§5/§6 整张 HE**：无 HCC-style rest slide。芯片 GT ⊂ 显微镜 WSI（Ini ~37k vs ~178k StarDist；Rec ~138k vs ~1.16M）。`ensure_stardist_all_h5ad` 从  
+  `Cases/{sample}/project_all_UNI/ImgEmbeddings_all_stardist/sc_pth_16_16`  
+  建 `*_all_features_stardist.h5ad`（此前缺失，§5 会 FileNotFound）。预测写入  
+  `Results/{save_result}/stardist/{sample}/{sample}_all_features_stardist_label.h5ad`。  
+  Config：`FULL_HE_SAMPLES`；Rec ~1.16M，RAM/time 重可从列表去掉。
+- Notebook plot：`plot_gbm_full_he_stardist_spatial_maps` / `_overview`；label h5ad 用 `backed="r"` 读，避免把 Rec 的 X 整表载入。
 
 ### 2026-09-09 — Three-head mapping + small-data CV auto-adjust
 

@@ -51,12 +51,50 @@ flowchart LR
 
 Start from the dataset README, then follow that folder’s `demo.sh`.
 
+## Pan-cancer cell-type labels
+
+A pan-cancer Hist2Pheno (same idea as Fu et al. / Kather et al., *Nat Cancer* 2020: one H&E model across organs) needs a **shared 3-level label space**. Native hierarchies stay as they are; they are mapped onto that space rather than rewritten.
+
+**CODEX ESCC is omitted** (in-house NCRT). The six public-cohort ground-truth hierarchies:
+
+| Cancer | GT hierarchy (repo-relative) | Sheet | Native L2 / L12 / L1 (train) | GT cells on HE | Native L1 |
+|--------|------------------------------|-------|------------------------------|----------------|-----------|
+| Lung | [`data/Xemium/weiqin/SpatialPF-NGenetics/Spatial-PF-Processed/Annotation/HE_Annotations/41588_2025_2080_MOESM5_ESM.xlsx`](data/Xemium/weiqin/SpatialPF-NGenetics/Spatial-PF-Processed/Annotation/HE_Annotations/41588_2025_2080_MOESM5_ESM.xlsx) | `Celltype` | 47 / 6 / 4 (+ CNiche 12, TNiche 12) | 637,738 (Complete) | Epithelial, Immune, Endothelial, Mesenchymal |
+| BRCA | [`data/Xemium/BRCA/Annotation/GSE243275_Barcode_Cell_Type_MatricesLY.xlsx`](data/Xemium/BRCA/Annotation/GSE243275_Barcode_Cell_Type_MatricesLY.xlsx) | `celltype` | 16 / 8 / 4 | 264,518 | Epithelial, Immune, Stromal, Endothelial |
+| HCC | [`data/CODEX/HCC/Michael_data_transfer/s4769/HE/s4769_he_mapping_updated_Visium.xlsx`](data/CODEX/HCC/Michael_data_transfer/s4769/HE/s4769_he_mapping_updated_Visium.xlsx) | `Celltype` | 12 / 6 / 4 | 1,095,779 | Epithelial, Immune, Stromal, Endothelial |
+| PDAC | [`data/CODEX/HCC/Michael_data_transfer/s1167/raw_metadata_updated.xlsx`](data/CODEX/HCC/Michael_data_transfer/s1167/raw_metadata_updated.xlsx) | `Celltype` (`cohort=Pancreas TMA`) | 11 / 6 / 4 | 1,504,982 | Epithelial, Immune, Stromal, Endothelial |
+| GIST | same s1167 workbook | `Celltype` (`cohort=GIST TMA`) | 11 / 6 / 4 | 1,785,460 | Epithelial, Immune, Stromal, Endothelial |
+| GBM | [`data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx`](data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx) | `Celltype` | 16 / 9 SN / 5 | 175,210 | Tumor, Myeloid, Lymph, Oligo, Vascular |
+
+Per-cell GT (coordinates + labels) still lives in each dataset’s Cases / Complete_Cases CSVs; the files above are the **multi-level class lists** used at match / train time.
+
+**What agrees.** BRCA / HCC / PDAC / GIST already share a 4-class coarse L1 (Epithelial / Immune / Stromal / Endothelial). Immune L12 is consistently T / B / Myeloid. Stromal vs Endothelial are split the same way.
+
+**What does not.** (1) Lung uses Mesenchymal instead of Stromal, and L12 is tissue-specific (Alveolar / Airway), not T-cell / B-cell. (2) GBM L1 is Tumor / Myeloid / Lymph / Oligo / Vascular; native L12 is **spatial niche SN1–SN9**, not a lineage parent of `subcluster`. (3) GIST “Stromal cells” includes KIT+ tumor (mesenchymal), so it must not be recoded to Epithelial. (4) Fine-name synonyms are rampant (`Helper T cells` = `CD4+_T_Cells` = `CD4 T cells`).
+
+Shared ontology (one workbook): [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx). Rebuild: [`build_pancancer_celltype.py`](code/Hist2Pheno_pkg/dataset/build_pancancer_celltype.py).
+
+| Sheet | Contents |
+|-------|----------|
+| `celltype` | v0 synonym inventory (5 L1 / 11 L12 / 59 L2) — too fine for H&E |
+| `celltype_v1` | HE-realistic training ontology (**5 L1 / 8 L12 / 20 L2**) |
+| `Lung` … `GBM` | Original multi-level rows + v0 `L1/L12/L2` + v1 `L1_v1/L12_v1/L2_v1` |
+| `GBM_unique_L2` | GBM collapsed to unique `subcluster` (SN triples stay on `GBM`) |
+| `summary` / `Legend` | Paths, native vs unified counts, how to add CRC / Prostate |
+
+**v1 L1 (5):** Epithelial · Immune · Stromal · Endothelial · Neural.  
+**v1 L12 (8):** Tumor · Epithelial · T_cell · B_Plasma · Myeloid · Stromal · Endothelial · Neural.  
+**v1 L2 (20):** Tumor, DCIS, Alveolar, Epithelial, Injury_epithelial, Myoepithelial, CD4_T, CD8_T, T_cell, B_cell, Plasma, DC, Macrophage, Macrophage_activated, Neutrophil, Fibroblast, Myofibroblast, Stromal, Endothelial, Neural.
+
+Adding CRC / Prostate: map onto existing v1 L2 (`Tumor` / `Epithelial` / `Neural` / `Stromal`). Do not add new L2 rows. Cohort class inventories remain in [`Hist2Pheno_Datasets.xlsx`](code/Hist2Pheno_pkg/dataset/Hist2Pheno_Datasets.xlsx).
+
 ## Repository layout
 
 ```text
 Hist2Pheno/
 ├── code/
 │   ├── Hist2Pheno_pkg/          # shared library
+│   │   └── dataset/             # Hist2Pheno_Datasets.xlsx + PanCancerCellType.xlsx
 │   ├── Image_feature_extraction.py
 │   ├── StarDist_nuclei_segmente.py
 │   ├── Xenium_lung/
@@ -181,7 +219,7 @@ Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`co
 | L1 | Coarse lineage | `final_lineage` |
 | L3 / L4 | CNiche / TNiche (Xenium) or ESCC coarse / lineage-bucket | dataset-specific |
 
-Xenium lung uses all five heads. HCC / PDAC / GIST / BRCA / GBM use L2 + L12 + L1. On GBM those heads are **subcluster / spatial_niche (SN1–SN9) / cell_type**, not a copy of L1. Palettes live in [`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py); see the [package README](code/Hist2Pheno_pkg/README.md). Cohort class lists: [`Hist2Pheno_Datasets.xlsx`](code/Hist2Pheno_pkg/dataset/Hist2Pheno_Datasets.xlsx).
+Xenium lung uses all five heads. HCC / PDAC / GIST / BRCA / GBM use L2 + L12 + L1. On GBM those heads are **subcluster / spatial_niche (SN1–SN9) / cell_type**, not a copy of L1. Palettes live in [`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py); see the [package README](code/Hist2Pheno_pkg/README.md). Cohort class lists: [`Hist2Pheno_Datasets.xlsx`](code/Hist2Pheno_pkg/dataset/Hist2Pheno_Datasets.xlsx). Shared pan-cancer ontology (six public cohorts; ESCC excluded): [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_v1` (5 / 8 / 20; fine inventory is sheet `celltype`).
 
 ## CODEX PDAC and GIST (s1167 TMA)
 
@@ -235,14 +273,16 @@ The GBM folder is named CODEX for pipeline layout; the images are **microscope H
 
 This repo tracks **code only**. Point each pipeline at your local copy:
 
-| Project | Local layout (example) | Notes |
-|---------|------------------------|--------|
-| Xenium lung | `Spatial-PF-Processed/Data/{Complete,Incomplete}_Cases/` | [GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346); see [`code/Xenium_lung/README.md`](code/Xenium_lung/README.md) |
-| Xenium BRCA | `data/Xemium/BRCA/` | [Janesick et al., *Nat Commun* 2023](https://www.nature.com/articles/s41467-023-43458-x); 10x FFPE Human Breast Cancer preview + [GSE243275](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE243275); see [`code/Xenium_brca/README.md`](code/Xenium_brca/README.md) |
-| CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | Visium-aligned HE + CODEX; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869), processed data on [Zenodo](https://doi.org/10.5281/zenodo.15392699) |
-| CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST). Metadata: `raw_metadata_updated.xlsx` sheet `Clinical_info` |
-| CODEX GBM | `data/CODEX/GBM/WangLab/` | [Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0); microscope HE + single-nucleus labels; Cases / Results under `data/CODEX/GBM/` |
-| CODEX ESCC | `data/CODEX/ESCC/` | NCRT remains the cohort path name |
+| Project | Local layout (example) | GT cell-type hierarchy | Notes |
+|---------|------------------------|------------------------|--------|
+| Xenium lung | `Spatial-PF-Processed/Data/{Complete,Incomplete}_Cases/` | `Annotation/HE_Annotations/41588_2025_2080_MOESM5_ESM.xlsx` sheet `Celltype` | [GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346); see [`code/Xenium_lung/README.md`](code/Xenium_lung/README.md) |
+| Xenium BRCA | `data/Xemium/BRCA/` | `Annotation/GSE243275_Barcode_Cell_Type_MatricesLY.xlsx` sheet `celltype` | [Janesick et al., *Nat Commun* 2023](https://www.nature.com/articles/s41467-023-43458-x); 10x FFPE Human Breast Cancer preview + [GSE243275](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE243275); see [`code/Xenium_brca/README.md`](code/Xenium_brca/README.md) |
+| CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | `HE/s4769_he_mapping_updated_Visium.xlsx` sheet `Celltype` | Visium-aligned HE + CODEX; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869), processed data on [Zenodo](https://doi.org/10.5281/zenodo.15392699) |
+| CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | `raw_metadata_updated.xlsx` sheet `Celltype` (split by `cohort`) | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST). Metadata: sheet `Clinical_info` |
+| CODEX GBM | `data/CODEX/GBM/WangLab/` | `3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx` sheet `Celltype` | [Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0); microscope HE + single-nucleus labels; Cases / Results under `data/CODEX/GBM/` |
+| CODEX ESCC | `data/CODEX/ESCC/` | in-house (`codex_meta_celltype_*.csv`); **not** in the pan-cancer ontology | NCRT remains the cohort path name |
+
+Unified mapping across the six public cohorts: [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) (`celltype_v1` for training, `celltype` for the fine synonym list).
 
 ## Citation
 
@@ -252,6 +292,7 @@ If you use this code, please cite the associated publication (TBD) and the sourc
 - **Xenium lung** — Kedlian et al., spatial multi-omics lung fibrosis atlas ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)).
 - **Xenium BRCA** — Janesick A, Shelansky R, Gottscho AD, et al. High resolution mapping of the tumor microenvironment using integrated single-cell, spatial and in situ analysis. *Nat Commun* **14**, 8353 (2023). [doi:10.1038/s41467-023-43458-x](https://www.nature.com/articles/s41467-023-43458-x). GEO: [GSE243275](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE243275).
 - **CODEX GBM** — Tang J, Fan W, Ruan Y, et al. Protein-based classification reveals an immune-hot subtype in IDH mutant astrocytoma with worse prognosis. *Cancer Cell* (2025). [doi:10.1016/j.ccell.2025.08.006](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0).
+- **Pan-cancer H&E (design refs)** — Fu Y, Jung AW, Torne RV, et al. Pan-cancer computational histopathology reveals mutations, tumor composition and prognosis. *Nat Cancer* **1**, 800–810 (2020). [doi:10.1038/s43018-020-0085-8](https://doi.org/10.1038/s43018-020-0085-8). Kather JN, Heij LR, Grabsch HI, et al. Pan-cancer image-based detection of clinically actionable genetic alterations. *Nat Cancer* **1**, 789–799 (2020). [doi:10.1038/s43018-020-0087-6](https://doi.org/10.1038/s43018-020-0087-6).
 
 ## License
 
