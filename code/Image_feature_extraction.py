@@ -142,6 +142,65 @@ def rescale_image(img: np.ndarray, scale: float) -> np.ndarray:
     img = rescale(img, scale_params, preserve_range=True)
     return img
 
+#########################################################
+## 2026.09.15 LLY add the _as_hwc_uint8 function for Xenium CRC
+#########################################################
+def _as_hwc_uint8(arr: np.ndarray) -> np.ndarray:
+    """Normalize tifffile output to H×W×3 uint8."""
+    arr = np.squeeze(np.asarray(arr))
+    if arr.ndim == 3 and arr.shape[0] in (3, 4) and arr.shape[-1] not in (3, 4):
+        arr = np.moveaxis(arr, 0, -1)
+    if arr.ndim == 2:
+        arr = np.stack([arr, arr, arr], axis=-1)
+    if arr.ndim != 3:
+        raise ValueError(f"Unsupported image ndim={arr.ndim} shape={arr.shape}")
+    if arr.shape[-1] == 4:
+        arr = arr[..., :3]
+    elif arr.shape[-1] != 3:
+        raise ValueError(f"Unsupported channel count: {arr.shape}")
+    if arr.dtype != np.uint8:
+        amax = float(arr.max()) if arr.size else 1.0
+        if amax <= 1.0:
+            arr = (np.clip(arr, 0, 1) * 255.0).astype(np.uint8)
+        elif np.issubdtype(arr.dtype, np.floating) or arr.dtype == np.uint16:
+            denom = 65535.0 if arr.dtype == np.uint16 else max(amax, 1.0)
+            arr = (np.clip(arr.astype(np.float32) / denom, 0, 1) * 255.0).astype(np.uint8)
+        else:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(arr)
+
+
+def load_he_image_pil(rawimage_path: str, logger: logging.Logger) -> Image.Image:
+    """Open H&E as RGB PIL.
+
+    Pillow cannot identify many 10x OME-TIFF / BigTIFF files (CRC add-on HE).
+    Fall back to tifffile ``series[0]``.
+    """
+    path = str(rawimage_path)
+    lower = path.lower()
+    prefer_tifffile = lower.endswith((".ome.tif", ".ome.tiff", ".btf"))
+    if not prefer_tifffile:
+        try:
+            img = Image.open(path)
+            img.load()
+            return img.convert("RGB") if img.mode != "RGB" else img
+        except Exception as exc:
+            logger.info(f"PIL could not open {path}: {exc}; falling back to tifffile")
+    import tifffile
+
+    logger.info(f"Loading HE with tifffile: {path}")
+    with tifffile.TiffFile(path) as tif:
+        series = tif.series[0]
+        logger.info(
+            f"tifffile series0 shape={series.shape} axes={getattr(series, 'axes', '?')} "
+            f"dtype={series.dtype}"
+        )
+        arr = series.asarray()
+    arr = _as_hwc_uint8(arr)
+    logger.info(f"HE array HWC {arr.shape[0]}x{arr.shape[1]}x{arr.shape[2]} {arr.dtype}")
+    return Image.fromarray(arr, mode="RGB")
+#########################################################
+
 ## get integer nearest 'multiple of 14' to 'spot diameter'
 # def get_patch_size(diameter, tile_size=14):
 #     return int((diameter // tile_size) * tile_size)
@@ -306,9 +365,66 @@ def load_tissue_position(position_path: str, scale_image: bool, scale: float, lo
     return tissue_position
 
 
+#########################################################
+## 2026.09.15 LLY add the iter_valid_patches function for Xenium CRC
+#########################################################
+def iter_valid_patches(
+    image: Image.Image,
+    coordinates: List,
+    patch_size: int,
+    dataset: str,
+    scale_image: bool,
+    scale: float,
+):
+    """Yield in-bounds crops as ``(index, filename_stem, PIL patch)``."""
+    image_width, image_height = image.size
+    half = patch_size // 2
+    for i, point in enumerate(coordinates):
+        x, y = point
+        left = x - half
+        upper = y - half
+        right = x + half
+        lower = y + half
+        if left < 0 or upper < 0 or right > image_width or lower > image_height:
+            continue
+        patch = image.crop((left, upper, right, lower))
+        if scale_image:
+            stem = f"{dataset}_{x / scale}_{y / scale}"
+        else:
+            stem = f"{dataset}_{x}_{y}"
+        yield i, stem, patch
+
+
+def embed_patch_subtensors(
+    patch_image: Image.Image,
+    method: str,
+    model: torch.nn.Module,
+    transform_fn,
+    device: torch.device,
+):
+    """Run one RGB patch through HIPT / Virchow2 / UNI; return save-ready tensors."""
+    patch_image = patch_image.convert("RGB")
+    p_image = transform_fn(patch_image).unsqueeze(dim=0).to(device, non_blocking=True)
+    if method == "HIPT":
+        lay = model.get_intermediate_layers(p_image, 1)[0]
+        subtensors = lay[:, :, :]
+        subtensors_list = torch.split(subtensors, 1, dim=1)
+        return subtensors_list[1:]
+    if method == "Virchow2":
+        lay = model(p_image)
+        subtensors = lay[:, 5:]
+        return torch.split(subtensors, 1, dim=1)
+    if method == "UNI":
+        lay = model(p_image)
+        return (lay.unsqueeze(1),)
+    raise ValueError(f"Unsupported method: {method}")
+#########################################################
+
+
 def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool, 
          method: str, patch_size: int, output_img: str, output_pth: str, 
-         logging_folder: str, scale: float = DEFAULT_SCALE):
+         logging_folder: str, scale: float = DEFAULT_SCALE,
+         save_patch_images: bool = True):
     """
     Extract image features from spatial transcriptomics data.
     
@@ -354,13 +470,17 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
         - For Visium HD: typically 28 (for 16um bins with Virchow2)
         - For single-cell resolution: typically 14 or 16
     output_img : str
-        Output directory for extracted image patches (.png files)
+        Output directory for extracted image patches (.png files). Ignored when
+        save_patch_images=False.
     output_pth : str
         Output directory for extracted feature embeddings (.pth files)
     logging_folder : str
         Directory for log files
     scale : float, optional
         Image scaling factor when scale_image=True (default: 0.5)
+    save_patch_images : bool, optional
+        Write PNG crops under output_img (default True). Set False for large
+        Xenium CRC P1/P5 WSIs so only .pth embeddings are stored.
         
         **Usage with scale_image:**
         - scale=0.5: Resize image to 50% of original size (common for Visium HD)
@@ -453,23 +573,36 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
     # Load and optionally scale image
     # When scale_image=True: Image is downsampled by 'scale' factor to reduce processing time/memory
     # When scale_image=False: Image is used at original resolution
+    # 2026.09.15: OME-TIFF / BigTIFF via tifffile (Pillow cannot identify CRC add-on HE).
     if scale_image:
         logger.info(f'Loading image with scaling enabled (scale factor: {scale:.3f})')
         logger.info('This will reduce image size to speed up processing and reduce memory usage')
-        image_obj = Image.open(rawimage_path)
-        image = np.array(image_obj)
-
-        if image.ndim == 3 and image.shape[-1] == 4:
-            image = image[..., :3]  # remove alpha channel
-        image = image.astype(np.float32)
-        logger.info(f'Rescaling image (scale: {scale:.3f})...')
-        image = rescale_image(image, scale)
-        image = image.astype(np.uint8)
-        image = Image.fromarray(image)  # NumPy to PIL
-        logger.info('Rescaling image DONE!')
+        image_obj = load_he_image_pil(rawimage_path, logger)
+        width0, height0 = image_obj.size
+        ome_like = str(rawimage_path).lower().endswith((".ome.tif", ".ome.tiff", ".btf"))
+        if ome_like:
+            new_w = max(1, int(round(width0 * scale)))
+            new_h = max(1, int(round(height0 * scale)))
+            logger.info(
+                f'Resizing OME/BigTIFF HE {width0}x{height0} -> {new_w}x{new_h} '
+                f'(uint8 PIL; skip float32 skimage rescale)'
+            )
+            image = image_obj.resize((new_w, new_h), resample=Image.BILINEAR)
+            del image_obj
+        else:
+            image = np.array(image_obj)
+            del image_obj
+            if image.ndim == 3 and image.shape[-1] == 4:
+                image = image[..., :3]  # remove alpha channel
+            image = image.astype(np.float32)
+            logger.info(f'Rescaling image (scale: {scale:.3f})...')
+            image = rescale_image(image, scale)
+            image = image.astype(np.uint8)
+            image = Image.fromarray(image)  # NumPy to PIL
+            logger.info('Rescaling image DONE!')
     else:
         logger.info('Loading image at original resolution (no scaling)')
-        image = Image.open(rawimage_path)
+        image = load_he_image_pil(rawimage_path, logger)
 
     image_width, image_height = image.size
     logger.info(f"image_width, image_height: {image_width}, {image_height}")
@@ -482,36 +615,23 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
     ## Create patches
     # patch_size = 32 for Visium HD, patch_size = 64 for Visium (V2)
     patch_size = int(patch_size)
-    os.makedirs(output_img, exist_ok=True)
+    step = get_logging_step(len(coordinates))
 
     start_time = time.time()
-    for i, point in enumerate(coordinates):
-        x, y = point
-        left = x - patch_size // 2
-        upper = y - patch_size // 2
-        right = x + patch_size // 2
-        lower = y + patch_size // 2
-        if left < 0 or upper < 0 or right > image_width or lower > image_height:
-            continue
-        patch = image.crop((left, upper, right, lower))
-        
-        # When scale_image=True, patch filename uses original (unscaled) coordinates
-        # This ensures consistency with original position files
-        if scale_image:
-            x_scaled = x / scale  # Convert back to original coordinate system
-            y_scaled = y / scale
-            patch_name = f"{dataset}_{x_scaled}_{y_scaled}.png"
-        else:
-            patch_name = f"{dataset}_{x}_{y}.png"
-
-        step = get_logging_step(len(coordinates))
-        if i % step == 0:
-            logger.info(f"patch_name: {i}, {patch_name}")
-        patch.save(os.path.join(output_img, patch_name))
-
-    end_time = time.time()
-    execution_time = end_time - start_time
-    logger.info(f"Image segmentation time: {execution_time:.2f} seconds")
+    if save_patch_images:
+        os.makedirs(output_img, exist_ok=True)
+        for i, stem, patch in iter_valid_patches(
+            image, coordinates, patch_size, dataset, scale_image, scale
+        ):
+            if i % step == 0:
+                logger.info(f"patch_name: {i}, {stem}.png")
+            patch.save(os.path.join(output_img, f"{stem}.png"))
+        logger.info(f"Image segmentation time: {time.time() - start_time:.2f} seconds")
+    else:
+        logger.info(
+            "Skipping PNG writes (--no_save_patch_images); "
+            "embeddings will be computed in memory after the model loads"
+        )
 
 
     ######################################################################
@@ -727,48 +847,46 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
 
     # Process patches
     os.makedirs(output_pth, exist_ok=True)
-    patches_list = os.listdir(output_img)
-    step = get_logging_step(len(patches_list))
     transform_fn = eval_transforms()
 
     start_time = time.time()
+    n_saved = 0
     with torch.inference_mode():
-        for i, patch in enumerate(patches_list):
-
-            patch_base_name, extension = os.path.splitext(patch)
-            patch_path = os.path.join(output_img, patch)
-            with Image.open(patch_path) as patch_image:
-                patch_image = patch_image.convert("RGB")
-
-                if method == 'HIPT':
-                    p_image = transform_fn(patch_image).unsqueeze(dim=0).to(device, non_blocking=True)    # torch.Size([1, 3, 64, 64])
-                    lay = model.get_intermediate_layers(p_image, 1)[0]  # torch.Size([1, 17, 384])
-                    subtensors = lay[:, :, :]  # torch.Size([1, 17, 384])
-                    subtensors_list = torch.split(subtensors, 1, dim=1)
-                    subtensors_list = subtensors_list[1:]
-
-                elif method == 'Virchow2':
-                    p_image = transform_fn(patch_image).unsqueeze(dim=0).to(device, non_blocking=True)    # torch.Size([1, 3, 64, 64])
-                    lay = model(p_image)  # size: 1 x 261 x 1280
-                    # tokens 1-4 are register tokens so we ignore those
-                    subtensors = lay[:, 5:]  # size: 1 x 256 x 1280
-                    subtensors_list = torch.split(subtensors, 1, dim=1)
-       
-                elif method == 'UNI':
-                    p_image = transform_fn(patch_image).unsqueeze(dim=0).to(device, non_blocking=True)    # torch.Size([1, 3, 64, 64])
-                    lay = model(p_image)  # size: 1 x 1024
-                    subtensors_list = (lay.unsqueeze(1),)  # size: 1 x 1 x 1024
-
-            # Save image embeddings
-            saved_name = patch_base_name + '.pth'
-            if i % step == 0:
-                logger.info(f"saved_name: {i}, {saved_name}")
-            saved_path = os.path.join(output_pth, saved_name)
-            torch.save(subtensors_list, saved_path)
+        if save_patch_images:
+            patches_list = os.listdir(output_img)
+            step = get_logging_step(len(patches_list))
+            for i, patch in enumerate(patches_list):
+                patch_base_name, _extension = os.path.splitext(patch)
+                patch_path = os.path.join(output_img, patch)
+                with Image.open(patch_path) as patch_image:
+                    subtensors_list = embed_patch_subtensors(
+                        patch_image, method, model, transform_fn, device
+                    )
+                saved_name = patch_base_name + ".pth"
+                if i % step == 0:
+                    logger.info(f"saved_name: {i}, {saved_name}")
+                torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                n_saved += 1
+        else:
+            step = get_logging_step(len(coordinates))
+            for i, stem, patch in iter_valid_patches(
+                image, coordinates, patch_size, dataset, scale_image, scale
+            ):
+                subtensors_list = embed_patch_subtensors(
+                    patch, method, model, transform_fn, device
+                )
+                saved_name = f"{stem}.pth"
+                if i % step == 0:
+                    logger.info(f"saved_name: {i}, {saved_name}")
+                torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                n_saved += 1
 
     end_time = time.time()
     execution_time = end_time - start_time
-    logger.info(f"Feature extraction time: {execution_time:.2f} seconds")
+    logger.info(
+        f"Feature extraction time: {execution_time:.2f} seconds "
+        f"({n_saved} embeddings; save_patch_images={save_patch_images})"
+    )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -783,6 +901,11 @@ if __name__ == '__main__':
     parser.add_argument('--logging', required=True, help='Logging folder path')
     parser.add_argument('--scale', type=float, default=DEFAULT_SCALE, 
                        help=f'Image scale factor (default: {DEFAULT_SCALE})')
+    parser.add_argument(
+        '--no_save_patch_images',
+        action='store_true',
+        help='Do not write PNG crops under --output_img; embed in memory and save .pth only.',
+    )
     args = parser.parse_args()
 
     # Convert string to boolean for scale_image
@@ -799,7 +922,8 @@ if __name__ == '__main__':
         args.output_img, 
         args.output_pth, 
         args.logging,
-        args.scale
+        args.scale,
+        save_patch_images=not args.no_save_patch_images,
     )
     
 

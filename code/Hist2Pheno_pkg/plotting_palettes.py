@@ -191,6 +191,47 @@ Cell_Type_COLORS_Xenium_brca_level1 = {
     "Endothelial": "#01257b", "Perivascular": "#515151",
 }
 ##########################################
+# 2026.09.14 Xenium CRC (Oliveira et al., Nat Genet 2025 Flex L2 legend)
+##########################################
+Cell_Type_COLORS_Xenium_crc_level2 = {
+    "Adipocyte": "#415ca9", "CAF": "#486a85",
+    "CD4 T cell": "#efe584", "CD8 T cell": "#d595a6", "cDC I": "#b6b7b9",
+    "Endothelial": "#812168", "Enteric Glial": "#fdc314",
+    "Enterocyte": "#934924", "Epithelial": "#50b849",
+    "Fibroblast": "#cdddb6", "Goblet": "#612a7b",
+    "Lymphatic Endothelial": "#af1f64", "Macrophage": "#749b5a",
+    "Mast": "#42bb92", "Mature B": "#5db1db", "Memory B": "#996728",
+    "mRegDC": "#546fb5", "Myofibroblast": "#e1b069",
+    "Neuroendocrine": "#971f20", "Neutrophil": "#847b8c", "NK": "#99ca3b",
+    "pDC": "#fdd147", "Pericytes": "#d58f5c", "Plasma": "#cd3d33",
+    "Proliferating Fibroblast": "#99ca3b",
+    "Proliferating Immune II": "#c85328",
+    "Proliferating Macrophages": "#5b665e",
+    "SM Stress Response": "#c9992b", "Smooth Muscle": "#7b67a4",
+    "Tuft": "#45b64a",
+    "Tumor I": "#78c269", "Tumor II": "#3b1d53", "Tumor III": "#565fac",
+    "Tumor IV": "#c8992d", "Tumor V": "#e8c66f",
+    "Unknown III (SM)": "#0099cb", "Vascular Fibroblast": "#991a37",
+    "vSM": "#bb6437",
+    "CD4⁺ T cell": "#efe584", "CD8⁺ T cell": "#d595a6",
+    "Enteric glial": "#fdc314", "Lymphatic endothelial": "#af1f64",
+    "Proliferating fibroblast": "#99ca3b",
+    "Proliferating immune II": "#c85328",
+    "Proliferating macrophages": "#5b665e",
+    "SM stress response": "#c9992b", "Smooth muscle": "#7b67a4",
+    "Vascular fibroblast": "#991a37",
+}
+Cell_Type_COLORS_Xenium_crc_level1 = {
+    "Tumor": "#c44e52", "Intestinal Epithelial": "#dd8452",
+    "Fibroblast": "#4c72b0", "Smooth Muscle": "#8172b3",
+    "Myeloid": "#55a868", "T cells": "#937860", "B cells": "#da8bc3",
+    "Endothelial": "#64b5cd", "Neuronal": "#8c8c8c",
+}
+Cell_Type_COLORS_Xenium_crc_level0 = {
+    "Epithelial": "#c44e52", "Stromal": "#4c72b0",
+    "Immune": "#55a868", "Endothelial": "#64b5cd",
+}
+##########################################
 # 2026.09.03 CODEX GBM (WangLab Visium HD) palettes
 # 2026.09.09: heads are subcluster (L2) / spatial_niche (L12) / cell_type (L1)
 ##########################################
@@ -352,6 +393,7 @@ _DATASET_ALIASES = {
     "pdac": "codex_pdac", "codex_pdac": "codex_pdac", "pancreas": "codex_pdac",
     "gist": "codex_gist", "codex_gist": "codex_gist", "gist_tma": "codex_gist",
     "brca": "xenium_brca", "xenium_brca": "xenium_brca", "breast": "xenium_brca",
+    "crc": "xenium_crc", "xenium_crc": "xenium_crc", "colon": "xenium_crc",
     "gbm": "codex_gbm", "codex_gbm": "codex_gbm", "glioma": "codex_gbm",
 }
 _SCHEME_DEFAULTS = {
@@ -377,6 +419,10 @@ _SCHEME_DEFAULTS = {
     "xenium_brca_fine": ("xenium_brca", "fine"),
     "xenium_brca_intermediate": ("xenium_brca", "intermediate"),
     "xenium_brca_coarse": ("xenium_brca", "coarse"),
+    "xenium_crc": ("xenium_crc", "auto"),
+    "xenium_crc_fine": ("xenium_crc", "fine"),
+    "xenium_crc_intermediate": ("xenium_crc", "intermediate"),
+    "xenium_crc_coarse": ("xenium_crc", "coarse"),
     "codex_gbm": ("codex_gbm", "auto"),
     "codex_gbm_fine": ("codex_gbm", "fine"),
     "codex_gbm_intermediate": ("codex_gbm", "intermediate"),
@@ -501,6 +547,13 @@ _PAN_ORGAN_HEAD_SCHEMES: dict[str, dict[str, str]] = {
         "l12": "xenium_brca_intermediate",
         "l3": "xenium_brca_intermediate",
         "l4": "xenium_brca_intermediate",
+    },
+    "xenium_crc": {
+        "l2": "xenium_crc_fine",
+        "l1": "xenium_crc_coarse",
+        "l12": "xenium_crc_intermediate",
+        "l3": "xenium_crc_intermediate",
+        "l4": "xenium_crc_intermediate",
     },
     "codex_gbm": {
         "l2": "codex_gbm_fine",
@@ -694,6 +747,7 @@ def _infer_tier(labels: list[str], dataset: str) -> str:
         "codex_pdac": ("coarse", "intermediate", "fine"),
         "codex_gist": ("coarse", "intermediate", "fine"),
         "xenium_brca": ("coarse", "intermediate", "fine"),
+        "xenium_crc": ("coarse", "intermediate", "fine"),
         "codex_gbm": ("coarse", "intermediate", "fine"),
     }[dataset]
     label_set = set(labels)
@@ -766,6 +820,13 @@ def get_palette(
             "intermediate": Cell_Type_COLORS_Xenium_brca_level1,
             "coarse": Cell_Type_COLORS_Xenium_brca_level0,
             "lineage": Cell_Type_COLORS_Xenium_brca_level0,
+        }.get(semantic_tier)
+    elif dataset_id == "xenium_crc":
+        palette = {
+            "fine": Cell_Type_COLORS_Xenium_crc_level2,
+            "intermediate": Cell_Type_COLORS_Xenium_crc_level1,
+            "coarse": Cell_Type_COLORS_Xenium_crc_level0,
+            "lineage": Cell_Type_COLORS_Xenium_crc_level0,
         }.get(semantic_tier)
     elif dataset_id == "codex_gbm":
         palette = {
