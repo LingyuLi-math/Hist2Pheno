@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Build PanCancerCellType.xlsx from the six public-cohort hierarchy workbooks.
+"""Build PanCancerCellType.xlsx from the seven public-cohort hierarchy workbooks.
 
 Run from the Hist2Pheno repo root (or anywhere; paths are absolute to this file)::
 
-    conda activate Hist2Pheno
+    conda activate SeededNTM
     python code/Hist2Pheno_pkg/dataset/build_pancancer_celltype.py
 
 The ``celltype`` sheet is the HE-realistic training ontology (5 / 8 / 20 = 17 core + 3 lung extras).
 ``celltype_fine`` is the v0 synonym inventory (5 / 11 / 59).
 Each cancer keeps its original multi-level table plus v0 and v1 mapping columns.
-CODEX ESCC (in-house) is intentionally omitted.
+CODEX ESCC (in-house) is intentionally omitted. CRC maps onto existing v1 L2 (no new heads).
 """
 
 from __future__ import annotations
@@ -121,6 +121,20 @@ GT = {
         "l1_train": 5,
         "l1_native": "Tumor / Myeloid / Lymph / Oligo / Vascular",
         "note": "Native L12 is spatial_niche SN1–SN9 (not a lineage parent). Unified L12 uses biological parents. Mac_SEPP1 is Myeloid (Rec) and Vascular (Ini).",
+    },
+    "CRC": {
+        "cancer": "Colorectal carcinoma",
+        "pan_organ": "xenium_crc",
+        "path": REPO / "data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx",
+        "sheet": "celltype",
+        "rel": "data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx",
+        "n_he": "2 labeled (P1/P2); P5 HE only",
+        "gt_cells": 364539,
+        "l2_train": 38,
+        "l12_train": 9,
+        "l1_train": 4,
+        "l1_native": "Epithelial / Immune / Stromal / Endothelial (Neuronal folded into Stromal)",
+        "note": "Visium HD RCTD DeconvolutionLabel1 transferred onto Xenium cells (singlet only), not native Xenium GT. Drop Unlabeled. Flex L12=9 (Tumor / Intestinal Epithelial / Fibroblast / Smooth Muscle / Myeloid / T cells / B cells / Endothelial / Neuronal). P5 HE + alignment exist; annotation sheet not written yet. Oliveira et al., Nat Genet 2025.",
     },
 }
 
@@ -253,6 +267,51 @@ NATIVE_TO_UNIFIED: dict[str, tuple[str, str]] = {
     "lowQ_vas": ("Endothelial", "Endothelial"),
     # ---- neural ----
     "Oligodendrocyte": ("Oligodendrocyte", "Neural"),
+    # ---- CRC Flex / RCTD Label1 (Oliveira Nat Genet 2025) ----
+    "Tumor I": ("Tumor", "Tumor"),
+    "Tumor II": ("Tumor", "Tumor"),
+    "Tumor III": ("Tumor", "Tumor"),
+    "Tumor IV": ("Tumor", "Tumor"),
+    "Tumor V": ("Tumor", "Tumor"),
+    "Enterocyte": ("Enterocyte", "Epithelial"),
+    "Tuft": ("Tuft", "Epithelial"),
+    "Neuroendocrine": ("Epithelial", "Epithelial"),
+    "Enteric Glial": ("Nerve", "Neural"),
+    "Enteric glial": ("Nerve", "Neural"),
+    "Adipocyte": ("Stromal", "Stromal"),
+    "Fibroblast": ("Fibroblast", "Stromal"),
+    "Myofibroblast": ("Myofibroblast", "Stromal"),
+    "Pericytes": ("SMC_Pericyte", "Perivascular"),
+    "Proliferating Fibroblast": ("Fibroblast", "Stromal"),
+    "Proliferating fibroblast": ("Fibroblast", "Stromal"),
+    "Vascular Fibroblast": ("Fibroblast", "Stromal"),
+    "Vascular fibroblast": ("Fibroblast", "Stromal"),
+    # Flex cluster named Epithelial sits under Smooth Muscle — not intestinal epithelium.
+    "Epithelial": ("Smooth_muscle", "Stromal"),
+    "SM Stress Response": ("Smooth_muscle", "Stromal"),
+    "SM stress response": ("Smooth_muscle", "Stromal"),
+    "Smooth Muscle": ("Smooth_muscle", "Stromal"),
+    "Smooth muscle": ("Smooth_muscle", "Stromal"),
+    "Unknown III (SM)": ("Smooth_muscle", "Stromal"),
+    "vSM": ("Smooth_muscle", "Stromal"),
+    "Macrophage": ("Macrophage", "Myeloid"),
+    "Neutrophil": ("Neutrophil", "Myeloid"),
+    "Proliferating Macrophages": ("Proliferating_Myeloid", "Myeloid"),
+    "Proliferating macrophages": ("Proliferating_Myeloid", "Myeloid"),
+    "cDC I": ("DC", "Myeloid"),
+    "mRegDC": ("DC", "Myeloid"),
+    "pDC": ("pDC", "Myeloid"),
+    "CD4 T cell": ("CD4_T", "T_cell"),
+    "CD4⁺ T cell": ("CD4_T", "T_cell"),
+    "CD8 T cell": ("CD8_T", "T_cell"),
+    "CD8⁺ T cell": ("CD8_T", "T_cell"),
+    "NK": ("NK", "Lymphoid"),
+    "Mature B": ("B_cell", "B_Plasma"),
+    "Memory B": ("B_cell", "B_Plasma"),
+    "Proliferating Immune II": ("Proliferating_B", "B_Plasma"),
+    "Proliferating immune II": ("Proliferating_B", "B_Plasma"),
+    "Lymphatic Endothelial": ("Lymphatic_endothelial", "Endothelial"),
+    "Lymphatic endothelial": ("Lymphatic_endothelial", "Endothelial"),
     # ---- dropped / other ----
     "Unlabeled": ("Other", "Stromal"),
     "Unknown": ("Other", "Stromal"),
@@ -261,15 +320,16 @@ NATIVE_TO_UNIFIED: dict[str, tuple[str, str]] = {
     "LowQ": ("Other", "Stromal"),
 }
 
-# Extra L2 reserved so CRC / Prostate / extra HCC do not force a schema change.
+# Extra L2 reserved so Prostate / extra HCC do not force a schema change.
+# CRC already fills Enterocyte / Tuft / Nerve / Smooth_muscle / Tumor from Flex natives.
 RESERVED_L2 = [
-    ("Epithelial", "Tumor", "Tumor", "Y", "CRC; Prostate; extra HCC", "Generic malignant epithelial (CRC tumor, prostate tumor, HCC tumor)."),
-    ("Epithelial", "Epithelial", "Enterocyte", "Y", "CRC", "Intestinal absorptive epithelium."),
-    ("Epithelial", "Epithelial", "Tuft", "Y", "CRC", "Rare intestinal chemosensory cell."),
+    ("Epithelial", "Tumor", "Tumor", "Y", "Prostate; extra HCC", "Generic malignant epithelial (CRC Tumor I–V already mapped; leftover for prostate / extra HCC)."),
+    ("Epithelial", "Epithelial", "Enterocyte", "Y", "", "Intestinal absorptive epithelium (CRC)."),
+    ("Epithelial", "Epithelial", "Tuft", "Y", "", "Rare intestinal chemosensory cell (CRC)."),
     ("Epithelial", "Epithelial", "Luminal", "Y", "Prostate", "Prostate luminal epithelium."),
     ("Epithelial", "Myoepithelial", "Basal_myoepithelial", "Y", "Prostate; BRCA", "Prostate basal / breast myoepithelial if not already Myoepithelial."),
-    ("Neural", "Neural", "Nerve", "Y", "Prostate; CRC; PDAC", "Nerve fascicles / Schwann / enteric glia on H&E."),
-    ("Stromal", "Stromal", "Smooth_muscle", "Y", "CRC; Prostate; GIST", "Muscularis / vascular smooth muscle if split from SMC_Pericyte."),
+    ("Neural", "Neural", "Nerve", "Y", "Prostate; PDAC", "Nerve fascicles / Schwann. CRC enteric glia already mapped here."),
+    ("Stromal", "Stromal", "Smooth_muscle", "Y", "Prostate; GIST", "Muscularis / vascular smooth muscle. CRC SM / vSM already mapped here."),
 ]
 
 DROPPED_NATIVE = {
@@ -284,11 +344,15 @@ DROPPED_NATIVE = {
 }
 
 L2_NOTES = {
-    "Tumor": "Shared malignant epithelial / glioma parenchyma (BRCA invasive; reserved for CRC / Prostate / extra HCC).",
+    "Tumor": "Shared malignant epithelial / glioma parenchyma (BRCA invasive, CRC Tumor I–V; leftover reserved for Prostate / extra HCC).",
     "Hepatocyte_INOS_pos": "HCC epithelium INOS+. Treated as malignant parenchyma (source has no normal-hepatocyte label).",
     "Hepatocyte_INOS_neg": "HCC epithelium INOS−. Same parent as INOS+.",
     "Epithelial": "Mixed or residual epithelium (PDAC / GIST). No tumor-vs-normal split in those sources.",
     "Stromal": "GIST 'Stromal cells' includes KIT+ tumor (mesenchymal). Do not recode to Epithelial.",
+    "Enterocyte": "CRC intestinal absorptive epithelium (Flex Enterocyte).",
+    "Tuft": "CRC chemosensory epithelial cell (Flex parent Neuronal; unified parent Epithelial).",
+    "Nerve": "CRC enteric glia (Flex Enteric Glial). Reserved also for prostate / PDAC nerve.",
+    "Smooth_muscle": "CRC muscularis / vSM / SM stress / Unknown III (SM). Flex cluster 'Epithelial' under Smooth Muscle maps here.",
     "Other": "Dropped at train time. Kept only so new datasets can park Unknown / Other.",
     "Mac_SEPP1": "Ini annotates as Vascular; Rec as Myeloid. Unified parent is Myeloid.",
     "Tumor_T_hybrid": "BRCA red L2; dropped at match. Listed so the native name still maps.",
@@ -379,6 +443,13 @@ def load_gbm() -> pd.DataFrame:
     return df
 
 
+def load_crc() -> pd.DataFrame:
+    df = pd.read_excel(GT["CRC"]["path"], sheet_name=GT["CRC"]["sheet"])
+    for col in df.columns:
+        df[col] = df[col].map(lambda v: v if pd.isna(v) else _strip(v))
+    return df
+
+
 def attach_unified(df: pd.DataFrame, native_l2_col: str) -> pd.DataFrame:
     out = df.copy()
     mapped = out[native_l2_col].map(lambda x: unified_of(x) if _strip(x) else (pd.NA, pd.NA, pd.NA))
@@ -421,7 +492,7 @@ def build_celltype_sheet(aliases_by_l2: dict[str, list[str]], present_by_l2: dic
             "L12": "Stromal",
             "L2": "Other",
             "L2_aliases": "Unknown; Unlabeled; Other; Stroma Uncharacterized; LowQ",
-            "present_in": "Lung; BRCA; HCC; PDAC; GIST; GBM",
+            "present_in": "Lung; BRCA; HCC; PDAC; GIST; GBM; CRC",
             "reserved_for": "",
             "trainable": "N",
             "notes": L2_NOTES["Other"],
@@ -543,6 +614,7 @@ def main() -> None:
         attach_unified(load_s1167("GIST TMA"), "celltype_level2"), "celltype_level2"
     )
     gbm = attach_v1_columns(attach_unified(load_gbm(), "celltype_level2"), "celltype_level2")
+    crc = attach_v1_columns(attach_unified(load_crc(), "celltype_level2"), "celltype_level2")
 
     native_cols = {
         "Lung": ("final_CT", lung),
@@ -551,6 +623,7 @@ def main() -> None:
         "PDAC": ("celltype_level2", pdac),
         "GIST": ("celltype_level2", gist),
         "GBM": ("celltype_level2", gbm),
+        "CRC": ("celltype_level2", crc),
     }
     aliases: dict[str, list[str]] = {}
     present: dict[str, list[str]] = {}
@@ -583,8 +656,8 @@ def main() -> None:
                 "native_L1_train": meta["l1_train"],
                 "native_L1_classes": meta["l1_native"],
                 "unified_L1": "Epithelial / Immune / Stromal / Endothelial / Neural",
-                "v0_L12_n": 11,
-                "v0_L2_train": 59,
+                "v0_L12_n": int(celltype["L12"].nunique()),
+                "v0_L2_train": int((celltype["trainable"] == "Y").sum()),
                 "v1_L12_n": 8,
                 "v1_L2_train": int((celltype_v1["trainable"] == "Y").sum()),
                 "note": meta["note"],
@@ -597,17 +670,18 @@ def main() -> None:
             ("Purpose", "Shared 3-level cell annotation for a pan-cancer Hist2Pheno (Fu/Gerstung PC-CHiP and Kather et al., Nat Cancer 2020: one H&E model across organs)."),
             ("Not included", "CODEX ESCC (in-house NCRT). Do not mix that hierarchy into this workbook."),
             ("celltype sheet", "HE-realistic training ontology: 5 L1 / 8 L12 / 20 L2 = 17-class 5-cancer union (core) + 3 coarse lung extras. Use this for pan-cancer Hist2Pheno."),
-            ("celltype_fine sheet", "v0 synonym inventory: 5 L1 / 11 L12 / 59 trainable L2. Too fine for a 16 px H&E patch."),
+            ("celltype_fine sheet", "v0 synonym inventory: 5 L1 / 11 L12 / 65 trainable L2 (CRC fills Enterocyte / Tuft / Nerve / Smooth_muscle). Too fine for a 16 px H&E patch."),
             ("L1", "Same in v0 and v1: Epithelial | Immune | Stromal | Endothelial | Neural."),
             ("L12 v1", "Tumor / Epithelial / T_cell / B_Plasma / Myeloid / Stromal / Endothelial / Neural."),
             ("L2 v1 core", "5-cancer union (17): Tumor, DCIS, Epithelial, Myoepithelial, CD4_T, CD8_T, T_cell, B_cell, Plasma, DC, Macrophage, Macrophage_activated, Neutrophil, Fibroblast, Stromal, Endothelial, Neural."),
             ("L2 v1 lung extras", "Coarse only: Alveolar (AT1+AT2+prolif AT2), Injury_epithelial (KRT5-/KRT17++RASC+transitional AT2), Myofibroblast (myofibroblast+activated/inflammatory/prolif FBs). Do not add AT1 vs AT2 or FB subtypes."),
             ("Lung merge", "Airway / mesothelial → Epithelial; homeostatic FBs → Fibroblast; T/B/DC/mac/neutrophil/endothelial synonyms → matching core class. See l2_scope on celltype."),
-            ("Dataset sheets", "Original multi-level table + v0 columns L1/L12/L2 + v1 columns L1_v1/L12_v1/L2_v1."),
+            ("Dataset sheets", "Original multi-level table + v0 columns L1/L12/L2 + v1 columns L1_v1/L12_v1/L2_v1. Includes CRC."),
             ("GBM L12", "Native L12 is spatial niche SN1–SN9. Unified L12 ignores SN and uses cell_type / subcluster biology."),
-            ("How to add CRC / Prostate", "New sheet with native labels. Map onto celltype L2 (Tumor / Epithelial / Neural / Stromal). Do not add new celltype L2 rows."),
+            ("How to add Prostate", "New sheet with native labels. Map onto celltype L2 (Tumor / Epithelial / Neural / Stromal). Do not add new celltype L2 rows."),
+            ("CRC", "Sheet CRC: Flex / RCTD Label1 (38 L2). v1 collapses Tumor I–V → Tumor, Enterocyte/Goblet/Tuft/NE → Epithelial, enteric glia → Neural, SM/vSM/CAF/pericyte → Stromal; CD4/CD8/B/Plasma/DC/mac/neutrophil/endothelial reuse core classes. v0 fills reserved Enterocyte / Tuft / Nerve / Smooth_muscle. Labels are transferred Visium HD RCTD, not Xenium GT."),
             ("Head names", "Hist2Pheno train heads: L2=fine=final_CT, L12=intermediate=final_sublineage, L1=coarse=final_lineage."),
-            ("Counts", "GT_cells_on_HE from Hist2Pheno_Datasets.xlsx (2026-09-09 snapshot). Lung GT cells = Complete_Cases only."),
+            ("Counts", "GT_cells_on_HE from Hist2Pheno_Datasets.xlsx (2026-09-15 snapshot). Lung GT cells = Complete_Cases only. CRC = P1+P2 transferred singlets on HE."),
         ],
         columns=["item", "text"],
     )
@@ -620,7 +694,8 @@ def main() -> None:
     ws.merge_cells("A1:B1")
     ws["A2"] = (
         "One workbook: sheet celltype = HE-realistic training heads (5/8/20 = 17 core + 3 lung); "
-        "sheet celltype_fine = v0 inventory (5/11/59). CODEX ESCC omitted."
+        "sheet celltype_fine = v0 inventory (5/11/65). Seven public cohorts (CRC mapped onto existing v1 L2). "
+        "CODEX ESCC omitted."
     )
     ws["A2"].font = NOTE_FONT
     ws.merge_cells("A2:B2")
@@ -669,6 +744,7 @@ def main() -> None:
         ("PDAC", pdac, "celltype_level0"),
         ("GIST", gist, "celltype_level0"),
         ("GBM", gbm, "celltype_level1"),
+        ("CRC", crc, "celltype_level1"),
     ]
     for name, df, native_l1 in sheets_data:
         ws = wb.create_sheet(name)
@@ -722,6 +798,7 @@ def main() -> None:
         "PDAC": "celltype_level2",
         "GIST": "celltype_level2",
         "GBM": "celltype_level2",
+        "CRC": "celltype_level2",
     }
     for name, df, _ in sheets_data:
         print(f"  {name}: {len(df)} rows, native L2={df[native_key[name]].nunique()}")
