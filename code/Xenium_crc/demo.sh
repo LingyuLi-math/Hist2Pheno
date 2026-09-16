@@ -68,6 +68,7 @@ SAMPLES="${SAMPLE:-P1CRC P2CRC P5CRC}"
   # all samples with Cases CSVs, per-sample
   conda run --no-capture-output -n SeededNTM python -u \
     code/Xenium_crc/CRC_train_validate_cv_UNIlabel.py
+    
   # cross-dataset pool (P1+P2+P5 when h5ads exist)
   conda run --no-capture-output -n SeededNTM python -u \
     code/Xenium_crc/CRC_train_validate_cv_UNIlabel.py \
@@ -88,4 +89,6 @@ SAMPLES="${SAMPLE:-P1CRC P2CRC P5CRC}"
 5_CRC_train_validate_cv_UNIlabel_single.ipynb
   ## debug one sample (default SAMPLE=P2CRC)
 5_CRC_train_validate_cv_UNIlabel_all.ipynb
-  ## pool P1+P2+P5; set SKIP_POOLED_TRAIN=True to load CLI weights
+  ## pool P1+P2(+P5); SKIP_POOLED_TRAIN=True (default) loads CLI weights, no retrain
+6_Pred_statistic_visual_crc_all.ipynb
+  ## pooled StarDist ROC + per-sample macro AUROC (needs result_all_spatial/stardist/)

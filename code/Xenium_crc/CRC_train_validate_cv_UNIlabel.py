@@ -1720,19 +1720,30 @@ def step_pooled_stardist_all_one_sample(
     *,
     cases_root: Path | None = None,
     out_path: Path | None = None,
-) -> Path:
+) -> Path | None:
     """
     Predict all StarDist nuclei (no GT AUROC) and save labeled h5ad under
     ``Data/{save_result}/stardist/{sample}/{sample}_all_features_stardist_label.h5ad``
     unless *out_path* is set (e.g. Incomplete_Cases discovery outputs).
+
+    Skips when the output already exists, or when the Cases input h5ad is missing.
     """
     if "scaler" not in ctx.g or "class_names" not in ctx.g:
         raise RuntimeError("Run pooled prepare/train first (--steps train or stardist_all).")
     g = ctx.g
-    star = _load_sample_stardist_all_arrays(ctx, sample, cases_root=cases_root)
     out_path = out_path or stardist_all_label_h5ad_path(
         ctx.data_root, sample, ctx.save_result
     )
+    out_path = Path(out_path)
+    if out_path.is_file():
+        print(f"  skip (exists): {out_path}", flush=True)
+        return out_path
+    root = cases_root or ctx.cases_root
+    all_h5ad = Path(root) / sample / f"{sample}_all_features_stardist.h5ad"
+    if not all_h5ad.is_file():
+        print(f"  skip (no input {all_h5ad.name}): {sample}", flush=True)
+        return None
+    star = _load_sample_stardist_all_arrays(ctx, sample, cases_root=cases_root)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     ckpt = g.get("BEST_MLP_CHECKPOINT")

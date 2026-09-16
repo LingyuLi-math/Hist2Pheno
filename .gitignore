@@ -34,6 +34,7 @@ manuscript/
 manuscript_260911/
 code/Hist2Pheno_pkg/dataset/figures_l2_overlap/
 code/Hist2Pheno_pkg/dataset/figures_dataset_overview/
+code/Hist2Pheno_pkg/dataset/figures_pancancer_counts/
 tools/
 code_git0725/
 *.h5ad

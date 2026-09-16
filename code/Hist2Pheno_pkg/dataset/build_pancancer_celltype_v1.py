@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """v1 (HE-realistic) mapping used by ``build_pancancer_celltype.py``.
 
-Writes the ``celltype`` sheet (training ontology) inside ``PanCancerCellType.xlsx``.
+Writes the ``celltype_initial`` sheet (inventory ontology) inside ``PanCancerCellType.xlsx``.
+``celltype_pancancer`` is the pan-cancer training subset (same 20 L2, rarer / morphologically
+distant native labels dropped).
 The fine synonym inventory is ``celltype_fine``.
 Do not emit a separate workbook.
 """
@@ -48,7 +50,8 @@ L12_PARENT = {
 # homeostatic FBs → Fibroblast, immune / endothelial synonyms, etc.).
 # Lung-only biology is added as 3 coarse extras — not native-fine (no AT1 vs AT2,
 # no RASC vs KRT5, no adventitial vs alveolar FB).
-# Profibrotic macs (M2, SPP1, IFN, Monocytes/MDMs) → Macrophage_activated.
+# Profibrotic macs (M2, SPP1, IFN, Monocytes/MDMs) → Macrophage (no separate activated head).
+# Treg is its own L2 (not folded into CD4_T). Unspecified T / NK → NK.
 
 CORE_L2 = frozenset({
     "Tumor",
@@ -57,12 +60,12 @@ CORE_L2 = frozenset({
     "Myoepithelial",
     "CD4_T",
     "CD8_T",
-    "T_cell",
+    "Tregs",
+    "NK",
     "B_cell",
     "Plasma",
     "DC",
     "Macrophage",
-    "Macrophage_activated",
     "Neutrophil",
     "Fibroblast",
     "Stromal",
@@ -108,17 +111,18 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     "CD4+_T_Cells": ("CD4_T", "T_cell"),
     "CD4+ T-cells": ("CD4_T", "T_cell"),
     "Helper T cells": ("CD4_T", "T_cell"),
-    "Tregs": ("CD4_T", "T_cell"),
+    "Tregs": ("Tregs", "T_cell"),
+    "Treg": ("Tregs", "T_cell"),
     "CD8 T cells": ("CD8_T", "T_cell"),
     "CD8+_T_Cells": ("CD8_T", "T_cell"),
     "CD8+ T-cells": ("CD8_T", "T_cell"),
     "Cytotoxic T cells": ("CD8_T", "T_cell"),
-    "T cells": ("T_cell", "T_cell"),
-    "INFg+": ("T_cell", "T_cell"),
-    "Proliferating T-cells": ("T_cell", "T_cell"),
-    "Lymphocyte": ("T_cell", "T_cell"),
-    "NK/NKT": ("T_cell", "T_cell"),
-    "Proliferating NK/NKT": ("T_cell", "T_cell"),
+    "T cells": ("NK", "T_cell"),
+    "INFg+": ("NK", "T_cell"),
+    "Proliferating T-cells": ("NK", "T_cell"),
+    "Lymphocyte": ("NK", "T_cell"),
+    "NK/NKT": ("NK", "T_cell"),
+    "Proliferating NK/NKT": ("NK", "T_cell"),
     "B cells": ("B_cell", "B_Plasma"),
     "B_Cells": ("B_cell", "B_Plasma"),
     "Proliferating B cells": ("B_cell", "B_Plasma"),
@@ -143,11 +147,11 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     "Mac_SEPP1": ("Macrophage", "Myeloid"),
     "Proliferating Myeloid": ("Macrophage", "Myeloid"),
     "Monocytes": ("Macrophage", "Myeloid"),
-    "Macrophages M2-like": ("Macrophage_activated", "Myeloid"),
-    "SPP1+ Macrophages": ("Macrophage_activated", "Myeloid"),
-    "Mac_SPP1": ("Macrophage_activated", "Myeloid"),
-    "Macrophages - IFN-activated": ("Macrophage_activated", "Myeloid"),
-    "Monocytes/MDMs": ("Macrophage_activated", "Myeloid"),
+    "Macrophages M2-like": ("Macrophage", "Myeloid"),
+    "SPP1+ Macrophages": ("Macrophage", "Myeloid"),
+    "Mac_SPP1": ("Macrophage", "Myeloid"),
+    "Macrophages - IFN-activated": ("Macrophage", "Myeloid"),
+    "Monocytes/MDMs": ("Macrophage", "Myeloid"),
     "Neutrophils": ("Neutrophil", "Myeloid"),
     "Neutrophils\t": ("Neutrophil", "Myeloid"),
     "Basophils": ("Neutrophil", "Myeloid"),
@@ -219,7 +223,7 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     "CD4⁺ T cell": ("CD4_T", "T_cell"),
     "CD8 T cell": ("CD8_T", "T_cell"),
     "CD8⁺ T cell": ("CD8_T", "T_cell"),
-    "NK": ("T_cell", "T_cell"),
+    "NK": ("NK", "T_cell"),
     "Mature B": ("B_cell", "B_Plasma"),
     "Memory B": ("B_cell", "B_Plasma"),
     "Proliferating Immune II": ("B_cell", "B_Plasma"),
@@ -236,18 +240,20 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
 L2_NOTES = {
     "Tumor": "Invasive / cycling malignant parenchyma (BRCA invasive, HCC INOS±, GBM states, CRC Tumor I–V). Reserved for Prostate tumor.",
     "DCIS": "BRCA DCIS (DCIS_1 + DCIS_2). One class: the 1/2 split is BRCA-only and not needed pan-cancer.",
-    "CD4_T": "Helper / CD4 T (incl. Treg). Split from CD8 because nuclear size and helper vs cytotoxic cues are weakly visible on H&E.",
+    "CD4_T": "Helper / CD4 T. Treg is a separate L2.",
     "CD8_T": "Cytotoxic / CD8 T.",
+    "Tregs": "Regulatory T. Split from CD4_T. Native Tregs in Lung / PDAC / GIST.",
+    "NK": "NK plus unspecified T (INFg+, Lymphocyte, T cells, proliferating T) when the source does not split CD4 vs CD8.",
     "Epithelial": "Residual / airway / mixed epithelium (PDAC, GIST, lung secretory/basal/goblet/mesothelial). CRC Enterocyte / Tuft / Goblet / neuroendocrine map here.",
     "Alveolar": "Lung-unique extra (coarse): AT1 + AT2 + proliferating AT2. FRI/ARI denominator. Not in the 5-cancer union.",
     "Injury_epithelial": "Lung-unique extra (coarse): KRT5-/KRT17+ + RASC + transitional AT2. FRI injury numerator. Not AT1 vs RASC vs KRT5 as separate heads.",
     "Myoepithelial": "Breast myoepithelium (WSI-visible as a layer; hard on a 16 px patch).",
-    "T_cell": "Unspecified T / NK / GBM Lymphocyte / proliferating T / INFg+. Use when the source does not split CD4 vs CD8.",
+    "T_cell": "Deprecated v1 head; unspecified T now maps to NK.",
     "B_cell": "TLS B compartment (incl. proliferating B).",
     "Plasma": "Clock-face plasma cells; kept because they are often H&E-visible and sit in TLS.",
     "DC": "TLS third member. All DC / pDC / Langerhans collapsed.",
-    "Macrophage": "Generic macrophages + GIST monocytes. TNI myeloid = this + Macrophage_activated.",
-    "Macrophage_activated": "TNI M2 / FRI profibrotic macs: M2-like, SPP1+, IFN-activated, Monocytes/MDMs.",
+    "Macrophage": "All macrophages including former Macrophage_activated (M2-like, SPP1+, IFN-activated, Monocytes/MDMs) + GIST monocytes. TNI myeloid.",
+    "Macrophage_activated": "Merged into Macrophage.",
     "Neutrophil": "Granulocytes (neutrophil + basophil + mast). Mast granules are H&E-visible but too rare to keep a head.",
     "Fibroblast": "Quiescent / tissue fibroblasts (lung alveolar/adventitial/subpleural FBs; CODEX Fibroblasts).",
     "Myofibroblast": "Lung extra (coarse): myofibroblasts + activated/inflammatory/proliferating FBs. Also CRC Myofibroblast / proliferating fibroblast. ARI + FRI fibrotic-stromal numerator.",
@@ -256,6 +262,117 @@ L2_NOTES = {
     "Neural": "Oligodendrocyte + CRC enteric glia. Reserved Nerve for prostate / PDAC.",
     "Other": "Dropped at train time.",
 }
+
+# Pan-cancer training: keep only natives that belong with the L2 head on H&E.
+# L1 = lineage a pathologist can name on H&E; L12 = batch-identification aid;
+# L2 = states a pathologist cannot reliably split on H&E (CD4 vs CD8, NK vs T, …).
+# Everything else is dropped before the model (not remapped).
+PANCANCER_KEEP_ALIASES: dict[str, frozenset[str]] = {
+    "DCIS": frozenset({"DCIS_1", "DCIS_2"}),
+    "Tumor": frozenset({
+        "AC-like", "Epithelium (INOS+)", "Epithelium (INOS-)", "G1S", "G2M",
+        "Invasive_Tumor", "MES-like", "NPC-like", "OC-like", "Prolif_Invasive_Tumor",
+        "Tumor I", "Tumor II", "Tumor III", "Tumor IV", "Tumor V",
+    }),
+    "Alveolar": frozenset({"AT1", "AT2", "Proliferating AT2"}),
+    "Epithelial": frozenset({
+        "Basal", "Enterocyte", "Epithelial cells", "Goblet", "Multiciliated",
+        "Proliferating Airway", "Secretory",
+    }),
+    "Injury_epithelial": frozenset({"KRT5-/KRT17+", "RASC", "Transitional AT2"}),
+    "Myoepithelial": frozenset({"Myoepi_ACTA2+", "Myoepi_KRT15+"}),
+    "CD4_T": frozenset({
+        "CD4 T cell", "CD4 T cells", "CD4+ T-cells", "CD4+_T_Cells",
+        "Helper T cells", "CD4⁺ T cell",
+    }),
+    "CD8_T": frozenset({
+        "CD8 T cell", "CD8 T cells", "CD8+ T-cells", "CD8+_T_Cells",
+        "Cytotoxic T cells", "CD8⁺ T cell",
+    }),
+    "Tregs": frozenset({"Treg", "Tregs"}),
+    "NK": frozenset({"NK", "NK/NKT", "Proliferating NK/NKT"}),
+    "B_cell": frozenset({
+        "B cells", "B_Cells", "Mature B", "Memory B", "Proliferating B cells",
+    }),
+    "Plasma": frozenset({"Plasma", "Plasma cells"}),
+    "DC": frozenset({
+        "DCs", "Dendritic cells", "IRF7+_DCs", "LAMP3+_DCs", "Migratory DCs",
+        "cDC I", "cDCs", "mRegDC", "pDC", "pDCs", "Langerhans cells",
+    }),
+    "Macrophage": frozenset({
+        "Alveolar Macrophages", "Interstitial Macrophages", "Mac_SEPP1", "Mac_Tmr",
+        "Mac_other", "Macrophages", "Macrophages_1", "Macrophages_2", "Monocytes",
+        "Proliferating Macrophages", "Proliferating macrophages",
+        "Proliferating Myeloid", "Mac_SPP1", "Macrophages - IFN-activated",
+        "Macrophages M2-like", "Monocytes/MDMs", "SPP1+ Macrophages", "Macrophage",
+    }),
+    "Neutrophil": frozenset({"Neutrophils", "Neutrophil"}),
+    "Fibroblast": frozenset({
+        "Adventitial FBs", "Alveolar FBs", "Fibroblasts", "Subpleural FBs",
+        "Vascular Fibroblast", "Vascular fibroblast", "Fibroblast",
+    }),
+    "Myofibroblast": frozenset({
+        "Activated Fibrotic FBs", "Inflammatory FBs", "Myofibroblasts",
+        "Proliferating FBs", "Proliferating Fibroblast", "Proliferating fibroblast",
+        "Myofibroblast",
+    }),
+    "Stromal": frozenset({"CAF", "Stromal", "Stromal cells"}),
+    "Endothelial": frozenset({
+        "Arteriole", "Capillary", "Endothelial", "Endothelial cells", "Lymphatic",
+        "Lymphatic Endothelial", "Lymphatic Endothelial cells",
+        "Lymphatic endothelial", "Vascular", "Venous",
+    }),
+    "Neural": frozenset({"Enteric Glial", "Enteric glial", "Oligodendrocyte"}),
+}
+
+PANCANCER_DROP_REASON: dict[str, str] = {
+    "Unknown": "other / unlabeled",
+    "Unlabeled": "other / unlabeled",
+    "Other": "other / unlabeled",
+    "Stroma Uncharacterized": "other / unlabeled",
+    "LowQ": "other / unlabeled",
+    "lowQ_vas": "low quality",
+    "Unknown III (SM)": "unknown / not a named cell",
+    "T_Cell_&_Tumor_Hybrid": "hybrid",
+    "Stromal_&_T_Cell_Hybrid": "hybrid",
+    "Perivascular-Like": "rare / already excluded",
+    "Mast": "H&E-distinct granules; not neutrophil",
+    "Mast_Cells": "H&E-distinct granules; not neutrophil",
+    "Basophils": "rare granulocyte; not neutrophil",
+    "Adipocyte": "H&E-distinct vacuoles; not CAF/stromal",
+    "Smooth Muscle": "H&E-distinct contractile stroma",
+    "Smooth muscle": "H&E-distinct contractile stroma",
+    "vSM": "H&E-distinct contractile stroma",
+    "SM Stress Response": "H&E-distinct contractile stroma",
+    "SM stress response": "H&E-distinct contractile stroma",
+    "SMCs/Pericytes": "vessel wall, not CAF/GIST stroma",
+    "Pericytes": "vessel wall, not CAF/GIST stroma",
+    "Collagen_fibrils": "ECM, not a cell",
+    "Mesothelial": "serosal lining, not mucosal/airway epithelium",
+    "PNEC": "rare specialized epithelium",
+    "Neuroendocrine": "rare specialized epithelium",
+    "Tuft": "rare specialized epithelium",
+    "INFg+": "unspecified T, not NK",
+    "Lymphocyte": "unspecified lymphocyte, not NK",
+    "Proliferating T-cells": "unspecified T, not NK",
+    "T cells": "unspecified T, not NK",
+    "Proliferating Immune II": "ambiguous immune cluster",
+    "Epithelial": "CRC Flex label mapped to Stromal; wrong compartment",
+}
+
+PANCANCER_L2_NOTES = {
+    **L2_NOTES,
+    "CD4_T": "Helper / CD4 T. Pathologist cannot split CD4 vs CD8 vs Treg on H&E; L2 head anyway.",
+    "CD8_T": "Cytotoxic / CD8 T. Same H&E appearance as other T; kept as a separate training head.",
+    "Tregs": "Regulatory T. Split from CD4_T. Native Tregs in Lung / PDAC / GIST.",
+    "NK": "True NK / NK-NKT only. Unspecified T (INFg+, Lymphocyte, T cells, proliferating T) dropped.",
+    "Epithelial": "Residual / airway / intestinal epithelium (basal, secretory, goblet, enterocyte, multiciliated). Dropped PNEC / Tuft / neuroendocrine / mesothelial.",
+    "Neutrophil": "Neutrophils only. Mast / basophil dropped (H&E-distinct and rare).",
+    "Stromal": "CAF / generic stromal / GIST mesenchymal tumor. Smooth muscle, adipocyte, pericyte, collagen fibrils dropped.",
+    "Endothelial": "Blood + lymphatic + GBM Vascular. lowQ_vas dropped.",
+    "Neural": "Oligodendrocyte + CRC enteric glia.",
+}
+
 
 # Reserved organs reuse existing L2 (do not add new classes).
 RESERVED_ON_EXISTING = {
@@ -269,6 +386,27 @@ RESERVED_ON_EXISTING = {
 
 def _strip(value) -> str:
     return v0._strip(value)
+
+
+def pancancer_keeps_native(native_l2: str) -> bool:
+    """True if this native label is kept as pan-cancer Hist2Pheno training input."""
+    key = _strip(native_l2)
+    if not key or key not in NATIVE_TO_V1:
+        return False
+    l2, _ = NATIVE_TO_V1[key]
+    if l2 == "Other":
+        return False
+    allowed = PANCANCER_KEEP_ALIASES.get(l2, frozenset())
+    return key in allowed or key == l2
+
+
+def pancancer_drop_reason(native_l2: str) -> str:
+    key = _strip(native_l2)
+    if key in PANCANCER_DROP_REASON:
+        return PANCANCER_DROP_REASON[key]
+    if not pancancer_keeps_native(key):
+        return "not kept for pan-cancer training"
+    return ""
 
 
 def unified_of(native_l2: str) -> tuple[str, str, str]:
@@ -320,16 +458,18 @@ def build_celltype_sheet(
                     "DCIS": "in situ tumor",
                     "CD4_T": "TLS T",
                     "CD8_T": "TLS T",
+                    "Tregs": "TLS T",
+                    "NK": "NK / unspecified T",
                     "Epithelial": "normal / residual / airway epithelium",
                     "Alveolar": "FRI/ARI denominator (lung extra)",
                     "Injury_epithelial": "FRI numerator (lung extra)",
                     "Myoepithelial": "breast architecture",
-                    "T_cell": "TLS",
+                    "T_cell": "deprecated → NK",
                     "B_cell": "TLS",
                     "Plasma": "TLS-adjacent",
                     "DC": "TLS",
                     "Macrophage": "TNI myeloid",
-                    "Macrophage_activated": "TNI M2 / FRI profibrotic mac",
+                    "Macrophage_activated": "merged into Macrophage",
                     "Neutrophil": "inflammation",
                     "Fibroblast": "SRI / baseline stroma",
                     "Myofibroblast": "ARI + FRI fibrotic stroma (lung extra)",
@@ -374,7 +514,7 @@ def build_celltype_sheet(
 def celltype_v1_from_native(
     native_cols: dict[str, tuple[str, pd.DataFrame]],
 ) -> pd.DataFrame:
-    """Build the training ``celltype`` table from frames that already have ``L2_v1``."""
+    """Build the training ``celltype_initial`` table from frames that already have ``L2_v1``."""
     aliases: dict[str, list[str]] = {}
     present: dict[str, list[str]] = {}
     for cancer, (col, df) in native_cols.items():

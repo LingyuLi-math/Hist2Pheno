@@ -17,6 +17,7 @@ Helpers (same pattern as `code/Xenium_brca`):
 - `demo_P2.sh` — P2-only shortcut
 - `CRC_train_validate_cv_UNIlabel_single.ipynb` — one-sample three-head train / validate
 - `CRC_train_validate_cv_UNIlabel_all.ipynb` — pooled P1+P2+P5 (dataset-level CV)
+- `Pred_statistic_visual_crc_all.ipynb` — pooled StarDist ROC + per-sample macro AUROC
 
 Cell type used here: **`DeconvolutionLabel1`** (RCTD first type, Level2).
 L2 colors (`L2_COLORS` in `crc_paths.py`) follow the Oliveira et al. Flex legend.
@@ -36,6 +37,7 @@ bash code/Xenium_crc/demo_UNI_feature_extraction_batch.sh gt
 bash code/Xenium_crc/demo_UNI_feature_extraction_batch.sh stardist  # skips missing StarDist (P5)
 # then CRC_train_validate_cv_UNIlabel_all.ipynb
 # or: python -u code/Xenium_crc/CRC_train_validate_cv_UNIlabel.py --mode cross-dataset
+# then Pred_statistic_visual_crc_all.ipynb (pooled StarDist ROC / per-sample AUROC)
 ```
 
 P2-only debug remains [`demo_P2.sh`](demo_P2.sh) + `_single.ipynb`.

@@ -80,7 +80,8 @@ Shared ontology (one workbook): [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/d
 
 | Sheet | Contents |
 |-------|----------|
-| `celltype` | HE-realistic training ontology (**5 L1 / 8 L12 / 20 L2** = 17-class 5-cancer union + 3 coarse lung extras) |
+| `celltype_initial` | HE-realistic training ontology (**5 L1 / 8 L12 / 20 L2** = 17-class 5-cancer union + 3 coarse lung extras) |
+| `celltype_pancancer` | Pan-cancer training subset of `celltype_initial` (same 20 L2; Other + morphologically distant natives dropped) |
 | `celltype_fine` | v0 synonym inventory (5 L1 / 11 L12 / 65 trainable L2) — too fine for H&E |
 | `Lung` … `CRC` | Original multi-level rows + v0 `L1/L12/L2` + v1 `L1_v1/L12_v1/L2_v1` |
 | `GBM_unique_L2` | GBM collapsed to unique `subcluster` (SN triples stay on `GBM`) |
@@ -88,7 +89,7 @@ Shared ontology (one workbook): [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/d
 
 **v1 L1 (5):** Epithelial · Immune · Stromal · Endothelial · Neural.  
 **v1 L12 (8):** Tumor · Epithelial · T_cell · B_Plasma · Myeloid · Stromal · Endothelial · Neural.  
-**v1 L2 (20 = 17 core + 3 lung extras).** Core is the BRCA ∪ HCC ∪ PDAC ∪ GIST ∪ GBM union: Tumor, DCIS, Epithelial, Myoepithelial, CD4_T, CD8_T, T_cell, B_cell, Plasma, DC, Macrophage, Macrophage_activated, Neutrophil, Fibroblast, Stromal, Endothelial, Neural. Lung labels that match a core class are merged there (airway → Epithelial, homeostatic FBs → Fibroblast, immune / endothelial synonyms). Lung-only biology is added as three coarse extras — not native-fine: `Alveolar` (AT1+AT2+prolif AT2), `Injury_epithelial` (KRT5-/KRT17++RASC+transitional AT2), `Myofibroblast` (myofibroblast + activated/inflammatory/prolif FBs). Column `l2_scope` on `celltype` marks `core_5union` vs `lung_unique`. **CRC maps onto this 20-class space** (Tumor I–V → `Tumor`, Enterocyte/Goblet/Tuft → `Epithelial`, enteric glia → `Neural`, SM/vSM/CAF → `Stromal`); no new v1 L2. Overlap Venns: [`code/Hist2Pheno_pkg/dataset/L2_overlap_5datasets.ipynb`](code/Hist2Pheno_pkg/dataset/L2_overlap_5datasets.ipynb).
+**v1 L2 (20 = 17 core + 3 lung extras).** Core is the BRCA ∪ HCC ∪ PDAC ∪ GIST ∪ GBM union: Tumor, DCIS, Epithelial, Myoepithelial, CD4_T, CD8_T, Tregs, NK, B_cell, Plasma, DC, Macrophage, Neutrophil, Fibroblast, Stromal, Endothelial, Neural. Treg is its own head (not folded into CD4_T). Unspecified T / NK (INFg+, Lymphocyte, T cells, NK/NKT) map to `NK`. Former `Macrophage_activated` (M2 / SPP1 / IFN / MDMs) is merged into `Macrophage`. Lung labels that match a core class are merged there (airway → Epithelial, homeostatic FBs → Fibroblast, immune / endothelial synonyms). Lung-only biology is added as three coarse extras — not native-fine: `Alveolar` (AT1+AT2+prolif AT2), `Injury_epithelial` (KRT5-/KRT17++RASC+transitional AT2), `Myofibroblast` (myofibroblast + activated/inflammatory/prolif FBs). Column `l2_scope` on `celltype_initial` marks `core_5union` vs `lung_unique`. **CRC maps onto this 20-class space** (Tumor I–V → `Tumor`, Enterocyte/Goblet/Tuft → `Epithelial`, enteric glia → `Neural`, SM/vSM/CAF → `Stromal`, Flex NK → `NK`); no new v1 L2. Overlap Venns: [`code/Hist2Pheno_pkg/dataset/L2_overlap_5datasets.ipynb`](code/Hist2Pheno_pkg/dataset/L2_overlap_5datasets.ipynb).
 
 Same rule for Prostate. Cohort class inventories remain in [`Hist2Pheno_Datasets.xlsx`](code/Hist2Pheno_pkg/dataset/Hist2Pheno_Datasets.xlsx).
 
@@ -224,7 +225,7 @@ Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`co
 | L1 | Coarse lineage | `final_lineage` |
 | L3 / L4 | CNiche / TNiche (Xenium) or ESCC coarse / lineage-bucket | dataset-specific |
 
-Xenium lung uses all five heads. HCC / PDAC / GIST / BRCA / GBM / CRC use L2 + L12 + L1. On GBM those heads are **subcluster / spatial_niche (SN1–SN9) / cell_type**, not a copy of L1. On CRC they are **Flex Level2 / Flex 9-class Level1 / 4-class coarse L1** (transferred RCTD Label1). Palettes live in [`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py); see the [package README](code/Hist2Pheno_pkg/README.md). Cohort class lists: [`Hist2Pheno_Datasets.xlsx`](code/Hist2Pheno_pkg/dataset/Hist2Pheno_Datasets.xlsx). Shared pan-cancer ontology (seven public cohorts in the workbook; ESCC excluded): [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype` (5 / 8 / 20; fine inventory is sheet `celltype_fine`).
+Xenium lung uses all five heads. HCC / PDAC / GIST / BRCA / GBM / CRC use L2 + L12 + L1. On GBM those heads are **subcluster / spatial_niche (SN1–SN9) / cell_type**, not a copy of L1. On CRC they are **Flex Level2 / Flex 9-class Level1 / 4-class coarse L1** (transferred RCTD Label1). Palettes live in [`plotting_palettes.py`](code/Hist2Pheno_pkg/plotting_palettes.py); see the [package README](code/Hist2Pheno_pkg/README.md). Cohort class lists: [`Hist2Pheno_Datasets.xlsx`](code/Hist2Pheno_pkg/dataset/Hist2Pheno_Datasets.xlsx). Shared pan-cancer ontology (seven public cohorts in the workbook; ESCC excluded): [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_initial` (inventory) and sheet `celltype_pancancer` (joint-training subset; fine inventory is `celltype_fine`).
 
 ## CODEX PDAC and GIST (s1167 TMA)
 
@@ -310,7 +311,7 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 | CODEX GBM | `data/CODEX/GBM/WangLab/` | `3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx` sheet `Celltype` | [Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0); microscope HE + single-nucleus labels; Cases / Results under `data/CODEX/GBM/` |
 | CODEX ESCC | `data/CODEX/ESCC/` | in-house (`codex_meta_celltype_*.csv`); **not** in the pan-cancer ontology | NCRT remains the cohort path name |
 
-Unified mapping across the seven public cohorts in the workbook: [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) (`celltype` for training, `celltype_fine` for the fine synonym list). CRC Flex Label1 is mapped onto the existing 20-class v1 L2 (no new heads).
+Unified mapping across the seven public cohorts in the workbook: [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) (`celltype_initial` for the inventory, `celltype_pancancer` for joint training, `celltype_fine` for the fine synonym list). CRC Flex Label1 is mapped onto the existing 20-class v1 L2 (no new heads). Joint-training cell counts: [`code/Hist2Pheno_pkg/dataset/L1_L12_L2_cell_counts_7datasets.ipynb`](code/Hist2Pheno_pkg/dataset/L1_L12_L2_cell_counts_7datasets.ipynb).
 
 ## Citation
 
