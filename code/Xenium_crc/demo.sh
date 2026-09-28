@@ -85,6 +85,14 @@ SAMPLES="${SAMPLE:-P1CRC P2CRC P5CRC}"
       --ablation-tag D_emph_L2_spatial_crc \
       --no-resume-from-checkpoints
 
+  conda run --no-capture-output -n SeededNTM python -u \
+    code/Xenium_crc/CRC_train_validate_cv_UNIlabel.py \
+      --mode cross-dataset \
+      --use-spatial-context --spatial-k 8 --spatial-mode mean \
+      --pooled-save-result result_all_spatial \
+      --ablation-tag D_emph_L2_spatial_crc \
+      --no-resume-from-checkpoints
+
 ## 5. Notebooks
 5_CRC_train_validate_cv_UNIlabel_single.ipynb
   ## debug one sample (default SAMPLE=P2CRC)

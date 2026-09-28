@@ -12,7 +12,7 @@ The **s1167 Pancreas (PDAC) and GIST TMA tracks** are complete end-to-end: match
 
 **Xenium BRCA** (10x FFPE breast preview, two neighboring replicates) and **CODEX GBM** (WangLab Visium HD IDH-mutant glioma, Initial / Recurrent) are on the same three-head train / Pred track. They do not yet have clinical niche-index notebooks.
 
-**Xenium CRC** (Oliveira et al., *Nat Genet* 2025: Visium HD + Xenium In Situ on the same FFPE CRC blocks) transfers RCTD `DeconvolutionLabel1` from 8 µm bins onto Xenium cells, then follows the BRCA-style match / UNI / three-head train path for **P1 / P2** (P5 HE is present; labels not transferred yet).
+**Xenium CRC** (Oliveira et al., *Nat Genet* 2025: Visium HD + Xenium In Situ on the same FFPE CRC blocks) transfers RCTD `DeconvolutionLabel1` from 8 µm bins onto Xenium cells, then follows the BRCA-style match / UNI / three-head train + Pred path for **P1 / P2 / P5**.
 
 Raw images and embeddings are **not** shipped in this repository. Each dataset folder has its own README and `demo.sh` command index.
 
@@ -23,7 +23,7 @@ Raw images and embeddings are **not** shipped in this repository. Each dataset f
 - **Multi-cohort pipelines** — Xenium lung / BRCA / CRC plus CODEX HCC, ESCC, PDAC, GIST, and GBM
 - **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei
 - **s1167 TMAs done** — PDAC (278 annotated + 195 unlabeled cores) and GIST (550 annotated) share one TMA root but keep separate StarDist trees, pooled weights, and clinical notebooks
-- **BRCA / GBM ports** — leave-one-sample-out OOF + all-sample deployment weights when there are fewer sections than folds; Pred statistic notebooks (`xenium_brca`, `codex_gbm`)
+- **BRCA / GBM / CRC ports** — leave-one-sample-out (or leave-one-dataset-out) OOF + all-sample deployment weights when there are fewer sections than folds; Pred statistic notebooks (`xenium_brca`, `codex_gbm`, `xenium_crc`)
 
 ```mermaid
 flowchart LR
@@ -45,7 +45,7 @@ flowchart LR
 |---------|--------|-------|--------|-------------|----------|
 | Xenium lung fibrosis ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)) | [`code/Xenium_lung/`](code/Xenium_lung/) | 25 Complete + 20 Incomplete | five-head (L2 / L12 / L1 / CNiche / TNiche) | `xenium_lung` | train + niche |
 | Xenium BRCA ([Janesick et al., *Nat Commun* 2023](https://www.nature.com/articles/s41467-023-43458-x); [GSE243275](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE243275)) | [`code/Xenium_brca/`](code/Xenium_brca/) | 2 neighboring replicates (rep1 / rep2) | three-head (16 L2 / 8 L12 / 4 L1) | `xenium_brca` | train + Pred |
-| Xenium CRC ([Oliveira et al., *Nat Genet* 2025](https://www.nature.com/articles/s41588-025-02193-3); [GSE280318](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE280318)) | [`code/Xenium_crc/`](code/Xenium_crc/) | P1 / P2 labeled; P5 HE only | three-head (38 L2 / 9 Flex L12 / 4 L1); transferred RCTD Label1 | `xenium_crc` | train |
+| Xenium CRC ([Oliveira et al., *Nat Genet* 2025](https://www.nature.com/articles/s41588-025-02193-3); [GSE280318](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE280318)) | [`code/Xenium_crc/`](code/Xenium_crc/) | P1 / P2 / P5 labeled | three-head (38 L2 / 9 Flex L12 / 4 L1); transferred RCTD Label1 | `xenium_crc` | train + Pred |
 | CODEX HCC (s4769; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869)) | [`code/CODEX_hcc/`](code/CODEX_hcc/) | 36–38 Visium-aligned HE regions | three-head (L2 / L12 / L1) | `codex_hcc` | train + Pred + niche |
 | CODEX ESCC (NCRT cohort) | [`code/CODEX_escc/`](code/CODEX_escc/) | tumor ROIs | five-tier labels | `codex_escc` | train |
 | CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` | **full** (train + Pred + niche) |
@@ -64,7 +64,7 @@ A pan-cancer Hist2Pheno (same idea as Fu et al. / Kather et al., *Nat Cancer* 20
 |--------|------------------------------|-------|------------------------------|----------------|-----------|
 | Lung | [`data/Xemium/weiqin/SpatialPF-NGenetics/Spatial-PF-Processed/Annotation/HE_Annotations/41588_2025_2080_MOESM5_ESM.xlsx`](data/Xemium/weiqin/SpatialPF-NGenetics/Spatial-PF-Processed/Annotation/HE_Annotations/41588_2025_2080_MOESM5_ESM.xlsx) | `Celltype` | 47 / 6 / 4 (+ CNiche 12, TNiche 12) | 637,738 (Complete) | Epithelial, Immune, Endothelial, Mesenchymal |
 | BRCA | [`data/Xemium/BRCA/Annotation/GSE243275_Barcode_Cell_Type_MatricesLY.xlsx`](data/Xemium/BRCA/Annotation/GSE243275_Barcode_Cell_Type_MatricesLY.xlsx) | `celltype` | 16 / 8 / 4 | 264,518 | Epithelial, Immune, Stromal, Endothelial |
-| CRC | [`data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx`](data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx) | `celltype` | 38 / 9 Flex / 4 | 364,539 (P1+P2 transferred singlets) | Epithelial, Immune, Stromal, Endothelial (Neuronal folded into Stromal) |
+| CRC | [`data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx`](data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx) | `celltype` | 38 / 9 Flex / 4 | 494,004 (P1+P2+P5 transferred singlets) | Epithelial, Immune, Stromal, Endothelial (Neuronal folded into Stromal) |
 | HCC | [`data/CODEX/HCC/Michael_data_transfer/s4769/HE/s4769_he_mapping_updated_Visium.xlsx`](data/CODEX/HCC/Michael_data_transfer/s4769/HE/s4769_he_mapping_updated_Visium.xlsx) | `Celltype` | 12 / 6 / 4 | 1,095,779 | Epithelial, Immune, Stromal, Endothelial |
 | PDAC | [`data/CODEX/HCC/Michael_data_transfer/s1167/raw_metadata_updated.xlsx`](data/CODEX/HCC/Michael_data_transfer/s1167/raw_metadata_updated.xlsx) | `Celltype` (`cohort=Pancreas TMA`) | 11 / 6 / 4 | 1,504,982 | Epithelial, Immune, Stromal, Endothelial |
 | GIST | same s1167 workbook | `Celltype` (`cohort=GIST TMA`) | 11 / 6 / 4 | 1,785,460 | Epithelial, Immune, Stromal, Endothelial |
@@ -175,7 +175,7 @@ Notebooks: set `NCRT_CUDA_DEVICE` **before** `import torch`, then restart the ke
 
 ## Typical workflow
 
-Every CODEX / Xenium track follows **match → embed → h5ad → train**, then dataset notebooks for CV maps, prediction statistics, and (where available) niche indices. The walkthrough below is PDAC. GIST is the same sequence with `CODEX_gist` and `result_all_spatial_gist`. BRCA / GBM stop after Pred statistic (see below).
+Every CODEX / Xenium track follows **match → embed → h5ad → train**, then dataset notebooks for CV maps, prediction statistics, and (where available) niche indices. The walkthrough below is PDAC. GIST is the same sequence with `CODEX_gist` and `result_all_spatial_gist`. BRCA / GBM / CRC stop after Pred statistic (see below).
 
 ```bash
 conda activate Hist2Pheno   # or SeededNTM, if you have not cloned the env yet
@@ -210,7 +210,7 @@ python -u code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \
 
 GIST analog: `GIST_train_validate_cv_UNIlabel.py --pooled-save-result result_all_spatial_gist`, then [`GIST_histology_derived_niche_index.ipynb`](code/CODEX_gist/GIST_histology_derived_niche_index.ipynb) and [`Pred_statistic_visual_gist_all.ipynb`](code/CODEX_gist/Pred_statistic_visual_gist_all.ipynb).
 
-CLI default ablation tag is **`D_emph_L2`** even with `--use-spatial-context`. BRCA / GBM demos use **`D_emph_L2_spatial_brca`** / **`D_emph_L2_spatial_gbm`**. Notebooks must use the same tag (`SKIP_POOLED_TRAIN=True` loads `best_mlp_gpu.pt` without retraining or refitting).  
+CLI default ablation tag is **`D_emph_L2`** even with `--use-spatial-context`. BRCA / GBM / CRC demos use **`D_emph_L2_spatial_brca`** / **`D_emph_L2_spatial_gbm`** / **`D_emph_L2_spatial_crc`**. Notebooks must use the same tag (`SKIP_POOLED_TRAIN=True` loads `best_mlp_gpu.pt` without retraining or refitting).  
 When pooled group CV has **fewer sections than `--cv-k`** (or each fold trains on a single section), OOF stays leave-one-section-out and **`best_mlp_gpu.pt` is refit on all samples** for StarDist / new sections.  
 h5ad builders skip a sample when the cache is valid; pass `--force-rebuild` to overwrite. Pooled StarDist validation needs `--steps stardist_h5ad`, not only `stardist_all_h5ad`.
 
@@ -260,7 +260,7 @@ Outputs under `s1167/`:
 
 ## Xenium BRCA and CODEX GBM
 
-These two ports reuse the HCC-style **three-head** CLI + `_single` / `_all` notebooks + Pred statistic. Cross-dataset **OOF** is leave-one-sample-out (two samples each). Because `n_sections < cv_k`, **`best_mlp_gpu.pt` is then refit on all cells** (LORO fold kept as `best_mlp_gpu_loro.pt`) so StarDist and new sections see every class. `_all` notebooks with `SKIP_POOLED_TRAIN=True` only **load** that checkpoint. UNI / train jobs are large; pin a GPU and do not launch them accidentally. There is **no** clinical niche-index notebook yet (no Response / coverslip-style groups).
+These ports reuse the HCC-style **three-head** CLI + `_single` / `_all` notebooks + Pred statistic. Cross-dataset **OOF** is leave-one-sample-out (two samples each). Because `n_sections < cv_k`, **`best_mlp_gpu.pt` is then refit on all cells** (LORO fold kept as `best_mlp_gpu_loro.pt`) so StarDist and new sections see every class. `_all` notebooks with `SKIP_POOLED_TRAIN=True` only **load** that checkpoint. UNI / train jobs are large; pin a GPU and do not launch them accidentally. There is **no** clinical niche-index notebook yet (no Response / coverslip-style groups). CRC is the same train + Pred layout with three patients (see below).
 
 | | Xenium BRCA | CODEX GBM |
 |--|-------------|-----------|
@@ -279,20 +279,24 @@ The GBM folder is named CODEX for pipeline layout; the images are **microscope H
 
 Oliveira et al. (*Nat Genet* 2025) profiled FFPE CRC with **Visium HD** (2 µm capture, analyzed at 8 µm) and validated a subset with **Xenium In Situ**. Hist2Pheno keeps both: RCTD deconvolution on Visium HD bins, then nearest-bin transfer onto Xenium cells (the alignment CSVs have centroids, not cell types).
 
-P1/P2 are on the BRCA-style **three-head** path (match → UNI → `CRC_train_validate_cv_UNIlabel.py`). P5 has HE + alignment only so far (no annotation sheet / Cases / StarDist). Labels remain **transferred RCTD singlet**, not native Xenium GT. There is no Pred statistic notebook yet.
+**P1 / P2 / P5** are on the BRCA-style **three-head** path (match → UNI → pooled CV → StarDist → Pred). Labels remain **transferred RCTD singlet**, not native Xenium GT. There is **no** clinical niche-index notebook (no Response / coverslip-style groups). Command index: [`code/Xenium_crc/demo.sh`](code/Xenium_crc/demo.sh).
 
 | | |
 |--|--|
 | Folder | [`code/Xenium_crc/`](code/Xenium_crc/) |
-| Notebook | [`Data_process_HEcelltype_CRC.ipynb`](code/Xenium_crc/Data_process_HEcelltype_CRC.ipynb) |
-| Patients | `P1CRC`, `P2CRC` labeled; `P5CRC` HE only |
+| Samples | `P1CRC`, `P2CRC`, `P5CRC` (Excel / folders `P1_CRC`, `P2_CRC`, `P5_CRC`) |
 | Cell type | `DeconvolutionLabel1` (RCTD first type = Flex **Level2**, 38 classes). `DeconvolutionLabel2` is ignored. Train L12 = Flex 9-class Level1; L1 = 4 coarse parents (Neuronal → Stromal) |
-| Transferred cells on HE | 154,760 (P1) + 209,779 (P2) = **364,539**; StarDist-matched 96,858 + 166,503 |
+| Transferred cells on HE | 154,760 (P1) + 209,779 (P2) + 129,465 (P5) = **494,004**; StarDist-matched 96,858 + 166,503 + 94,194 |
+| Coordinates | paper `x_centroid_visium_scale` / `y_centroid_visium_scale` on add-on HE OME (~0.274 µm/px); UNI `--scale` ≈ 0.548 |
+| Pooled outputs | `data/Xemium/CRC/Results/result_all_spatial/` |
+| Ablation tag | `D_emph_L2_spatial_crc` |
+| Train / infer | [`CRC_train_validate_cv_UNIlabel.py`](code/Xenium_crc/CRC_train_validate_cv_UNIlabel.py) `--mode cross-dataset` (3-sample leave-one-dataset-out; `best_mlp_gpu.pt` refit on all cells) |
+| Notebooks | [`CRC_train_validate_cv_UNIlabel_single.ipynb`](code/Xenium_crc/CRC_train_validate_cv_UNIlabel_single.ipynb) (one sample); [`CRC_train_validate_cv_UNIlabel_all.ipynb`](code/Xenium_crc/CRC_train_validate_cv_UNIlabel_all.ipynb) (`SKIP_POOLED_TRAIN=True`); [`Pred_statistic_visual_crc_all.ipynb`](code/Xenium_crc/Pred_statistic_visual_crc_all.ipynb) (P1 vs P2 vs P5) |
 | Visium HD bins | `P{1,2,5}CRC_Metadata.parquet` (on-tissue ~508k / 546k / 542k; RCTD-assigned 311k / 431k / 392k) |
 | Xenium cells | 1.12M / 1.11M / 1.03M; ~24–29% fall in the Visium capture bbox and map at median **~3.2 µm** (one 8 µm bin) |
 | Visium HD data | `data/VisiumHD/CRC/P{1,2,5}_CRC/` ([10x CRC dataset](https://www.10xgenomics.com/products/visium-hd-spatial-gene-expression/dataset-human-crc); GEO [GSE280318](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE280318)) |
 | Xenium alignment | `data/Xemium/CRC/Xenium_Visium_Alignment/Xenium_P{1,2,5}_cell_info.csv` |
-| Hierarchy xlsx | [`data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx`](data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx) |
+| Hierarchy xlsx | [`data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx`](data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx) sheets `celltype`, `P1_CRC`, `P2_CRC`, `P5_CRC` |
 | Paper metadata | [`code/Xenium_crc/HumanColonCancer_VisiumHD/`](code/Xenium_crc/HumanColonCancer_VisiumHD/) (clone of [10XGenomics/HumanColonCancer_VisiumHD](https://github.com/10XGenomics/HumanColonCancer_VisiumHD); Hist2Pheno uses `SingleCell_MetaData_2025.csv`) |
 
 Do not mix Visium HD 8 µm bin coordinates with Xenium HE pixels without the paper alignment tables.
