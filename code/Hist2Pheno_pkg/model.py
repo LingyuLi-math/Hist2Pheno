@@ -53,6 +53,49 @@ def _build_spatial_neighbor_index_for_cv_data(cv_data, k_neighbors=8):
             coords, cv_data["groups_f"], k_neighbors=k_neighbors
         )
     return build_spatial_neighbor_index(coords, k_neighbors=k_neighbors)
+
+
+_CELL_STRATIFIED_SPLITTERS = frozenset(
+    {
+        "cell_stratified",
+        "stratified_cell",
+        "cell_type_kfold",
+        "mixed_cell",
+    }
+)
+_PREASSIGNED_SPLITTERS = frozenset(
+    {
+        "preassigned",
+        "stratified_group_kfold",
+        "dataset_section",
+        "cross_dataset_section",
+    }
+) | _CELL_STRATIFIED_SPLITTERS
+
+
+def _restrict_neighbor_index_to_splits(neighbor_index, tr_idx, va_idx):
+    """Drop train↔val spatial neighbors so mixed-cell CV does not leak.
+
+    Neighbors that fall on the other side of the split are replaced with self.
+    Section-group CV never needs this (a section is wholly train or val).
+    """
+    nbr = np.asarray(neighbor_index, dtype=np.int64)
+    if nbr.ndim != 2:
+        raise ValueError(
+            f"neighbor_index must be 2-d (n, k); got shape {getattr(nbr, 'shape', None)}"
+        )
+    n, _k = nbr.shape
+    out = nbr.copy()
+    self_ids = np.arange(n, dtype=np.int64)
+    for idx in (tr_idx, va_idx):
+        idx = np.asarray(idx, dtype=np.int64)
+        if idx.size == 0:
+            continue
+        allowed = np.zeros(n, dtype=bool)
+        allowed[idx] = True
+        sub = out[idx]
+        out[idx] = np.where(allowed[sub], sub, self_ids[idx, None])
+    return out
 ########################################################
 
 ########################################################
@@ -231,6 +274,8 @@ def _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx):
         result_fold[f"y_train_{short}_encoded"] = enc[tr_idx]
         result_fold[f"y_test_{short}_encoded"] = enc[va_idx]
         result_fold[key_full] = enc
+    if "child_to_parent" in cv_data:
+        result_fold["child_to_parent"] = np.asarray(cv_data["child_to_parent"], dtype=np.int64)
     return result_fold
 
 ########################################################
@@ -857,6 +902,7 @@ def train_and_save_model(
     spatial_k=8,
     spatial_neighbor_index=None,
     X_all_scaled=None,
+    child_to_parent_fill=None,
 ):
     """
     Train dual-head or five-head MLP with unified HCE loss.
@@ -1151,6 +1197,20 @@ def train_and_save_model(
     child_to_parent, n_l2_l1_conflict = _child_to_parent_majority(
         y_encoded_f, y_level1_encoded_f, num_classes
     )
+    if child_to_parent_fill is not None:
+        fill = np.asarray(child_to_parent_fill, dtype=np.int64)
+        if fill.shape[0] != num_classes:
+            raise ValueError(
+                f"child_to_parent length {fill.shape[0]} != num_classes {num_classes}"
+            )
+        missing = child_to_parent < 0
+        if np.any(missing):
+            child_to_parent[missing] = fill[missing]
+            print(
+                f"  Filled L2→L1 map for {int(missing.sum())} ontology L2 classes "
+                "absent from this pool",
+                flush=True,
+            )
     if np.any(child_to_parent < 0):
         missing = np.where(child_to_parent < 0)[0]
         raise ValueError(f"Missing level1 mapping for level2 classes: {missing}")
@@ -1657,6 +1717,8 @@ def train_and_save_model_from_split(
             spatial_neighbor_index=result["spatial_neighbor_index"],
             X_all_scaled=result["X_all_scaled"],
         )
+    if result.get("child_to_parent") is not None:
+        train_kw["child_to_parent_fill"] = result["child_to_parent"]
 
     return train_and_save_model(
         device=device,
@@ -1929,6 +1991,15 @@ def train_hce_leave_one_group_out_cv(
     return summary
 
 
+def _iter_preassigned_folds(fold_ids):
+    """Yield ``(train_idx, val_idx)`` from a per-row fold id (one val fold per id)."""
+    fold_ids = np.asarray(fold_ids)
+    for fold in sorted(np.unique(fold_ids).tolist()):
+        va_idx = np.flatnonzero(fold_ids == fold)
+        tr_idx = np.flatnonzero(fold_ids != fold)
+        yield tr_idx, va_idx
+
+
 ########################################################
 # 2026.06.25 LLY: group kfold cv for Xenium_lung Complete_Cases 25 datasets for training and validation
 # 2026.06.26 For each dataset, supports use_spatial_context / spatial_k / spatial_mode for spatial context.
@@ -1967,18 +2038,32 @@ def train_hce_group_kfold_cv(
     use_spatial_context=False,
     spatial_k=8,
     spatial_mode="mean",
+    group_splitter="shuffle",
 ):
     """
-    Dataset-level CV with ``GroupShuffleSplit``: each fold holds out ~``(1-train_group_frac)``
-    of groups (e.g. samples) for validation; scaler is fit on train groups only.
+    Dataset-level CV. Default ``group_splitter='shuffle'`` is ``GroupShuffleSplit``:
+    each fold holds out ~``(1-train_group_frac)`` of groups for validation; scaler is
+    fit on train groups only.
 
-    With 25 samples and ``train_group_frac=0.7``, each fold trains on 18 datasets and
+    ``group_splitter='group_kfold'`` uses ``sklearn.model_selection.GroupKFold`` so
+    every section is in exactly one validation fold (true k-fold by section).
+
+    ``group_splitter='preassigned'`` (aliases: ``stratified_group_kfold``,
+    ``cross_dataset_section``) uses ``cv_data['fold_id_f']`` so the caller can
+    mix datasets inside every fold (round-robin sections within each dataset).
+
+    ``group_splitter='cell_stratified'`` (aliases: ``stratified_cell``,
+    ``cell_type_kfold``, ``mixed_cell``) also reads ``fold_id_f``, but those ids
+    are per-cell StratifiedKFold on L1|L12|L2 (sections are mixed). Spatial kNN
+    is then restricted so train cells cannot see val neighbors and vice versa.
+
+    With 25 samples and ``train_group_frac=0.7``, shuffle CV trains on 18 datasets and
     validates on 7 (ceil(25×0.7) train size).
 
     ``use_spatial_context``: fuse kNN neighbor UNI embeddings before the MLP.
     When ``groups_f`` is present, kNN is built **per sample** (not across pooled coords).
     """
-    from sklearn.model_selection import GroupShuffleSplit
+    from sklearn.model_selection import GroupKFold, GroupShuffleSplit
     from sklearn.preprocessing import StandardScaler
 
     from base import loader_train_test
@@ -2028,20 +2113,68 @@ def train_hce_group_kfold_cv(
         os.makedirs(tdir, exist_ok=True)
         save_bestmodel_path_pattern = os.path.join(tdir, "hce_group_fold_{}.pt")
 
-    gss = GroupShuffleSplit(
-        n_splits=int(n_splits),
-        test_size=test_frac,
-        random_state=int(random_state),
-    )
+    splitter_name = str(group_splitter).strip().lower()
+    if splitter_name in {"group_kfold", "kfold", "groupkfold"}:
+        n_splits_eff = min(int(n_splits), n_groups)
+        if n_splits_eff < 2:
+            raise ValueError(f"GroupKFold needs n_groups>=2; got {n_groups}")
+        split_iter = GroupKFold(n_splits=n_splits_eff).split(X_f, y_enc, groups_f)
+        print(
+            f"GroupKFold: n_splits={n_splits_eff}, n_groups={n_groups} "
+            "(each section in exactly one val fold)",
+            flush=True,
+        )
+    elif splitter_name in _PREASSIGNED_SPLITTERS:
+        if "fold_id_f" in cv_data:
+            fold_ids = np.asarray(cv_data["fold_id_f"])
+        else:
+            raise ValueError(
+                "group_splitter="
+                f"{group_splitter!r} requires cv_data['fold_id_f'] "
+                "(section-level or per-cell fold id, length = n_cells)."
+            )
+        if fold_ids.shape[0] != X_f.shape[0]:
+            raise ValueError(
+                f"fold_id_f length {fold_ids.shape[0]} != X_f rows {X_f.shape[0]}"
+            )
+        split_iter = _iter_preassigned_folds(fold_ids)
+        n_fold_ids = int(len(np.unique(fold_ids)))
+        if splitter_name in _CELL_STRATIFIED_SPLITTERS:
+            print(
+                f"Preassigned cell-stratified folds: n_folds={n_fold_ids}, "
+                f"n_groups={n_groups} (cells mixed across sections; "
+                "L1/L12/L2 strata in every fold; spatial neighbors split-masked)",
+                flush=True,
+            )
+        else:
+            print(
+                f"Preassigned section folds: n_folds={n_fold_ids}, n_groups={n_groups} "
+                "(each section in exactly one val fold; mixed datasets per fold)",
+                flush=True,
+            )
+    else:
+        split_iter = GroupShuffleSplit(
+            n_splits=int(n_splits),
+            test_size=test_frac,
+            random_state=int(random_state),
+        ).split(X_f, y_enc, groups_f)
     fold_rows = []
     skipped = []
     oof_preds_parts = []
     oof_labels_parts = []
     oof_probs_parts = []
 
-    for fold_idx, (tr_idx, va_idx) in enumerate(gss.split(X_f, y_enc, groups_f)):
+    for fold_idx, (tr_idx, va_idx) in enumerate(split_iter):
         held = np.unique(groups_f[va_idx])
-        held_repr = tuple(int(x) for x in held.tolist())
+        g_tr_u = np.unique(groups_f[tr_idx])
+        section_overlap = np.intersect1d(g_tr_u, held)
+        if section_overlap.size > 0:
+            held_repr = (
+                f"mixed_cells n_train={len(tr_idx)} n_val={len(va_idx)} "
+                f"sections_shared={int(section_overlap.size)}/{n_groups}"
+            )
+        else:
+            held_repr = tuple(int(x) for x in held.tolist())
 
         if len(tr_idx) < min_train_samples or len(va_idx) < 1:
             skipped.append((fold_idx, held_repr, "empty train or val"))
@@ -2072,12 +2205,17 @@ def train_hce_group_kfold_cv(
             "y_level1_encoded_f": y_l1_full,
         }
         if use_spatial_context:
+            nbr_use = neighbor_index_full
+            if section_overlap.size > 0:
+                nbr_use = _restrict_neighbor_index_to_splits(
+                    neighbor_index_full, tr_idx, va_idx
+                )
             result_fold.update(
                 {
                     "use_spatial_context": True,
                     "spatial_mode": spatial_mode,
                     "spatial_k": spatial_k,
-                    "spatial_neighbor_index": neighbor_index_full,
+                    "spatial_neighbor_index": nbr_use,
                     "X_all_scaled": scaler.transform(X_f),
                     "train_global_indices": tr_idx,
                     "val_global_indices": va_idx,
@@ -2091,11 +2229,20 @@ def train_hce_group_kfold_cv(
         if parent:
             os.makedirs(parent, exist_ok=True)
 
-        print(
-            f"\n{'=' * 60}\nGroup CV fold {fold_idx}: "
-            f"train_groups={n_groups - len(held)}/{n_groups}, "
-            f"held_out={len(held)} group(s) {held_repr!r}\n{'=' * 60}"
-        )
+        if section_overlap.size > 0:
+            fold_banner = (
+                f"Group CV fold {fold_idx}: cell-mixed "
+                f"n_train={len(tr_idx):,} n_val={len(va_idx):,} "
+                f"sections_shared={int(section_overlap.size)}/{n_groups} "
+                f"(spatial neighbors split-masked)"
+            )
+        else:
+            fold_banner = (
+                f"Group CV fold {fold_idx}: "
+                f"train_groups={n_groups - len(held)}/{n_groups}, "
+                f"held_out={len(held)} group(s) {held_repr!r}"
+            )
+        print(f"\n{'=' * 60}\n{fold_banner}\n{'=' * 60}")
         ckpt_exists = os.path.isfile(save_path)
         use_resume = bool(resume_from_checkpoints and ckpt_exists)
         if use_resume:
@@ -2429,12 +2576,15 @@ def train_hce_stratified_kfold_cv(
             "y_level1_encoded_f": y_l1_full,
         }
         if use_spatial_context:
+            nbr_use = _restrict_neighbor_index_to_splits(
+                neighbor_index_full, tr_idx, va_idx
+            )
             result_fold.update(
                 {
                     "use_spatial_context": True,
                     "spatial_mode": spatial_mode,
                     "spatial_k": spatial_k,
-                    "spatial_neighbor_index": neighbor_index_full,
+                    "spatial_neighbor_index": nbr_use,
                     "X_all_scaled": scaler.transform(X_f),
                     "train_global_indices": tr_idx,
                     "val_global_indices": va_idx,
@@ -2448,7 +2598,10 @@ def train_hce_stratified_kfold_cv(
         if parent:
             os.makedirs(parent, exist_ok=True)
 
-        print(f"\n{'=' * 60}\nKFold fold {fold_idx}: stratify={stratify_target!r}\n{'=' * 60}")
+        extra = " (spatial neighbors split-masked)" if use_spatial_context else ""
+        print(
+            f"\n{'=' * 60}\nKFold fold {fold_idx}: stratify={stratify_target!r}{extra}\n{'=' * 60}"
+        )
         ckpt_exists = os.path.isfile(save_path)
         use_resume = bool(resume_from_checkpoints and ckpt_exists)
         if use_resume:
@@ -2824,8 +2977,9 @@ def run_group_kfold_cv_and_load_best_model(
     use_spatial_context=False,
     spatial_k=8,
     spatial_mode="mean",
+    group_splitter="shuffle",
 ):
-    """Run dataset-level GroupShuffleSplit CV, then load the best fold by 4-term score."""
+    """Run dataset-level GroupShuffleSplit / GroupKFold CV, then load the best fold by 4-term score."""
     from pathlib import Path
 
     if group_checkpoint_dir is not None:
@@ -2873,6 +3027,7 @@ def run_group_kfold_cv_and_load_best_model(
         use_spatial_context=use_spatial_context,
         spatial_k=spatial_k,
         spatial_mode=spatial_mode,
+        group_splitter=group_splitter,
     )
 
     best_fold = max(
@@ -2968,6 +3123,7 @@ def run_group_kfold_cv_with_oof_report(
     use_spatial_context=False,
     spatial_k=8,
     spatial_mode="mean",
+    group_splitter="shuffle",
 ):
     """Dataset-level group CV + load best fold + out-of-fold (held-out dataset) predictions."""
     ctx = run_group_kfold_cv_and_load_best_model(
@@ -3003,6 +3159,7 @@ def run_group_kfold_cv_with_oof_report(
         use_spatial_context=use_spatial_context,
         spatial_k=spatial_k,
         spatial_mode=spatial_mode,
+        group_splitter=group_splitter,
     )
     gs = ctx["group_summary"]
     oof = {

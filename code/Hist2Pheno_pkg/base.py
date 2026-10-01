@@ -5995,11 +5995,13 @@ def loader_train_test(
 
     train_balance_sampler : bool
         If True, train batches are drawn with ``WeightedRandomSampler``.
-    train_balance_sampler_mode : {"global_l2", "hierarchical_l1_l2"}
+    train_balance_sampler_mode : {"global_l2", "hierarchical_l1_l2", "hierarchical_l1_l12_l2"}
         ``global_l2`` uses inverse frequency on level2 labels across the full
         training set (legacy behavior). ``hierarchical_l1_l2`` first balances
         level1 parents, then balances level2 children within each parent:
         sample weight = ``1 / count(level1) * 1 / count(level2 within level1)``.
+        ``hierarchical_l1_l12_l2`` also balances the intermediate head:
+        ``1 / n_L1 * 1 / n_L12|L1 * 1 / n_L2|L12`` (needs ``y_train_level12_encoded``).
         This reduces over-sampling drift from very large level1 groups.
     """
     X_train_scaled = result["X_train_scaled"]
@@ -6144,9 +6146,40 @@ def loader_train_test(
                     (1.0 / l1_counts[int(parent)])
                     * (1.0 / l2_counts_parent[yc_parent])
                 )
+        elif train_balance_sampler_mode == "hierarchical_l1_l12_l2":
+            if "y_train_level12_encoded" not in result:
+                raise ValueError(
+                    "train_balance_sampler_mode='hierarchical_l1_l12_l2' "
+                    "requires y_train_level12_encoded in the split dict"
+                )
+            yl12 = np.asarray(result["y_train_level12_encoded"], dtype=np.int64)
+            max_l1 = int(yl1.max()) + 1
+            l1_counts = np.bincount(yl1, minlength=max_l1).astype(np.float64)
+            l1_counts = np.maximum(l1_counts, 1.0)
+            sample_weights = np.empty(len(yc), dtype=np.float64)
+            for parent in np.unique(yl1):
+                m1 = yl1 == parent
+                yl12_p = yl12[m1]
+                l12_counts = np.bincount(
+                    yl12_p, minlength=int(yl12_p.max()) + 1
+                ).astype(np.float64)
+                l12_counts = np.maximum(l12_counts, 1.0)
+                for mid in np.unique(yl12_p):
+                    m12 = m1 & (yl12 == mid)
+                    yc_mid = yc[m12]
+                    l2_counts = np.bincount(
+                        yc_mid, minlength=int(yc_mid.max()) + 1
+                    ).astype(np.float64)
+                    l2_counts = np.maximum(l2_counts, 1.0)
+                    sample_weights[m12] = (
+                        (1.0 / l1_counts[int(parent)])
+                        * (1.0 / l12_counts[int(mid)])
+                        * (1.0 / l2_counts[yc_mid])
+                    )
         else:
             raise ValueError(
-                "train_balance_sampler_mode must be one of: global_l2, hierarchical_l1_l2"
+                "train_balance_sampler_mode must be one of: "
+                "global_l2, hierarchical_l1_l2, hierarchical_l1_l12_l2"
             )
         train_sampler = WeightedRandomSampler(
             weights=torch.as_tensor(sample_weights, dtype=torch.double),
@@ -6200,6 +6233,11 @@ def loader_train_test(
             print(
                 "  train_balance_sampler=True: WeightedRandomSampler "
                 "(inverse L2 class frequency)"
+            )
+        elif train_balance_sampler_mode == "hierarchical_l1_l12_l2":
+            print(
+                "  train_balance_sampler=True: WeightedRandomSampler "
+                "(hierarchical L1 -> L12 -> L2 balancing)"
             )
         else:
             print(

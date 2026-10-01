@@ -2282,6 +2282,8 @@ def plot_stardist_tier_roc_pooled(
     save_path=None,
     title: str | None = None,
     roc_color_scheme: str | None = None,
+    class_color_overrides=None,
+    pan_organ: str | None = None,
     figsize=(6.0, 6.0),
     max_curves=None,
 ):
@@ -2290,6 +2292,11 @@ def plot_stardist_tier_roc_pooled(
 
     spec = stardist_auroc_tier_spec(tier)
     class_names = np.asarray(global_class_names)
+    scheme = roc_color_scheme
+    if scheme is None and pan_organ is not None:
+        scheme = scheme_for_pan_organ(pan_organ, head=str(tier).lower())
+    if scheme is None:
+        scheme = spec["roc_color_scheme"]
     return plot_multiclass_roc_curves(
         y_true,
         y_score,
@@ -2298,7 +2305,10 @@ def plot_stardist_tier_roc_pooled(
         max_curves=max_curves or len(class_names),
         save_path=save_path,
         title=title or spec["pooled_title"],
-        roc_color_scheme=roc_color_scheme or spec["roc_color_scheme"],
+        roc_color_scheme=scheme,
+        class_color_overrides=class_color_overrides,
+        pan_organ=pan_organ,
+        color_tier=str(tier).lower(),
     )
 
 
@@ -2335,6 +2345,7 @@ def plot_pooled_stardist_tier_roc(
     layout: str = "pooled_stardist",
     pan_organ: str | None = None,
     roc_color_scheme: str | None = None,
+    class_color_overrides=None,
     figsize=(8.0, 8.0),
     show_barplot: bool = False,
     save_per_class_csv: bool = False,
@@ -2380,6 +2391,8 @@ def plot_pooled_stardist_tier_roc(
         save_path=str(out_dir / pdf_name),
         title=f"{spec['pooled_title']} (n={n_samples} Complete_Cases)",
         roc_color_scheme=eff_scheme,
+        class_color_overrides=class_color_overrides,
+        pan_organ=pan_organ,
         figsize=figsize,
         max_curves=len(pooled["global_class_names"]),
     )
@@ -2474,6 +2487,8 @@ def plot_pooled_stardist_tier_rocs(
     tiers: Sequence[str],
     *,
     figsize: tuple[float, float] | Mapping[str, tuple[float, float]] | None = None,
+    roc_color_scheme: str | Mapping[str, str] | None = None,
+    class_color_overrides: Mapping | None = None,
     skip_missing: bool = True,
     **kwargs,
 ) -> dict:
@@ -2488,6 +2503,22 @@ def plot_pooled_stardist_tier_rocs(
                 call_kw["figsize"] = fig
         elif figsize is not None:
             call_kw["figsize"] = figsize
+        if isinstance(roc_color_scheme, Mapping):
+            sch = roc_color_scheme.get(tier_key, roc_color_scheme.get(str(tier)))
+            if sch is not None:
+                call_kw["roc_color_scheme"] = sch
+        elif roc_color_scheme is not None:
+            call_kw["roc_color_scheme"] = roc_color_scheme
+        if isinstance(class_color_overrides, Mapping) and class_color_overrides:
+            first_val = next(iter(class_color_overrides.values()), None)
+            if isinstance(first_val, Mapping):
+                ov = class_color_overrides.get(tier_key) or class_color_overrides.get(
+                    str(tier).upper()
+                )
+                if ov is not None:
+                    call_kw["class_color_overrides"] = ov
+            else:
+                call_kw["class_color_overrides"] = class_color_overrides
         try:
             results[tier_key] = plot_pooled_stardist_tier_roc(
                 stardist_result_root, out_dir, tier_key, **call_kw

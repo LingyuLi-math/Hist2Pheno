@@ -20,7 +20,7 @@ Raw images and embeddings are **not** shipped in this repository. Each dataset f
 
 - **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, CV helpers, and the TLS / SRI / TNI engine
 - **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / HIPT / Virchow2 patches from H&E
-- **Multi-cohort pipelines** — Xenium lung / BRCA / CRC plus CODEX HCC, ESCC, PDAC, GIST, and GBM
+- **Multi-cohort pipelines** — Xenium lung / BRCA / CRC plus CODEX HCC, ESCC, PDAC, GIST, and GBM; optional **joint pan-cancer** three-head model on the shared 20/8/5 ontology ([`code/PanCancer/`](code/PanCancer/))
 - **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei
 - **s1167 TMAs done** — PDAC (278 annotated + 195 unlabeled cores) and GIST (550 annotated) share one TMA root but keep separate StarDist trees, pooled weights, and clinical notebooks
 - **BRCA / GBM / CRC ports** — leave-one-sample-out (or leave-one-dataset-out) OOF + all-sample deployment weights when there are fewer sections than folds; Pred statistic notebooks (`xenium_brca`, `codex_gbm`, `xenium_crc`)
@@ -51,8 +51,9 @@ flowchart LR
 | CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` | **full** (train + Pred + niche) |
 | CODEX GIST (s1167 GIST TMA) | [`code/CODEX_gist/`](code/CODEX_gist/) | 550 annotated cores | three-head | `codex_gist` | **full** (train + Pred + niche) |
 | CODEX GBM ([Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0)) | [`code/CODEX_gbm/`](code/CODEX_gbm/) | Initial `P174511` + Recurrent `P179161` | three-head (16 L2 subcluster / 9 L12 SN / 5 L1 cell_type) | `codex_gbm` | train + Pred |
+| Pan-cancer joint (7 public cohorts; ESCC omitted) | [`code/PanCancer/`](code/PanCancer/) | ~5.5M kept cells / 895 CV sections + P5CRC at predict | three-head (20 L2 / 8 L12 / 5 L1) | `pancancer` | joint train + Pred |
 
-Start from the dataset README, then follow that folder’s `demo.sh`.
+Start from the dataset README, then follow that folder’s `demo.sh`. Joint 7-cohort training (remap native labels → pan-cancer L1/L12/L2, do not mix ESCC) lives in [`code/PanCancer/`](code/PanCancer/).
 
 ## Pan-cancer cell-type labels
 
@@ -109,7 +110,8 @@ Hist2Pheno/
 │   ├── CODEX_escc/
 │   ├── CODEX_pdac/              # s1167 Pancreas TMA (shared mapping + niche engine)
 │   ├── CODEX_gist/              # s1167 GIST TMA (thin wrappers + notebooks)
-│   └── CODEX_gbm/               # WangLab microscope HE + Visium HD labels
+│   ├── CODEX_gbm/               # WangLab microscope HE + Visium HD labels
+│   └── PanCancer/               # joint 7-cohort 3-head model (sheet celltype_pancancer)
 ├── environment.yml              # dedicated Hist2Pheno conda env
 ├── requirements.txt
 └── LICENSE
@@ -210,11 +212,11 @@ python -u code/CODEX_pdac/PDAC_train_validate_cv_UNIlabel.py \
 
 GIST analog: `GIST_train_validate_cv_UNIlabel.py --pooled-save-result result_all_spatial_gist`, then [`GIST_histology_derived_niche_index.ipynb`](code/CODEX_gist/GIST_histology_derived_niche_index.ipynb) and [`Pred_statistic_visual_gist_all.ipynb`](code/CODEX_gist/Pred_statistic_visual_gist_all.ipynb).
 
-CLI default ablation tag is **`D_emph_L2`** even with `--use-spatial-context`. BRCA / GBM / CRC demos use **`D_emph_L2_spatial_brca`** / **`D_emph_L2_spatial_gbm`** / **`D_emph_L2_spatial_crc`**. Notebooks must use the same tag (`SKIP_POOLED_TRAIN=True` loads `best_mlp_gpu.pt` without retraining or refitting).  
+CLI default ablation tag is **`D_emph_L2`** even with `--use-spatial-context`. BRCA / GBM / CRC demos use **`D_emph_L2_spatial_brca`** / **`D_emph_L2_spatial_gbm`** / **`D_emph_L2_spatial_crc`**. The joint pan-cancer run uses **`D_emph_L2_spatial_pancancer`** (cell-stratified: **`D_emph_L2_spatial_pancancer_cellstrat`**). Notebooks must use the same tag (`SKIP_POOLED_TRAIN=True` loads `best_mlp_gpu.pt` without retraining or refitting).  
 When pooled group CV has **fewer sections than `--cv-k`** (or each fold trains on a single section), OOF stays leave-one-section-out and **`best_mlp_gpu.pt` is refit on all samples** for StarDist / new sections.  
 h5ad builders skip a sample when the cache is valid; pass `--force-rebuild` to overwrite. Pooled StarDist validation needs `--steps stardist_h5ad`, not only `stardist_all_h5ad`.
 
-Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`code/Xenium_brca/demo.sh`](code/Xenium_brca/demo.sh), [`code/Xenium_crc/demo.sh`](code/Xenium_crc/demo.sh), [`code/CODEX_hcc/demo.sh`](code/CODEX_hcc/demo.sh), [`code/CODEX_pdac/demo.sh`](code/CODEX_pdac/demo.sh), [`code/CODEX_gist/demo.sh`](code/CODEX_gist/demo.sh), [`code/CODEX_gbm/demo.sh`](code/CODEX_gbm/demo.sh), [`code/CODEX_escc/demo.sh`](code/CODEX_escc/demo.sh). CRC: [`demo.sh`](code/Xenium_crc/demo.sh) + [`code/Xenium_crc/README.md`](code/Xenium_crc/README.md).
+Full command lists: [`code/Xenium_lung/demo.sh`](code/Xenium_lung/demo.sh), [`code/Xenium_brca/demo.sh`](code/Xenium_brca/demo.sh), [`code/Xenium_crc/demo.sh`](code/Xenium_crc/demo.sh), [`code/CODEX_hcc/demo.sh`](code/CODEX_hcc/demo.sh), [`code/CODEX_pdac/demo.sh`](code/CODEX_pdac/demo.sh), [`code/CODEX_gist/demo.sh`](code/CODEX_gist/demo.sh), [`code/CODEX_gbm/demo.sh`](code/CODEX_gbm/demo.sh), [`code/CODEX_escc/demo.sh`](code/CODEX_escc/demo.sh), [`code/PanCancer/demo.sh`](code/PanCancer/demo.sh). CRC: [`demo.sh`](code/Xenium_crc/demo.sh) + [`code/Xenium_crc/README.md`](code/Xenium_crc/README.md). Pan-cancer joint train: [`code/PanCancer/README.md`](code/PanCancer/README.md).
 
 ### Prediction heads
 
@@ -301,6 +303,33 @@ Oliveira et al. (*Nat Genet* 2025) profiled FFPE CRC with **Visium HD** (2 µm c
 
 Do not mix Visium HD 8 µm bin coordinates with Xenium HE pixels without the paper alignment tables.
 
+## Pan-cancer joint model (7 public cohorts)
+
+[`code/PanCancer/`](code/PanCancer/) trains **one** three-head MLP on sheet `celltype_pancancer` (20 L2 / 8 L12 / 5 L1; ESCC omitted). Native labels are remapped on read; UNI embeddings stay in each cohort `*_matched_features.h5ad`. Command index: [`demo.sh`](code/PanCancer/demo.sh). Details: [`code/PanCancer/README.md`](code/PanCancer/README.md).
+
+Default CV is **cross-dataset section** 5-fold (`--group-splitter cross_dataset_section`): each HE section is wholly train or val; every fold mixes cohorts. CRC CV train is P1+P2; **P5CRC is predicted** (RCTD GT exists, not in `fold_plan`). Ablation tag **`D_emph_L2_spatial_pancancer`**. Pool ≈ 5.5M cells × 1024-d (~22 GB); smoke with `--datasets BRCA GBM --max-cells-per-section 5000`.
+
+Optional **cell-stratified** CV (`--group-splitter cell_stratified`) mixes cells across sections with StratifiedKFold on L1|L12|L2 so every abundant type (including BRCA-only DCIS and Lung-only Injury_epithelial) appears in every fold. Spatial kNN is split-masked. Hierarchical L1→L12→L2 sampling is on by default. Same-section cells in train and val make OOF optimistic vs a new slide — use section CV for that.
+
+| | Section CV (default) | Cell-stratified |
+|--|----------------------|-----------------|
+| folder | `data/PanCancer/result_all_spatial/` | `data/PanCancer/result_cell_stratified_spatial/` |
+| tag | `D_emph_L2_spatial_pancancer` | `D_emph_L2_spatial_pancancer_cellstrat` |
+| train log | `data/PanCancer/train.log` (`demo.sh` step 3) | `data/PanCancer/train_cell_stratified.log` (step 3b) |
+| predict | `data/PanCancer/pred_all_spatial/` + `predict.log` (step 4; **section-CV** checkpoint) | not the default predict path — pass `--checkpoint` and `--pred-root` |
+
+Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/Pred_statistic_visual_pancancer_all.ipynb) pools per-section AUROC (`pan_organ=pancancer`).
+
+```bash
+python -u code/PanCancer/prepare_pancancer_index.py
+python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+  --use-spatial-context --spatial-k 8 --spatial-mode mean \
+  --steps prepare train he_validate \
+  --save-result result_all_spatial \
+  --ablation-tag D_emph_L2_spatial_pancancer
+python -u code/PanCancer/PanCancer_predict_visualize.py --include-incomplete-lung --skip-existing
+```
+
 ## Data
 
 This repo tracks **code only**. Point each pipeline at your local copy:
@@ -314,6 +343,7 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 | CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | `raw_metadata_updated.xlsx` sheet `Celltype` (split by `cohort`) | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST). Metadata: sheet `Clinical_info` |
 | CODEX GBM | `data/CODEX/GBM/WangLab/` | `3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx` sheet `Celltype` | [Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0); microscope HE + single-nucleus labels; Cases / Results under `data/CODEX/GBM/` |
 | CODEX ESCC | `data/CODEX/ESCC/` | in-house (`codex_meta_celltype_*.csv`); **not** in the pan-cancer ontology | NCRT remains the cohort path name |
+| Pan-cancer joint | `data/PanCancer/` | [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_pancancer` | Index / fold plans / section-CV + cell-stratified checkpoints / `pred_all_spatial/`; embeddings stay in cohort h5ads. See [`code/PanCancer/README.md`](code/PanCancer/README.md) |
 
 Unified mapping across the seven public cohorts in the workbook: [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) (`celltype_initial` for the inventory, `celltype_pancancer` for joint training, `celltype_fine` for the fine synonym list). CRC Flex Label1 is mapped onto the existing 20-class v1 L2 (no new heads). Joint-training cell counts: [`code/Hist2Pheno_pkg/dataset/L1_L12_L2_cell_counts_7datasets.ipynb`](code/Hist2Pheno_pkg/dataset/L1_L12_L2_cell_counts_7datasets.ipynb).
 

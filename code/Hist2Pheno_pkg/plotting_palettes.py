@@ -280,6 +280,49 @@ Cell_Type_COLORS_CODEX_gbm_gd = {
 DEFAULT_CODEX_GBM_EXCLUDED_LABELS = ("Unknown", "LowQ")
 DEFAULT_CELLTYPE_FILTER_CODEX_gbm = DEFAULT_CODEX_GBM_EXCLUDED_LABELS
 
+##########################################
+# 2026.10.01 pan-cancer L1 / L12 / L2 (same RGBA as code/PanCancer/pancancer_viz.py)
+##########################################
+Cell_Type_COLORS_PANCANCER_level0 = {
+    "Epithelial": (0.89, 0.10, 0.11, 1.0),
+    "Immune": (0.22, 0.49, 0.72, 1.0),
+    "Stromal": (0.30, 0.69, 0.29, 1.0),
+    "Endothelial": (1.00, 0.50, 0.00, 1.0),
+    "Neural": (0.60, 0.31, 0.64, 1.0),
+}
+Cell_Type_COLORS_PANCANCER_level1 = {
+    "Tumor": (0.84, 0.15, 0.16, 1.0),
+    "Epithelial": (0.99, 0.55, 0.38, 1.0),
+    "T_cell": (0.12, 0.47, 0.71, 1.0),
+    "B_Plasma": (0.20, 0.63, 0.79, 1.0),
+    "Myeloid": (0.17, 0.63, 0.17, 1.0),
+    "Stromal": (0.58, 0.40, 0.74, 1.0),
+    "Endothelial": (1.00, 0.50, 0.05, 1.0),
+    "Neural": (0.55, 0.34, 0.64, 1.0),
+}
+Cell_Type_COLORS_PANCANCER_level2 = {
+    "DCIS": (0.12, 0.47, 0.71, 1.0),
+    "Tumor": (1.00, 0.50, 0.05, 1.0),
+    "Alveolar": (0.17, 0.63, 0.17, 1.0),
+    "Epithelial": (0.84, 0.15, 0.16, 1.0),
+    "Injury_epithelial": (0.58, 0.40, 0.74, 1.0),
+    "Myoepithelial": (0.55, 0.34, 0.29, 1.0),
+    "CD4_T": (0.89, 0.47, 0.76, 1.0),
+    "CD8_T": (0.50, 0.50, 0.50, 1.0),
+    "Tregs": (0.74, 0.74, 0.13, 1.0),
+    "NK": (0.09, 0.75, 0.81, 1.0),
+    "B_cell": (0.68, 0.78, 0.91, 1.0),
+    "Plasma": (1.00, 0.73, 0.47, 1.0),
+    "DC": (0.60, 0.87, 0.54, 1.0),
+    "Macrophage": (0.99, 0.60, 0.60, 1.0),
+    "Neutrophil": (0.79, 0.70, 0.84, 1.0),
+    "Fibroblast": (0.77, 0.61, 0.58, 1.0),
+    "Myofibroblast": (0.97, 0.71, 0.82, 1.0),
+    "Stromal": (0.78, 0.78, 0.78, 1.0),
+    "Endothelial": (0.86, 0.86, 0.55, 1.0),
+    "Neural": (0.62, 0.85, 0.90, 1.0),
+}
+
 Cell_Type_COLORS_Xenium_brca_level0 = {
     "Epithelial": "#ff002a", "Immune": "#4fa9ff",
     "Stromal": "#e5e022", "Endothelial": "#01257b",
@@ -395,6 +438,7 @@ _DATASET_ALIASES = {
     "brca": "xenium_brca", "xenium_brca": "xenium_brca", "breast": "xenium_brca",
     "crc": "xenium_crc", "xenium_crc": "xenium_crc", "colon": "xenium_crc",
     "gbm": "codex_gbm", "codex_gbm": "codex_gbm", "glioma": "codex_gbm",
+    "pancancer": "pancancer", "pan_cancer": "pancancer", "pan-cancer": "pancancer",
 }
 _SCHEME_DEFAULTS = {
     "codex_escc": ("codex_escc", None), "ncrt": ("codex_escc", None),
@@ -427,6 +471,13 @@ _SCHEME_DEFAULTS = {
     "codex_gbm_fine": ("codex_gbm", "fine"),
     "codex_gbm_intermediate": ("codex_gbm", "intermediate"),
     "codex_gbm_coarse": ("codex_gbm", "coarse"),
+    "pancancer": ("pancancer", "auto"),
+    "pancancer_fine": ("pancancer", "fine"),
+    "pancancer_l2": ("pancancer", "fine"),
+    "pancancer_intermediate": ("pancancer", "intermediate"),
+    "pancancer_l12": ("pancancer", "intermediate"),
+    "pancancer_coarse": ("pancancer", "coarse"),
+    "pancancer_l1": ("pancancer", "coarse"),
 }
 
 
@@ -561,6 +612,13 @@ _PAN_ORGAN_HEAD_SCHEMES: dict[str, dict[str, str]] = {
         "l12": "codex_gbm_intermediate",
         "l3": "codex_gbm_intermediate",
         "l4": "codex_gbm_intermediate",
+    },
+    "pancancer": {
+        "l2": "pancancer_l2",
+        "l1": "pancancer_l1",
+        "l12": "pancancer_l12",
+        "l3": "pancancer_l12",
+        "l4": "pancancer_l12",
     },
 }
 
@@ -710,7 +768,9 @@ def normalize_tier(
         "fine": "fine", "ct": "fine", "final_ct": "fine", "l2": "fine",
         "intermediate": "intermediate", "sublineage": "intermediate",
         "final_sublineage": "intermediate", "l12": "intermediate",
-        "lineage": "lineage", "coarse": "coarse", "lineage_bucket": "lineage_bucket",
+        "lineage": "lineage", "coarse": "coarse", "l1": "coarse",
+        "final_lineage": "coarse",
+        "lineage_bucket": "lineage_bucket",
         "sn": "coarse", "spatial_niche": "coarse",
         "cniche": "cniche", "c_niche": "cniche", "l3": "cniche",
         "tniche": "tniche", "t_niche": "tniche", "l4": "tniche",
@@ -749,6 +809,7 @@ def _infer_tier(labels: list[str], dataset: str) -> str:
         "xenium_brca": ("coarse", "intermediate", "fine"),
         "xenium_crc": ("coarse", "intermediate", "fine"),
         "codex_gbm": ("coarse", "intermediate", "fine"),
+        "pancancer": ("coarse", "lineage", "intermediate", "fine"),
     }[dataset]
     label_set = set(labels)
     for candidate in candidates:
@@ -835,6 +896,13 @@ def get_palette(
             "coarse": Cell_Type_COLORS_CODEX_gbm_level0,
             "lineage": Cell_Type_COLORS_CODEX_gbm_level0,
             "sn": Cell_Type_COLORS_CODEX_gbm_sn,
+        }.get(semantic_tier)
+    elif dataset_id == "pancancer":
+        palette = {
+            "fine": Cell_Type_COLORS_PANCANCER_level2,
+            "intermediate": Cell_Type_COLORS_PANCANCER_level1,
+            "coarse": Cell_Type_COLORS_PANCANCER_level0,
+            "lineage": Cell_Type_COLORS_PANCANCER_level0,
         }.get(semantic_tier)
     else:
         palette = {
