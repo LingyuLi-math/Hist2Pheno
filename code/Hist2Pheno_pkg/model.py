@@ -3,6 +3,7 @@
 # 2026.06.26 For each dataset, add spatial context for model training and validation
 # 2026.08.11 LLY, add function for CODEX_HCC dataset
 ######################################################
+import gc
 import os
 from pathlib import Path
 import numpy as np
@@ -31,10 +32,56 @@ def _checkpoint_is_spatial(state_dict):
 def _spatial_ctx_from_result(result):
     if not result.get("use_spatial_context"):
         return None
+    cached = result.get("_spatial_ctx")
+    if cached is not None and cached.get("X_all") is not None:
+        return cached
+    x_np = result.get("X_all_scaled")
+    if x_np is None:
+        raise ValueError(
+            "spatial context needs result['_spatial_ctx'] or result['X_all_scaled']"
+        )
+    x = np.ascontiguousarray(x_np, dtype=np.float32)
+    nbr = np.ascontiguousarray(result["spatial_neighbor_index"], dtype=np.int64)
     return {
-        "X_all": torch.as_tensor(result["X_all_scaled"], dtype=torch.float32),
-        "neighbor_index": torch.as_tensor(result["spatial_neighbor_index"], dtype=torch.long),
+        "X_all": torch.from_numpy(x),
+        "neighbor_index": torch.from_numpy(nbr),
     }
+
+
+########################################################
+# 2026.10.02 LLY, add function for PanCancer dataset
+########################################################
+def _ensure_spatial_ctx_device(spatial_ctx, device):
+    """Move full X_all / neighbor_index to ``device`` once (not every batch)."""
+    if spatial_ctx is None:
+        return None
+    dest = device if isinstance(device, torch.device) else torch.device(device)
+    if spatial_ctx.get("_pinned_device") == str(dest):
+        return spatial_ctx
+    x = spatial_ctx["X_all"]
+    nbr = spatial_ctx["neighbor_index"]
+    if x.device != dest:
+        spatial_ctx["X_all"] = x.to(dest, non_blocking=False)
+    if nbr.device != dest:
+        spatial_ctx["neighbor_index"] = nbr.to(dest, non_blocking=False)
+    spatial_ctx["_pinned_device"] = str(dest)
+    return spatial_ctx
+
+
+def _scale_split_float32(X_f, tr_idx, va_idx):
+    """Train-only StandardScaler; float32 train/val/all (no extra full-matrix float64)."""
+    from sklearn.preprocessing import StandardScaler
+
+    scaler = StandardScaler()
+    tr_idx = np.asarray(tr_idx, dtype=np.int64)
+    va_idx = np.asarray(va_idx, dtype=np.int64)
+    X_tr = np.ascontiguousarray(scaler.fit_transform(X_f[tr_idx]), dtype=np.float32)
+    X_va = np.ascontiguousarray(scaler.transform(X_f[va_idx]), dtype=np.float32)
+    X_all = np.empty(X_f.shape, dtype=np.float32)
+    X_all[tr_idx] = X_tr
+    X_all[va_idx] = X_va
+    return scaler, X_tr, X_va, X_all
+########################################################
 
 
 ########################################################
@@ -129,10 +176,14 @@ def _unpack_spatial_batch(batch, head_mode="dual"):
 def _neighbor_x_from_batch(spatial_ctx, global_idx, device):
     if spatial_ctx is None or global_idx is None:
         return None
-    X_all = spatial_ctx["X_all"].to(device, non_blocking=True)
-    neighbor_index = spatial_ctx["neighbor_index"].to(device, non_blocking=True)
+    _ensure_spatial_ctx_device(spatial_ctx, device)
     global_idx = global_idx.to(device, non_blocking=True)
-    return gather_neighbor_embeddings(X_all, neighbor_index, global_idx, device=device)
+    return gather_neighbor_embeddings(
+        spatial_ctx["X_all"],
+        spatial_ctx["neighbor_index"],
+        global_idx,
+        device=device,
+    )
 
 
 def _redirect_stdlib_tempdir():
@@ -317,13 +368,21 @@ def _build_l2_to_l1_map(num_classes, y_enc_full, y_l1_full, device):
     return map_l2_to_l1
 
 
-def _macro_auc_ovr_evaluable(y_true, y_score, n_classes):
+def _subsample_rows_for_auc(y_true, y_score, max_cells, seed=42):
+    n = int(len(y_true))
+    if max_cells is None or n <= int(max_cells):
+        return y_true, y_score
+    rng = np.random.default_rng(int(seed))
+    take = rng.choice(n, size=int(max_cells), replace=False)
+    return y_true[take], y_score[take]
+
+
+def _macro_auc_ovr_evaluable(y_true, y_score, n_classes, *, max_cells=None, seed=42):
     """Multiclass macro AUROC: mean of evaluable one-vs-rest class AUCs (softmax scores)."""
     from sklearn.metrics import auc, roc_curve
-    from sklearn.preprocessing import label_binarize
 
     y_true = np.asarray(y_true, dtype=np.int64).reshape(-1)
-    y_score = np.asarray(y_score, dtype=np.float64)
+    y_score = np.asarray(y_score, dtype=np.float32)
     n = min(len(y_true), len(y_score))
     y_true, y_score = y_true[:n], y_score[:n]
     valid = (y_true >= 0) & (y_true < int(n_classes))
@@ -331,16 +390,16 @@ def _macro_auc_ovr_evaluable(y_true, y_score, n_classes):
         return float("nan")
     y_true = y_true[valid]
     y_score = y_score[valid]
+    y_true, y_score = _subsample_rows_for_auc(y_true, y_score, max_cells, seed=seed)
 
-    Y = label_binarize(y_true, classes=np.arange(int(n_classes)))
-    if int(n_classes) == 2 and Y.shape[1] == 1:
-        Y = np.column_stack([1 - Y[:, 0], Y[:, 0]])
     aucs = []
-    for k in range(int(n_classes)):
-        pos = int(Y[:, k].sum())
-        if pos == 0 or pos == len(Y):
+    n_cls = int(n_classes)
+    for k in range(n_cls):
+        yk = y_true == k
+        pos = int(yk.sum())
+        if pos == 0 or pos == len(yk):
             continue
-        fpr, tpr, _ = roc_curve(Y[:, k], y_score[:, k], drop_intermediate=True)
+        fpr, tpr, _ = roc_curve(yk, y_score[:, k], drop_intermediate=True)
         aucs.append(float(auc(fpr, tpr)))
     return float(np.mean(aucs)) if aucs else float("nan")
 
@@ -401,7 +460,7 @@ def _validation_selection_score(metrics, metric, *, use_extra_heads=False):
 def _append_prob_bucket(buckets, tier, y_true, logits, device):
     buckets.setdefault(tier, ([], []))
     buckets[tier][0].append(np.asarray(y_true, dtype=np.int64))
-    buckets[tier][1].append(torch.softmax(logits.float(), dim=1).cpu().numpy())
+    buckets[tier][1].append(torch.softmax(logits.float(), dim=1).detach().cpu().numpy())
 
 
 def _eval_head_macro_aucs_on_loader(
@@ -415,6 +474,7 @@ def _eval_head_macro_aucs_on_loader(
     num_level12_classes=None,
     num_level3_classes=None,
     num_level4_classes=None,
+    max_cells=300_000,
 ):
     """Macro AUROC per prediction head on a validation loader (softmax scores)."""
     three_or_five = hasattr(model, "level12_head")
@@ -423,6 +483,8 @@ def _eval_head_macro_aucs_on_loader(
     has_l1_head = hasattr(model, "forward_heads") and callable(getattr(model, "forward_heads"))
     prob_buckets = {}
 
+    n_seen = 0
+    cap = None if max_cells is None or int(max_cells) <= 0 else int(max_cells)
     model.eval()
     with torch.no_grad():
         for batch in loader:
@@ -461,6 +523,9 @@ def _eval_head_macro_aucs_on_loader(
             else:
                 logits_l2 = model(x, neighbor_x=neighbor_x)
                 _append_prob_bucket(prob_buckets, "l2", yt_l2, logits_l2, device)
+            n_seen += int(len(yt_l2))
+            if cap is not None and n_seen >= cap:
+                break
 
     tier_nc = {"l2": num_classes, "l1_head": num_level1_classes}
     if three_or_five:
@@ -479,7 +544,11 @@ def _eval_head_macro_aucs_on_loader(
             continue
         y_true = np.concatenate(prob_buckets[tier][0])
         probs = np.concatenate(prob_buckets[tier][1], axis=0)
-        out[f"{tier}_macro_auc"] = _macro_auc_ovr_evaluable(y_true, probs, int(n_cls))
+        out[f"{tier}_macro_auc"] = _macro_auc_ovr_evaluable(
+            y_true, probs, int(n_cls), max_cells=cap
+        )
+        del y_true, probs
+    del prob_buckets
 
     out["five_tier_auc_sum"] = _five_tier_auc_sum_from_head_aucs(
         out, use_extra_heads=five_head
@@ -519,9 +588,21 @@ def _eval_fold_tier_metrics(
     num_level1_classes = int(np.max(y_l1_full)) + 1
     num_level12_classes = num_level3_classes = num_level4_classes = None
 
+    n_val = 0
+    try:
+        n_val = len(val_loader.dataset)
+    except Exception:
+        n_val = 0
+    n_batches = max(len(val_loader), 1)
+    print(
+        f"  OOF/val metrics: {n_val:,} cells, {n_batches} batches "
+        f"(no per-epoch print; this can take many minutes on 1M+ cells)",
+        flush=True,
+    )
     model.eval()
+    n_seen = 0
     with torch.no_grad():
-        for batch in val_loader:
+        for b_i, batch in enumerate(val_loader):
             x, y_l2, y_l1, y_l12, y_l3, y_l4, global_idx = _unpack_spatial_batch(
                 batch, head_mode
             )
@@ -593,7 +674,14 @@ def _eval_fold_tier_metrics(
             pr_l2 = torch.softmax(logits_l2, dim=1)
             pr_l1 = torch.matmul(pr_l2, map_l2_to_l1)
             buckets["l1"][1].append(torch.argmax(pr_l1, dim=1).cpu().numpy())
+            n_seen += int(len(yt_l2))
+            if (b_i + 1) % 50 == 0 or (b_i + 1) == n_batches:
+                print(
+                    f"    OOF batch {b_i + 1}/{n_batches}  cells={n_seen:,}",
+                    flush=True,
+                )
 
+    print(f"  OOF forward done ({n_seen:,} cells); computing AUROC/F1 …", flush=True)
     out = {}
     for tier, (yl, yp) in buckets.items():
         if not yl or not yp:
@@ -623,7 +711,9 @@ def _eval_fold_tier_metrics(
             continue
         y_true = np.concatenate(prob_buckets[tier][0])
         probs = np.concatenate(prob_buckets[tier][1], axis=0)
-        out[f"{tier}_macro_auc"] = _macro_auc_ovr_evaluable(y_true, probs, int(n_cls))
+        out[f"{tier}_macro_auc"] = _macro_auc_ovr_evaluable(
+            y_true, probs, int(n_cls), max_cells=300_000
+        )
     out["five_tier_auc_sum"] = _five_tier_auc_sum_from_head_aucs(
         out, use_extra_heads=five_head
     )
@@ -632,7 +722,10 @@ def _eval_fold_tier_metrics(
     if return_oof and "l2" in prob_buckets and buckets["l2"][0]:
         out["_oof_labels_l2"] = np.concatenate(buckets["l2"][0]).astype(np.int64)
         out["_oof_preds_l2"] = np.concatenate(buckets["l2"][1]).astype(np.int64)
-        out["_oof_probs_l2"] = np.concatenate(prob_buckets["l2"][1], axis=0).astype(np.float64)
+        out["_oof_probs_l2"] = np.concatenate(prob_buckets["l2"][1], axis=0).astype(
+            np.float32
+        )
+    print("  OOF/val metrics done.", flush=True)
     return out
 
 
@@ -903,6 +996,7 @@ def train_and_save_model(
     spatial_neighbor_index=None,
     X_all_scaled=None,
     child_to_parent_fill=None,
+    result=None,
 ):
     """
     Train dual-head or five-head MLP with unified HCE loss.
@@ -1116,9 +1210,25 @@ def train_and_save_model(
                 "use_spatial_context=True requires spatial_neighbor_index and X_all_scaled"
             )
         spatial_ctx = {
-            "X_all": torch.as_tensor(X_all_scaled, dtype=torch.float32),
-            "neighbor_index": torch.as_tensor(spatial_neighbor_index, dtype=torch.long),
+            "X_all": torch.from_numpy(np.ascontiguousarray(X_all_scaled, dtype=np.float32)),
+            "neighbor_index": torch.from_numpy(
+                np.ascontiguousarray(spatial_neighbor_index, dtype=np.int64)
+            ),
         }
+        ########################################################
+        # 2026.10.02 LLY, avoide move spatial_ctx to device every batch
+        ########################################################
+        _ensure_spatial_ctx_device(spatial_ctx, device)
+        print(
+            f"  Spatial tensors pinned once on {device}: "
+            f"X_all={tuple(spatial_ctx['X_all'].shape)} "
+            f"nbr={tuple(spatial_ctx['neighbor_index'].shape)}",
+            flush=True,
+        )
+        if result is not None:
+            result["_spatial_ctx"] = spatial_ctx
+            result["X_all_scaled"] = None
+        X_all_scaled = None
 
     print(f"Model initialized on {device}")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -1683,17 +1793,11 @@ def train_and_save_model_from_split(
             dropout=dropout,
         )
         model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
-        eval_loader = loaders.get("val_loader_eval", loaders["val_loader"])
-        spatial_ctx = _spatial_ctx_from_result(result)
-        acc, macro_f1, weighted_f1, _, _ = evaluate(
-            model, eval_loader, device, spatial_ctx=spatial_ctx
-        )
         print(
-            "Loaded existing checkpoint metrics: "
-            f"accuracy={acc:.4f}, weighted_f1={weighted_f1:.4f}, macro_f1={macro_f1:.4f}"
+            "  Skip extra val pass on resume (OOF metrics are computed after this return).",
+            flush=True,
         )
-        # Epoch unknown from plain state_dict checkpoint.
-        return weighted_f1, macro_f1, 0
+        return float("nan"), float("nan"), 0
 
     train_kw = dict(
         hce_w_l12head=hce_w_l12head,
@@ -1750,6 +1854,7 @@ def train_and_save_model_from_split(
         class_weight_mode=class_weight_mode,
         class_balanced_beta=class_balanced_beta,
         l2_focal_gamma=l2_focal_gamma,
+        result=result,
     )
 
 
@@ -2186,9 +2291,7 @@ def train_hce_group_kfold_cv(
             )
             continue
 
-        scaler = StandardScaler()
-        X_tr = scaler.fit_transform(X_f[tr_idx])
-        X_va = scaler.transform(X_f[va_idx])
+        scaler, X_tr, X_va, X_all_scaled = _scale_split_float32(X_f, tr_idx, va_idx)
 
         result_fold = {
             "X_train_scaled": X_tr,
@@ -2216,7 +2319,7 @@ def train_hce_group_kfold_cv(
                     "spatial_mode": spatial_mode,
                     "spatial_k": spatial_k,
                     "spatial_neighbor_index": nbr_use,
-                    "X_all_scaled": scaler.transform(X_f),
+                    "X_all_scaled": X_all_scaled,
                     "train_global_indices": tr_idx,
                     "val_global_indices": va_idx,
                 }
@@ -2247,6 +2350,10 @@ def train_hce_group_kfold_cv(
         use_resume = bool(resume_from_checkpoints and ckpt_exists)
         if use_resume:
             print(f"  Resume: checkpoint exists, skip training → {save_path}")
+            print(
+                f"  Next: full OOF on {len(va_idx):,} val cells (can look idle for a long time).",
+                flush=True,
+            )
         else:
             print("  Training: full HCE training for this fold.")
 
@@ -2296,7 +2403,7 @@ def train_hce_group_kfold_cv(
             raise RuntimeError("_eval_fold_tier_metrics failed to produce OOF outputs.")
         oof_preds_parts.append(np.asarray(val_preds, dtype=np.int64))
         oof_labels_parts.append(np.asarray(val_labels, dtype=np.int64))
-        oof_probs_parts.append(np.asarray(val_probs, dtype=np.float64))
+        oof_probs_parts.append(np.asarray(val_probs, dtype=np.float32))
 
         fold_rows.append(
             {
@@ -2310,10 +2417,16 @@ def train_hce_group_kfold_cv(
                 "l2_macro_f1": float(macro_f1),
                 "best_epoch": int(best_ep),
                 "checkpoint": save_path,
-                "val_indices": va_idx,
-                **tier_m,
+                **{k: v for k, v in tier_m.items() if not isinstance(v, np.ndarray)},
             }
         )
+        result_fold.pop("_spatial_ctx", None)
+        result_fold.pop("X_all_scaled", None)
+        result_fold.pop("spatial_neighbor_index", None)
+        del result_fold, loaders, model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _mean_std(key):
         vals = np.array([r[key] for r in fold_rows], dtype=np.float64)
@@ -2557,9 +2670,7 @@ def train_hce_stratified_kfold_cv(
             )
             continue
 
-        scaler = StandardScaler()
-        X_tr = scaler.fit_transform(X_f[tr_idx])
-        X_va = scaler.transform(X_f[va_idx])
+        scaler, X_tr, X_va, X_all_scaled = _scale_split_float32(X_f, tr_idx, va_idx)
 
         result_fold = {
             "X_train_scaled": X_tr,
@@ -2585,7 +2696,7 @@ def train_hce_stratified_kfold_cv(
                     "spatial_mode": spatial_mode,
                     "spatial_k": spatial_k,
                     "spatial_neighbor_index": nbr_use,
-                    "X_all_scaled": scaler.transform(X_f),
+                    "X_all_scaled": X_all_scaled,
                     "train_global_indices": tr_idx,
                     "val_global_indices": va_idx,
                 }

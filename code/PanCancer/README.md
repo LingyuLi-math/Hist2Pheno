@@ -53,6 +53,8 @@ If you pass this splitter without changing `--save-result` / `--ablation-tag`, t
 
 **Caveat:** same-section cells land in both train and val, so OOF AUROC is optimistic relative to a new slide. Use section CV for generalization-to-new-section; use cell-stratified CV to compare L2 classes on a more balanced mix.
 
+A **137 / `Killed`** on the full cell-stratified job is the Linux OOM killer (swap exhausted), not `demo.sh` step 4 predict. Spatial neighbor lookup now pins `X_all` to the GPU **once per fold** (previously a 22 GB copy every batch) and keeps the scaler output as float32. Fold checkpoints: `result_cell_stratified_spatial/cross_dataset_cv/<tag>/hce_group_fold_*.pt`. Re-running the same command resumes remaining folds; a fold killed mid-training is treated as done (its best-so-far `.pt`). Delete that fold file to retrain it.
+
 Smoke, then full train (do not start the overnight job unless you mean to):
 
 ```bash

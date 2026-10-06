@@ -1,197 +1,278 @@
-## 2026.09.29 LLY: pan-cancer 7-cohort Hist2Pheno command index
+#!/usr/bin/env bash
+## 2026.10.05 LLY: pan-cancer 7-cohort Hist2Pheno — two independent pipelines
+##
+##   bash code/PanCancer/demo.sh section  {smoke|train|predict|status}
+##   bash code/PanCancer/demo.sh celltype {smoke|train|predict|status}
+##   bash code/PanCancer/demo.sh index
+##   bash code/PanCancer/demo.sh status
+##
+## Do not run this file with no args expecting a full train (prints usage and exits).
+##
 ## Ontology: code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx  sheet celltype_pancancer
 ## Heads: L2=final_CT (20) / L12=final_sublineage (8) / L1=final_lineage (5)
-## CV: default 5-fold cross-dataset section (each HE section wholly train or val).
-##      --group-splitter cell_stratified mixes cells (StratifiedKFold on L1|L12|L2)
-##      into data/PanCancer/result_cell_stratified_spatial/ (does not overwrite result_all_spatial).
-## Outputs: data/PanCancer/
+##
+## Protocols (separate trees; never overwrite each other):
+##   section  = cross-section GroupKFold (each HE section wholly train or val)
+##              result_all_spatial/          pred_all_spatial/          train.log
+##   celltype = cross-celltype StratifiedKFold on L1|L12|L2 (cells mixed)
+##              result_cell_stratified_spatial/  pred_cell_stratified_spatial/
+##              train_cell_stratified.log
 ##
 ## Xenium: Lung, BRCA, CRC (CV train: P1CRC+P2CRC; predict also P5CRC).  ESCC omitted.
-## CODEX:  HCC, PDAC c001/c003 (278 cores), GIST c009/c011/c013 (550 cores), GBM.
-## UNI embeddings stay in each cohort *_matched_features.h5ad (not copied).
-## Full pool ≈ 5.51M cells × 1024-d float32 (~22 GB). Smoke-test before full train.
+## CODEX:  HCC, PDAC c001/c003, GIST c009/c011/c013, GBM.
+## Full pool ≈ 5.51M cells × 1024-d float32 (~22 GB). Smoke before full train.
+## Resume: train reuses hce_group_fold_*.pt and only fits missing folds.
+## A fold killed mid-run is treated as DONE (best-so-far .pt). Delete that file to retrain it.
+## Exit 137 = Linux OOM killer. Override GPU with CUDA_DEVICE=1 (default 2).
 
-cd /home/lingyu/ssd2/Python/Hist2Pheno/
-# conda activate SeededNTM
+set -euo pipefail
 
-OUT=data/PanCancer
+REPO=/home/lingyu/ssd2/Python/Hist2Pheno
+OUT="$REPO/data/PanCancer"
+CUDA_DEVICE="${CUDA_DEVICE:-2}"
+CONDA_ENV=SeededNTM
 
-## Optional clean of index / label cache / train outputs (does not touch cohort h5ads)
-# /bin/rm -rf -- "$OUT/label_cache" \
-#                "$OUT/result_smoke" \
-#                "$OUT/result_all_spatial" \
-#                "$OUT/result_cell_stratified_spatial" \
-#                "$OUT/result_smoke_cellstrat"
-# /bin/rm -f -- "$OUT/section_index.csv" \
-#               "$OUT/section_index_summary.csv" \
-#               "$OUT/fold_plan.csv" \
-#               "$OUT/fold_plan_cell_stratified.csv" \
-#               "$OUT/ontology_heads.json"
+TAG_SECTION=D_emph_L2_spatial_pancancer
+TAG_CELL=D_emph_L2_spatial_pancancer_cellstrat
+CKPT_SECTION="$OUT/result_all_spatial/cross_dataset_cv/${TAG_SECTION}/best_mlp_gpu.pt"
+CKPT_CELL="$OUT/result_cell_stratified_spatial/cross_dataset_cv/${TAG_CELL}/best_mlp_gpu.pt"
+FOLD_DIR_SECTION="$OUT/result_all_spatial/cross_dataset_cv/${TAG_SECTION}"
+FOLD_DIR_CELL="$OUT/result_cell_stratified_spatial/cross_dataset_cv/${TAG_CELL}"
 
+usage() {
+  cat <<EOF
+Usage:
+  bash code/PanCancer/demo.sh section  {smoke|train|predict|status}
+  bash code/PanCancer/demo.sh celltype {smoke|train|predict|status}
+  bash code/PanCancer/demo.sh index
+  bash code/PanCancer/demo.sh status
 
+Protocols (independent output trees):
+  section   cross-section CV  → result_all_spatial/ + pred_all_spatial/
+  celltype  cross-celltype CV → result_cell_stratified_spatial/ + pred_cell_stratified_spatial/
 
-## 0. Scan 7-cohort matched h5ads, remap to pancancer L1/L12/L2, write label_cache + fold_plan
-0_prepare_pancancer_index.py
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/prepare_pancancer_index.py
+Steps:
+  smoke     BRCA+GBM, 5k cells/section, 2 epochs (own result_smoke* folder)
+  train     full 7-cohort prepare + train + he_validate (resume existing fold .pt)
+  predict   apply that protocol's best_mlp_gpu.pt (does not train)
+  status    print checkpoints / pred dirs for one or both protocols
+  index     scan 7-cohort h5ads → section_index + label_cache (shared)
 
-  ## subset (debug)
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/prepare_pancancer_index.py --datasets BRCA GBM
+GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
+EOF
+}
 
-  ## same via train CLI
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py --steps index
+die() { echo "ERROR: $*" >&2; exit 1; }
 
-## 1. Inspect ontology / section_index / fold_plan / one-section remap (no GPU)
-1_PanCancer_inspect_index.ipynb
+need_ckpt() {
+  local ckpt=$1 proto=$2
+  [[ -f "$ckpt" ]] || die "$proto predict needs $ckpt (finish that protocol's train first)"
+}
 
-## 2. Smoke: two small cohorts, cap cells / section
-2_smoke_train
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --datasets BRCA GBM \
-      --max-cells-per-section 5000 \
-      --max-epochs 2 --patience 2 \
-      --steps prepare train he_validate \
-      --save-result result_smoke \
-      --ablation-tag smoke_brca_gbm
+py() {
+  conda run --no-capture-output -n "$CONDA_ENV" python -u "$@"
+}
 
-  ## CPU fallback if no GPU
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --datasets BRCA GBM \
-      --max-cells-per-section 5000 \
-      --max-epochs 2 --patience 2 \
-      --allow-cpu-train \
-      --steps prepare train he_validate \
-      --save-result result_smoke \
-      --ablation-tag smoke_brca_gbm
+cd "$REPO"
+mkdir -p "$OUT"
 
-## 3. Full 7-cohort pretrain (cross-dataset section 5-fold, spatial k=8 mean)
-## stdout+stderr stay on the terminal and append to $OUT/train.log; /usr/bin/time prints wall/user/sys.
-3_PanCancer_train_validate_cv_UNIlabel.py
-  mkdir -p "$OUT"
-  LOG="$OUT/train.log"
+# ---------------------------------------------------------------------------
+# shared
+# ---------------------------------------------------------------------------
+cmd_index() {
+  py code/PanCancer/prepare_pancancer_index.py
+}
+
+cmd_status() {
+  local proto=${1:-both}
+  _status_one() {
+    local name=$1 ckpt=$2 fold_dir=$3 pred=$4 log=$5
+    local n_fold=0
+    [[ -d "$fold_dir" ]] && n_fold=$(find "$fold_dir" -maxdepth 1 -name 'hce_group_fold_*.pt' | wc -l)
+    local n_pred=0
+    [[ -d "$pred/stardist_roc" ]] && n_pred=$(find "$pred/stardist_roc" -mindepth 1 -maxdepth 1 -type d | wc -l)
+    echo "=== $name ==="
+    echo "  best_mlp     $( [[ -f "$ckpt" ]] && echo yes || echo NO )  $ckpt"
+    echo "  fold ckpts   ${n_fold}/5  $fold_dir"
+    echo "  pred roc     ${n_pred} section dirs  $pred"
+    echo "  train log    $( [[ -f "$log" ]] && echo yes || echo no )  $log"
+  }
+  if [[ "$proto" == both || "$proto" == section ]]; then
+    _status_one cross-section "$CKPT_SECTION" "$FOLD_DIR_SECTION" \
+      "$OUT/pred_all_spatial" "$OUT/train.log"
+  fi
+  if [[ "$proto" == both || "$proto" == celltype ]]; then
+    _status_one cross-celltype "$CKPT_CELL" "$FOLD_DIR_CELL" \
+      "$OUT/pred_cell_stratified_spatial" "$OUT/train_cell_stratified.log"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# cross-section
+# ---------------------------------------------------------------------------
+cmd_section_smoke() {
+  py code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+    --cuda-device "$CUDA_DEVICE" \
+    --group-splitter cross_dataset_section \
+    --datasets BRCA GBM \
+    --max-cells-per-section 5000 \
+    --max-epochs 2 --patience 2 \
+    --use-spatial-context --spatial-k 8 --spatial-mode mean \
+    --steps prepare train he_validate \
+    --save-result result_smoke \
+    --ablation-tag smoke_brca_gbm
+}
+
+cmd_section_train() {
+  local log="$OUT/train.log"
   {
-    echo "===== PanCancer train start $(date '+%F %T') ====="
-    # add --cuda-device 2 after python -u if GPU 0 is busy
+    echo "===== PanCancer cross-section train start $(date '+%F %T') ====="
     /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
-      conda run --no-capture-output -n SeededNTM python -u \
+      conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-          --cuda-device 2 \
+          --cuda-device "$CUDA_DEVICE" \
+          --group-splitter cross_dataset_section \
           --use-spatial-context --spatial-k 8 --spatial-mode mean \
           --steps prepare train he_validate \
           --save-result result_all_spatial \
-          --ablation-tag D_emph_L2_spatial_pancancer
-    echo "===== PanCancer train end $(date '+%F %T') ====="
-  } 2>&1 | tee -a "$LOG"
+          --ablation-tag "$TAG_SECTION"
+    echo "===== PanCancer cross-section train end $(date '+%F %T') ====="
+  } 2>&1 | tee -a "$log"
+}
 
-  ## resume from fold ckpts under result_all_spatial/cross_dataset_cv/<tag>/
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --use-spatial-context --spatial-k 8 --spatial-mode mean \
-      --steps prepare train he_validate \
-      --save-result result_all_spatial \
-      --ablation-tag D_emph_L2_spatial_pancancer
-
-  ## force retrain (ignore existing fold ckpts)
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --use-spatial-context --spatial-k 8 --spatial-mode mean \
-      --no-resume-from-checkpoints \
-      --steps prepare train he_validate \
-      --save-result result_all_spatial \
-      --ablation-tag D_emph_L2_spatial_pancancer
-
-  ## sklearn GroupKFold instead of dataset-stratified section folds
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --group-splitter group_kfold \
-      --use-spatial-context --spatial-k 8 --spatial-mode mean \
-      --steps prepare train he_validate \
-      --save-result result_all_spatial \
-      --ablation-tag D_emph_L2_spatial_pancancer_groupkfold
-
-## 3b. Cell-stratified CV (mix cells across sections; StratifiedKFold on L1|L12|L2)
-## Why: section CV never splits DCIS (BRCA-only) or Injury_epithelial (Lung-only) the
-## same way as ubiquitous Macrophage/Endothelial; pooled OvR AUROC then ranks rare
-## organ-specific classes very high. Cell-stratified CV puts every abundant L2 type
-## in every train *and* val fold. Spatial kNN is masked so train cells cannot see val
-## neighbors. Hierarchical L1→L12→L2 sampler is on by default.
-## Outputs stay under result_cell_stratified_spatial/ (never overwrites result_all_spatial).
-## Checkpoint OOF is optimistic vs a new slide (same-section cells in train and val).
-3b_cell_stratified
-  ## smoke (same BRCA+GBM cap as step 2; separate folder)
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --group-splitter cell_stratified \
-      --datasets BRCA GBM \
-      --max-cells-per-section 5000 \
-      --max-epochs 2 --patience 2 \
-      --use-spatial-context --spatial-k 8 --spatial-mode mean \
-      --steps prepare train he_validate \
-      --save-result result_smoke_cellstrat \
-      --ablation-tag smoke_brca_gbm_cellstrat
-
-  ## full 7-cohort (new folder + tag; tee a separate log)
-  mkdir -p "$OUT"
-  LOGC="$OUT/train_cell_stratified.log"
+cmd_section_predict() {
+  need_ckpt "$CKPT_SECTION" section
+  mkdir -p "$OUT/pred_all_spatial"
+  local logp="$OUT/pred_all_spatial/predict.log"
   {
-    echo "===== PanCancer cell-stratified train start $(date '+%F %T') ====="
+    echo "===== PanCancer cross-section predict start $(date '+%F %T') ====="
     /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
-      conda run --no-capture-output -n SeededNTM python -u \
+      conda run --no-capture-output -n "$CONDA_ENV" python -u \
+        code/PanCancer/PanCancer_predict_visualize.py \
+          --cuda-device "$CUDA_DEVICE" \
+          --checkpoint "$CKPT_SECTION" \
+          --pred-root "$OUT/pred_all_spatial" \
+          --include-incomplete-lung --skip-existing
+    echo "===== PanCancer cross-section predict end $(date '+%F %T') ====="
+  } 2>&1 | tee -a "$logp"
+}
+
+# ---------------------------------------------------------------------------
+# cross-celltype
+# ---------------------------------------------------------------------------
+cmd_celltype_smoke() {
+  py code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+    --cuda-device "$CUDA_DEVICE" \
+    --group-splitter cell_stratified \
+    --datasets BRCA GBM \
+    --max-cells-per-section 5000 \
+    --max-epochs 2 --patience 2 \
+    --use-spatial-context --spatial-k 8 --spatial-mode mean \
+    --steps prepare train he_validate \
+    --save-result result_smoke_cellstrat \
+    --ablation-tag smoke_brca_gbm_cellstrat
+}
+
+cmd_celltype_train() {
+  ## 2026-10-03: folds 0-3 on disk; fold 4 missing after 137 at fold 3 epoch 31.
+  ## Re-run this command: skips 0-3, trains fold 4, then he_validate → best_mlp_gpu.pt
+  local logc="$OUT/train_cell_stratified.log"
+  {
+    echo "===== PanCancer cross-celltype train start $(date '+%F %T') ====="
+    /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
+      conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-          --cuda-device 2 \
+          --cuda-device "$CUDA_DEVICE" \
           --group-splitter cell_stratified \
           --use-spatial-context --spatial-k 8 --spatial-mode mean \
           --steps prepare train he_validate \
           --save-result result_cell_stratified_spatial \
-          --ablation-tag D_emph_L2_spatial_pancancer_cellstrat
-    echo "===== PanCancer cell-stratified train end $(date '+%F %T') ====="
-  } 2>&1 | tee -a "$LOGC"
+          --ablation-tag "$TAG_CELL"
+    echo "===== PanCancer cross-celltype train end $(date '+%F %T') ====="
+  } 2>&1 | tee -a "$logc"
+}
 
-## writes
-##   data/PanCancer/section_index.csv
-##   data/PanCancer/fold_plan.csv                       # section CV (default)
-##   data/PanCancer/fold_plan_cell_stratified.csv       # only if --group-splitter cell_stratified
-##   data/PanCancer/label_cache/*.npz
-##   data/PanCancer/train.log                           # tee of step 3 (append)
-##   data/PanCancer/train_cell_stratified.log           # tee of step 3b
-##   data/PanCancer/result_all_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
-##   data/PanCancer/result_cell_stratified_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer_cellstrat/best_mlp_gpu.pt
-
-## 4. Predict all sections with the pretrained spatial model + 4×3 GT/pred/ROC/StarDist-all panels
-4_PanCancer_predict_visualize.py
-  ## smoke one BRCA section (separate scaler so it does not become the production scaler)
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_predict_visualize.py \
-      --datasets BRCA --max-sections 1 \
-      --scaler-from-work-index \
-      --scaler-path "$OUT/pred_all_spatial/_smoke_scaler.joblib" \
-      --scaler-max-cells 40000
-
-  ## all 7 cohorts (spatial k=8, matches the checkpoint). Resume with --skip-existing.
-  ## first run fits result_all_spatial/scaler.joblib (400k mixed cells unless file exists).
-  mkdir -p "$OUT/pred_all_spatial"
-  LOGP="$OUT/pred_all_spatial/predict.log"
+cmd_celltype_predict() {
+  need_ckpt "$CKPT_CELL" celltype
+  mkdir -p "$OUT/pred_cell_stratified_spatial"
+  local logpc="$OUT/pred_cell_stratified_spatial/predict.log"
   {
-    echo "===== PanCancer predict start $(date '+%F %T') ====="
+    echo "===== PanCancer cross-celltype predict start $(date '+%F %T') ====="
     /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
-      conda run --no-capture-output -n SeededNTM python -u \
+      conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_predict_visualize.py \
+          --cuda-device "$CUDA_DEVICE" \
+          --checkpoint "$CKPT_CELL" \
+          --pred-root "$OUT/pred_cell_stratified_spatial" \
+          --scaler-path "$OUT/result_cell_stratified_spatial/scaler.joblib" \
           --include-incomplete-lung --skip-existing
-    echo "===== PanCancer predict end $(date '+%F %T') ====="
-  } 2>&1 | tee -a "$LOGP"
+    echo "===== PanCancer cross-celltype predict end $(date '+%F %T') ====="
+  } 2>&1 | tee -a "$logpc"
+}
 
-  ## CRC P5CRC is not in section_index (held out of pan-cancer CV) but is predicted by default.
-  ## Re-run only missing CRC (P1/P2 skip-existing; writes P5CRC):
-  conda run --no-capture-output -n SeededNTM python -u \
-    code/PanCancer/PanCancer_predict_visualize.py \
-      --datasets CRC --skip-existing --cuda-device 2
+# ---------------------------------------------------------------------------
+dispatch() {
+  local proto=$1 step=${2:-}
+  case "$proto" in
+    -h|--help|help|usage|"") usage; return 0 ;;
+    index|prepare) cmd_index ;;
+    status) cmd_status both ;;
+    section|cross-section|cross_section)
+      case "$step" in
+        smoke) cmd_section_smoke ;;
+        train) cmd_section_train ;;
+        predict) cmd_section_predict ;;
+        status) cmd_status section ;;
+        *) die "section steps: smoke | train | predict | status" ;;
+      esac
+      ;;
+    celltype|cell-stratified|cell_stratified|cross-celltype|cross_celltype)
+      case "$step" in
+        smoke) cmd_celltype_smoke ;;
+        train) cmd_celltype_train ;;
+        predict) cmd_celltype_predict ;;
+        status) cmd_status celltype ;;
+        *) die "celltype steps: smoke | train | predict | status" ;;
+      esac
+      ;;
+    *) die "unknown protocol '$proto' (section | celltype | index | status)" ;;
+  esac
+}
 
-## 5. Pooled pan-cancer ROC (notebook; needs step 4 AUROC CSVs)
-5_Pred_statistic_visual_pancancer_all.ipynb
-  ## pooled L2 / L12 / L1 OvR ROC under pred_all_spatial/pooled_roc/
-  ## Prostate: data/ST/Prostate and data/Visium/Prostate still need UNI matched h5ads
+dispatch "${1:-}" "${2:-}"
 
+## ---------------------------------------------------------------------------
+## Optional extras (copy a block; not wired to the dispatcher)
+##
+## force retrain section (ignore fold ckpts):
+# conda run --no-capture-output -n SeededNTM python -u \
+#   code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+#     --cuda-device "${CUDA_DEVICE:-2}" --no-resume-from-checkpoints \
+#     --group-splitter cross_dataset_section \
+#     --use-spatial-context --spatial-k 8 --spatial-mode mean \
+#     --steps prepare train he_validate \
+#     --save-result result_all_spatial \
+#     --ablation-tag D_emph_L2_spatial_pancancer
+##
+## sklearn GroupKFold (own folder; does not overwrite either protocol above):
+# conda run --no-capture-output -n SeededNTM python -u \
+#   code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+#     --cuda-device "${CUDA_DEVICE:-2}" --group-splitter group_kfold \
+#     --use-spatial-context --spatial-k 8 --spatial-mode mean \
+#     --steps prepare train he_validate \
+#     --save-result result_group_kfold_spatial \
+#     --ablation-tag D_emph_L2_spatial_pancancer_groupkfold
+##
+## retrain one celltype fold (example fold 3), keep the others:
+# rm -f data/PanCancer/result_cell_stratified_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer_cellstrat/hce_group_fold_3.pt
+# bash code/PanCancer/demo.sh celltype train
+##
+## section predict CRC only (writes P5CRC; P1/P2 skip-existing):
+# conda run --no-capture-output -n SeededNTM python -u \
+#   code/PanCancer/PanCancer_predict_visualize.py \
+#     --cuda-device "${CUDA_DEVICE:-2}" \
+#     --checkpoint data/PanCancer/result_all_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt \
+#     --pred-root data/PanCancer/pred_all_spatial --datasets CRC --skip-existing
+##
+## pooled ROC: code/PanCancer/Pred_statistic_visual_pancancer_all.ipynb
+##   early cells = pred_all_spatial/; later cells = pred_cell_stratified_spatial/

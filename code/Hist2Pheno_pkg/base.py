@@ -3218,8 +3218,15 @@ def evaluate(model, loader, device, scaler=None, spatial_ctx=None):
         and spatial_ctx.get("X_all") is not None
     )
     if use_spatial:
-        X_all = spatial_ctx["X_all"].to(device, non_blocking=True)
-        neighbor_index = spatial_ctx["neighbor_index"].to(device, non_blocking=True)
+        dest = device if isinstance(device, torch.device) else torch.device(device)
+        if spatial_ctx["X_all"].device != dest:
+            spatial_ctx["X_all"] = spatial_ctx["X_all"].to(dest, non_blocking=False)
+        if spatial_ctx["neighbor_index"].device != dest:
+            spatial_ctx["neighbor_index"] = spatial_ctx["neighbor_index"].to(
+                dest, non_blocking=False
+            )
+        X_all = spatial_ctx["X_all"]
+        neighbor_index = spatial_ctx["neighbor_index"]
 
     with torch.no_grad():
         for batch in loader:

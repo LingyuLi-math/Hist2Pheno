@@ -109,6 +109,7 @@ def _train_loader_kwargs(
         "train_balance_sampler_mode": train_balance_sampler_mode,
         "num_workers_cuda": 0,
         "batch_size_cuda": train_batch_size,
+        "pin_memory_cuda": False,
     }
 
 
