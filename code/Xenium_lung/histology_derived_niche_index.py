@@ -3624,6 +3624,7 @@ def _plot_tls_candidate_markers(
     coord_y: str = "coord_y",
     candidate_size: float = 2.0,
     candidate_color: str = "cyan",
+    candidate_label: str = "TLS candidate",
     show_legend: bool = False,
     legend_markerscale: float = 2.0,
     zorder: int = 3,
@@ -3643,7 +3644,7 @@ def _plot_tls_candidate_markers(
         s=candidate_size,
         c=candidate_color,
         alpha=0.85,
-        label="TLS candidate",
+        label=candidate_label,
         zorder=zorder,
     )
     if show_legend:
@@ -3671,6 +3672,8 @@ def plot_tls_abundance_vs_spatial(
     dpi: int = 150,
     save_path: str | Path | None = None,
     axes: Sequence | None = None,
+    split_spatial_candidates: bool = False,
+    score_name: str = "TLS",
 ):
     """
     Spatial maps: abundance TLS vs spatial TLS (and optional entropy-combined TLS).
@@ -3678,6 +3681,10 @@ def plot_tls_abundance_vs_spatial(
     With ``use_entropy=True``, layout is 1×3 — abundance | spatial TLS |
     ``idx_TLS_spatial + w·H/log(3)``. Color limits use per-map percentiles
     (default vmax=p99) on ``spatial_HE`` coordinates.
+
+    With ``split_spatial_candidates=True`` (and ``use_entropy=False``), layout is
+    1×3 — abundance | spatial TLS without hotspot dots | the same spatial TLS
+    with TLS-candidate markers. The two spatial panels share one color scale.
 
     If ``save_path`` is set, saves the figure after ``tight_layout`` (only when
     this function creates the figure, i.e. ``axes is None``).
@@ -3692,15 +3699,18 @@ def plot_tls_abundance_vs_spatial(
         raise KeyError(
             f"Missing column {combined_col!r}; run add_spatial_tls_to_auroc_df(use_entropy=True)."
         )
+    if split_spatial_candidates and use_entropy:
+        raise ValueError("split_spatial_candidates is only for the non-entropy 1×3 layout.")
 
     if radius_um is None and "tls_spatial_radius_um" in df.columns:
         radius_um = float(df["tls_spatial_radius_um"].iloc[0])
     if radius_um is None:
         radius_um = DEFAULT_TLS_SPATIAL_RADIUS_UM
 
-    ncols = 3 if use_entropy else 2
+    three_col = bool(use_entropy or split_spatial_candidates)
+    ncols = 3 if three_col else 2
     if figsize is None:
-        figsize = (18.0, 5.0) if use_entropy else (12.0, 5.0)
+        figsize = (18.0, 5.0) if three_col else (12.0, 5.0)
 
     created_fig = axes is None
     if axes is None:
@@ -3715,11 +3725,14 @@ def plot_tls_abundance_vs_spatial(
     x = df[coord_x].to_numpy(dtype=np.float64)
     y = df[coord_y].to_numpy(dtype=np.float64)
 
-    panels: list[tuple[np.ndarray, str, str]] = [
-        (abundance, f"{sample}: Abundance TLS ({abundance_col})", "viridis"),
-        (spatial, f"{sample}: Spatial TLS (R={radius_um:g} μm)", "magma"),
+    spatial_title = f"{sample}: Spatial {score_name} (R={radius_um:g} μm)"
+    panels: list[tuple[np.ndarray, str, str, tuple[float, float] | None]] = [
+        (abundance, f"{sample}: Abundance {score_name} ({abundance_col})", "viridis", None),
+        (spatial, spatial_title, "magma", None),
     ]
-    if use_entropy:
+    if split_spatial_candidates:
+        panels.append((spatial, f"{spatial_title}, {score_name} candidate", "magma", None))
+    elif use_entropy:
         combined = df[combined_col].to_numpy(dtype=np.float64)
         entropy_weight = float(df["tls_entropy_weight"].iloc[0]) if "tls_entropy_weight" in df.columns else 1.0
         panels.append(
@@ -3727,13 +3740,25 @@ def plot_tls_abundance_vs_spatial(
                 combined,
                 f"{sample}: Spatial TLS + Entropy (w={entropy_weight:g})",
                 "plasma",
+                None,
             )
         )
 
-    for ax, (values, title, cmap) in zip(axes, panels):
-        vmin, vmax = percentile_vlim(
-            values, vmin_percentile=vmin_percentile, vmax_percentile=vmax_percentile
+    shared_spatial_vlim = None
+    if split_spatial_candidates:
+        shared_spatial_vlim = percentile_vlim(
+            spatial, vmin_percentile=vmin_percentile, vmax_percentile=vmax_percentile
         )
+        panels[1] = (panels[1][0], panels[1][1], panels[1][2], shared_spatial_vlim)
+        panels[2] = (panels[2][0], panels[2][1], panels[2][2], shared_spatial_vlim)
+
+    for ax, (values, title, cmap, fixed_vlim) in zip(axes, panels):
+        if fixed_vlim is None:
+            vmin, vmax = percentile_vlim(
+                values, vmin_percentile=vmin_percentile, vmax_percentile=vmax_percentile
+            )
+        else:
+            vmin, vmax = fixed_vlim
         sc = ax.scatter(x, y, c=values, s=point_size, cmap=cmap, alpha=0.6, vmin=vmin, vmax=vmax)
         ax.set_title(title)
         ax.set_aspect("equal")
@@ -3742,9 +3767,12 @@ def plot_tls_abundance_vs_spatial(
     # ``sharey=True``: invert once; a second call on later axes cancels the flip.
     axes[0].invert_yaxis()
 
-    candidate_axes = [axes[1]] if len(axes) > 1 else []
-    if use_entropy and len(axes) > 2:
-        candidate_axes.append(axes[2])
+    if split_spatial_candidates:
+        candidate_axes = [axes[2]]
+    else:
+        candidate_axes = [axes[1]] if len(axes) > 1 else []
+        if use_entropy and len(axes) > 2:
+            candidate_axes.append(axes[2])
     for i, candidate_ax in enumerate(candidate_axes):
         _plot_tls_candidate_markers(
             candidate_ax,
@@ -3754,6 +3782,7 @@ def plot_tls_abundance_vs_spatial(
             coord_y=coord_y,
             candidate_size=candidate_size,
             candidate_color=candidate_color,
+            candidate_label=f"{score_name} candidate",
             show_legend=(i == 0),
             legend_markerscale=3,
         )

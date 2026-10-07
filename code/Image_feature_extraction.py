@@ -170,6 +170,28 @@ def _as_hwc_uint8(arr: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(arr)
 
 
+def path_is_ome_like(rawimage_path: str) -> bool:
+    """True for .ome.tif / BigTIFF, and for plain .tif that still carries OME-XML.
+
+    NPC Visium HE is ``*.tif`` with ``PhysicalSizeX`` in the ImageDescription.
+    Those files must take the uint8 resize path; a float32 ``skimage.rescale``
+    of a ~17k RGB WSI is several GB.
+    """
+    lower = str(rawimage_path).lower()
+    if lower.endswith((".ome.tif", ".ome.tiff", ".btf")):
+        return True
+    if not lower.endswith((".tif", ".tiff")):
+        return False
+    try:
+        import tifffile
+
+        with tifffile.TiffFile(str(rawimage_path)) as tif:
+            desc = tif.pages[0].description or ""
+    except Exception:
+        return False
+    return "<OME" in desc or "PhysicalSizeX" in desc
+
+
 def load_he_image_pil(rawimage_path: str, logger: logging.Logger) -> Image.Image:
     """Open H&E as RGB PIL.
 
@@ -177,8 +199,7 @@ def load_he_image_pil(rawimage_path: str, logger: logging.Logger) -> Image.Image
     Fall back to tifffile ``series[0]``.
     """
     path = str(rawimage_path)
-    lower = path.lower()
-    prefer_tifffile = lower.endswith((".ome.tif", ".ome.tiff", ".btf"))
+    prefer_tifffile = path_is_ome_like(path)
     if not prefer_tifffile:
         try:
             img = Image.open(path)
@@ -579,7 +600,7 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
         logger.info('This will reduce image size to speed up processing and reduce memory usage')
         image_obj = load_he_image_pil(rawimage_path, logger)
         width0, height0 = image_obj.size
-        ome_like = str(rawimage_path).lower().endswith((".ome.tif", ".ome.tiff", ".btf"))
+        ome_like = path_is_ome_like(rawimage_path)
         if ome_like:
             new_w = max(1, int(round(width0 * scale)))
             new_h = max(1, int(round(height0 * scale)))
