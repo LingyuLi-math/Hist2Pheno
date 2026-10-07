@@ -1,6 +1,6 @@
 # NPC external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.06. Two HE slides, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2.
+2026.10.06. Two HE slides, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py`; `npc_external.py` only points that module at `data/Visium/NPC`.
 
 | Sample | HE | StarDist nuclei |
 |--------|----|-----------------|
@@ -18,7 +18,7 @@ PhysicalSizeX="0.46507936507936531" PhysicalSizeXUnit="µm"
 PhysicalSizeY="0.4650793650793652"  PhysicalSizeYUnit="µm"
 ```
 
-X and Y differ only in the last digit, so both slides are **0.465 µm/px**. `npc_external.py` parses `PhysicalSizeX` / `PhysicalSizeY` per TIFF (`ome_um_per_px`); it does not hard-code the number.
+X and Y differ only in the last digit, so both slides are **0.465 µm/px**. `external_validation.py` parses `PhysicalSizeX` / `PhysicalSizeY` per TIFF (`ome_um_per_px`); it does not hard-code the number.
 
 The same IFD also has TIFF tags `XResolution = 96`, `YResolution = 96`, `ResolutionUnit = inch`. That is a 96 dpi placeholder (~264 µm/px) and does not match a ~17k slide. It is not used.
 
@@ -55,6 +55,8 @@ bash code/External_val/NPC/demo.sh all
 ```
 
 One slide: `SAMPLE=20210809-C-AH4199551`. Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=0`.
+
+Screen output is appended to `code/External_val/NPC/NPC.log`. Each step and the whole run record elapsed time there (`00:26:14 (1574s)`).
 
 ## Outputs
 

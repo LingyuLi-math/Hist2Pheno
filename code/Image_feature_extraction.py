@@ -601,11 +601,17 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
         image_obj = load_he_image_pil(rawimage_path, logger)
         width0, height0 = image_obj.size
         ome_like = path_is_ome_like(rawimage_path)
-        if ome_like:
+        # JPEG/PNG have no tiled OME path. A float32 skimage rescale of a
+        # ~16k RGB slide is several GB; resize in uint8 like the OME branch.
+        # Leave non-OME TIFF on skimage so an existing Xenium extraction stays put.
+        uint8_resize = ome_like or str(rawimage_path).lower().endswith(
+            (".jpg", ".jpeg", ".png")
+        )
+        if uint8_resize:
             new_w = max(1, int(round(width0 * scale)))
             new_h = max(1, int(round(height0 * scale)))
             logger.info(
-                f'Resizing OME/BigTIFF HE {width0}x{height0} -> {new_w}x{new_h} '
+                f'Resizing HE {width0}x{height0} -> {new_w}x{new_h} '
                 f'(uint8 PIL; skip float32 skimage rescale)'
             )
             image = image_obj.resize((new_w, new_h), resample=Image.BILINEAR)

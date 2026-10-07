@@ -6,6 +6,12 @@ for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
 ## Changelog
 
+### 2026-10-07 — StarDist external validation
+
+- Added `external_validation.py`. `ome_um_per_px` reads OME `PhysicalSizeX` / `PhysicalSizeY` from the TIFF `ImageDescription` at run time. `ExternalCohort.geometry` turns that into the scale that maps the slide onto 0.5 µm/px (16 px = 8 µm). TIFF 96 dpi tags are not read.
+- JPEG slides have no OME block. Pass `mpp_um` (HCC: env `MPP_UM`). `mpp_source` in the geometry dict records which path was used.
+- Cohort folders under `code/External_val/` only set the data root and call `ExternalCohort.main`.
+
 ### 2026-08-27 — Shared histology niche-index engine
 
 - Added `histology_niche_index.py`: dataset-neutral TLS / SRI / TNI (AUROC load,

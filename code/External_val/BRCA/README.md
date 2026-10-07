@@ -1,6 +1,6 @@
 # BRCA external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.07. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. Same pipeline as `code/External_val/NPC`.
+2026.10.07. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py`; `brca_external.py` only points that module at `data/Visium/BRCA`.
 
 | Sample | HE | StarDist nuclei |
 |--------|----|-----------------|
@@ -17,7 +17,7 @@ PhysicalSizeX="0.54758599602876212" PhysicalSizeXUnit="µm"
 PhysicalSizeY="0.54760935218579332"  PhysicalSizeYUnit="µm"
 ```
 
-X and Y differ only in the fifth decimal, so the slide is **0.548 µm/px**. `brca_external.py` parses `PhysicalSizeX` / `PhysicalSizeY` per TIFF (`ome_um_per_px`); it does not hard-code the number.
+X and Y differ only in the fifth decimal, so the slide is **0.548 µm/px**. `external_validation.py` parses `PhysicalSizeX` / `PhysicalSizeY` per TIFF (`ome_um_per_px`); it does not hard-code the number.
 
 The same IFD also has TIFF tags `XResolution = 96`, `YResolution = 96`, `ResolutionUnit = inch`. That is a 96 dpi placeholder and is not used.
 
@@ -54,6 +54,8 @@ bash code/External_val/BRCA/demo.sh all
 ```
 
 One slide: `SAMPLE=GSM7782699_tissue_image`. Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=0`.
+
+Screen output is appended to `code/External_val/BRCA/BRCA.log`. Each step and the whole run record elapsed time there.
 
 ## Outputs
 

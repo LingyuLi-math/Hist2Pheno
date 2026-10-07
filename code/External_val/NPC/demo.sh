@@ -23,6 +23,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../log_run.sh"
+
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
@@ -65,6 +69,7 @@ Outputs:
   data/Visium/NPC/pred_pancancer_section/figures/
 
 Notebook: code/External_val/NPC/Pred_visual_npc.ipynb
+Log: code/External_val/NPC/NPC.log  (appended; each step and the whole run record elapsed time)
 EOF
 }
 
@@ -76,22 +81,26 @@ fi
 cd "${REPO}"
 
 run_step() {
-  echo "=== NPC ${1}  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} ==="
-  "${PYTHON}" -u code/External_val/NPC/npc_external.py "${1}" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
+  extval_time_step "NPC" "$1" \
+    "${PYTHON}" -u code/External_val/NPC/npc_external.py "$1" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
 }
 
-case "${STEP}" in
-  dry-run|features|h5ad|predict|probs|plot)
-    run_step "${STEP}"
-    ;;
-  all)
-    run_step features
-    run_step h5ad
-    run_step predict
-    run_step plot
-    ;;
-  *)
-    usage
-    exit 1
-    ;;
-esac
+run_steps() {
+  case "${STEP}" in
+    dry-run|features|h5ad|predict|probs|plot)
+      run_step "${STEP}" || return $?
+      ;;
+    all)
+      run_step features || return $?
+      run_step h5ad || return $?
+      run_step predict || return $?
+      run_step plot || return $?
+      ;;
+    *)
+      usage
+      return 1
+      ;;
+  esac
+}
+
+extval_run_logged "${SCRIPT_DIR}/NPC.log" "NPC" "${STEP}" run_steps
