@@ -14,7 +14,7 @@ Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial k=8. Heads: L
 
 Training UNI crops are **8 µm**: 16 px on a **0.5 µm/px** grid. `ExternalCohort.geometry` computes the scale that puts the new slide on that grid, then `patch_size=16`.
 
-For OME TIFF (NPC, BRCA), `ome_um_per_px` opens the file with `tifffile` and parses `PhysicalSizeX` / `PhysicalSizeY` from the first page `ImageDescription`. The numbers in the NPC README (0.465 µm/px) and the BRCA README (0.548 µm/px) are what that function returns for those slides. They are not constants in `npc_external.py` or `brca_external.py`. Those scripts do not pass `mpp_um`, so every `dry-run` / `features` call reads the TIFF again. TIFF `XResolution = 96` dpi is not used.
+For OME TIFF / BigTIFF (NPC, BRCA, CRC), `ome_um_per_px` opens the file with `tifffile` and parses `PhysicalSizeX` / `PhysicalSizeY` from the first page `ImageDescription`. The numbers in the NPC README (0.465 µm/px), the BRCA README (0.548 µm/px), and the CRC README (0.274 µm/px) are what that function returns for those slides. They are not constants in the cohort scripts. Those scripts do not pass `mpp_um`, so every `dry-run` / `features` call reads the file again. CRC sets `he_suffix=".btf"`. TIFF `XResolution = 96` dpi is not used.
 
 For JPEG (HCC) there is no OME block. Pass the scanner calibration as `MPP_UM`. `geometry` records `mpp_source` as `OME PhysicalSize` or `cohort mpp_um`.
 
@@ -43,10 +43,12 @@ bash code/External_val/<COHORT>/demo.sh all        # features, h5ad, predict, pl
 | NPC | `data/Visium/NPC` | OME TIFF | 2 | 142,184 + 120,888 | read by `ome_um_per_px` (~0.465) | `CUDA_DEVICE` default 0 |
 | BRCA | `data/Visium/BRCA` | OME TIFF | 1 (`GSM7782699_tissue_image`) | 281,051 | read by `ome_um_per_px` (~0.548) | `CUDA_DEVICE` default 0 |
 | HCC | `data/Visium/HCC` | JPEG | 7 (`P1_N` `P1_T` `P2_N` `P3_T` `P5_N` `P5_T` `P7_T`) | ~1.34M | `MPP_UM` (required; 96 dpi is not a pixel size) | `CUDA_DEVICE` default **2** |
+| CRC | `data/Visium/CRC` | OME BigTIFF | 1 (`Visium_V2_Human_Colon_Cancer_P2_tissue_image`) | 579,587 | read by `ome_um_per_px` (~0.274) | `CUDA_DEVICE` default 0 |
+| BRCA_ST | `data/ST/BRCA` | JPEG | 36 HER2ST (A1–H3) | 2,417,153 | 200 µm spot pitch (~0.92 on A, ~0.69 on B–H) | `CUDA_DEVICE` default 0 |
 
-Predicted NPC and BRCA outputs are under `data/Visium/{NPC,BRCA}/pred_pancancer_section/`. HCC is wired the same way and has not been predicted yet.
+Predicted NPC, BRCA, and HCC outputs are under `data/Visium/{NPC,BRCA,HCC}/pred_pancancer_section/`. CRC and BRCA_ST are wired the same way and have not been predicted yet.
 
-Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md).
+Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md), [`CRC/README.md`](CRC/README.md), [`BRCA_ST/README.md`](BRCA_ST/README.md).
 
 ## After prediction
 
@@ -61,4 +63,4 @@ cohort = ExternalCohort(name="NAME", data_root=repo / "data" / "Visium" / "NAME"
 cohort.main(["dry-run"])
 ```
 
-JPEG: also pass `he_suffix=".jpg"` and `mpp_um=...`.
+JPEG with one scanner calibration: also pass `he_suffix=".jpg"` and `mpp_um=...`. BigTIFF: pass `he_suffix=".btf"`. HER2ST (`BRCA_ST`) and the prostate cohort set a per-slide µm/px in the cohort script, from spot spacing, because 72 dpi is not a pixel size. Each `demo.sh` appends screen output and per-step plus whole-run elapsed time to `code/External_val/<COHORT>/<COHORT>.log`.

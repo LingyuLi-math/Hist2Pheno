@@ -71,4 +71,4 @@ SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh all
 | `data/Visium/Prostate/pred_pancancer_section/composition.csv` | class fractions for the samples included in that `plot` |
 | `data/Visium/Prostate/pred_pancancer_section/figures/` | spatial panels and composition bars |
 
-`Pred_visual_prostate.ipynb` loads those figures and the TLS / SRI / TNI niche indices (each index is a 1×3 row). There is no ROC: these slides have no ground-truth cell type. Niche radius 55 µm is converted with that slide's own µm/px, not 0.5.
+`Pred_visual_prostate_patient1.ipynb` and `Pred_visual_prostate_patient2.ipynb` load those figures and the TLS / SRI / TNI niche indices (each index is a 1×3 row). They are split so one file does not store both patients' images. There is no ROC: these slides have no ground-truth cell type. Niche radius 55 µm is converted with that slide's own µm/px, not 0.5.

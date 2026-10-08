@@ -21,6 +21,15 @@
 
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=0 (default)
+##
+## Figures are two notebooks, not one combined file:
+##   code/External_val/Prostate/Pred_visual_prostate_patient1.ipynb
+##     7 sections, about 0.57–0.69 µm/px
+##   code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
+##     28 sections, about 0.34–0.35 µm/px
+## Full-resolution PNGs: data/Visium/Prostate/pred_pancancer_section/figures/
+## Each notebook embeds a resized preview so it does not store the full images.
+##   SAMPLE=Patient_2 bash code/External_val/Prostate/demo.sh all
 
 set -euo pipefail
 
@@ -74,7 +83,8 @@ Outputs:
   data/Visium/Prostate/pred_pancancer_section/{Patient_1__H1_2}/{Patient_1__H1_2}_stardist_pred.h5ad
   data/Visium/Prostate/pred_pancancer_section/figures/
 
-Notebook: code/External_val/Prostate/Pred_visual_prostate.ipynb
+Notebooks: code/External_val/Prostate/Pred_visual_prostate_patient1.ipynb
+          code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
 Log: code/External_val/Prostate/Prostate.log  (appended; each step and the whole run record elapsed time)
 EOF
 }
