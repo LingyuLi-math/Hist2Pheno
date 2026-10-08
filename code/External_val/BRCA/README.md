@@ -1,6 +1,6 @@
 # BRCA external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.07. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py`; `brca_external.py` only points that module at `data/Visium/BRCA`.
+2026.10.07. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py` (`_SIMPLE_COHORTS["BRCA"]`).
 
 | Sample | HE | StarDist nuclei |
 |--------|----|-----------------|
@@ -47,10 +47,9 @@ Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial context k=8, 
 bash code/External_val/BRCA/demo.sh dry-run    # mpp, scale, nucleus counts
 bash code/External_val/BRCA/demo.sh features   # UNI via code/Image_feature_extraction.py
 bash code/External_val/BRCA/demo.sh h5ad
-bash code/External_val/BRCA/demo.sh predict
-bash code/External_val/BRCA/demo.sh plot
+bash code/External_val/BRCA/demo.sh predict    # h5ad + l2_probs.npz
 # or
-bash code/External_val/BRCA/demo.sh all
+bash code/External_val/BRCA/demo.sh all        # features, h5ad, predict
 ```
 
 One slide: `SAMPLE=GSM7782699_tissue_image`. Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=0`.
@@ -64,7 +63,4 @@ Screen output is appended to `code/External_val/BRCA/BRCA.log`. Each step and th
 | `data/Visium/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
 | `data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-| `data/Visium/BRCA/pred_pancancer_section/composition.csv` | class fractions |
-| `data/Visium/BRCA/pred_pancancer_section/figures/` | spatial panels and composition bars |
-
-`Pred_visual_brca.ipynb` loads those figures and the TLS / SRI / TNI niche indices. There is no ROC: this slide has no ground-truth cell type.
+`Pred_visual_brca.ipynb` draws the spatial maps, composition bars, and TLS / SRI / TNI indices. `SAVE_FIGURES = False` only displays them. There is no ROC: this slide has no ground-truth cell type.

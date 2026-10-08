@@ -281,7 +281,12 @@ DEFAULT_CODEX_GBM_EXCLUDED_LABELS = ("Unknown", "LowQ")
 DEFAULT_CELLTYPE_FILTER_CODEX_gbm = DEFAULT_CODEX_GBM_EXCLUDED_LABELS
 
 ##########################################
-# 2026.10.01 pan-cancer L1 / L12 / L2 (same RGBA as code/PanCancer/pancancer_viz.py)
+# Pan-cancer L1 / L12 / L2.
+# L1 is the five lineage colors. L12 and L2 stay in the parent hue:
+# epithelial warm, T blue, B teal, myeloid ochre, stromal green,
+# endothelial orange, neural purple. Within a family, lightness differs
+# so neighboring dots stay apart. palette_for and the swatch read these
+# maps through get_palette("pancancer", ...).
 ##########################################
 Cell_Type_COLORS_PANCANCER_level0 = {
     "Epithelial": (0.89, 0.10, 0.11, 1.0),
@@ -291,36 +296,36 @@ Cell_Type_COLORS_PANCANCER_level0 = {
     "Neural": (0.60, 0.31, 0.64, 1.0),
 }
 Cell_Type_COLORS_PANCANCER_level1 = {
-    "Tumor": (0.84, 0.15, 0.16, 1.0),
-    "Epithelial": (0.99, 0.55, 0.38, 1.0),
-    "T_cell": (0.12, 0.47, 0.71, 1.0),
-    "B_Plasma": (0.20, 0.63, 0.79, 1.0),
-    "Myeloid": (0.17, 0.63, 0.17, 1.0),
-    "Stromal": (0.58, 0.40, 0.74, 1.0),
-    "Endothelial": (1.00, 0.50, 0.05, 1.0),
-    "Neural": (0.55, 0.34, 0.64, 1.0),
+    "Tumor": (0.75, 0.08, 0.12, 1.0),
+    "Epithelial": (0.86, 0.40, 0.42, 1.0),
+    "T_cell": (0.12, 0.42, 0.90, 1.0),
+    "B_Plasma": (0.00, 0.58, 0.52, 1.0),
+    "Myeloid": (0.58, 0.36, 0.08, 1.0),
+    "Stromal": (0.16, 0.55, 0.22, 1.0),
+    "Endothelial": (0.98, 0.48, 0.00, 1.0),
+    "Neural": (0.55, 0.18, 0.68, 1.0),
 }
 Cell_Type_COLORS_PANCANCER_level2 = {
-    "DCIS": (0.12, 0.47, 0.71, 1.0),
-    "Tumor": (1.00, 0.50, 0.05, 1.0),
-    "Alveolar": (0.17, 0.63, 0.17, 1.0),
-    "Epithelial": (0.84, 0.15, 0.16, 1.0),
-    "Injury_epithelial": (0.58, 0.40, 0.74, 1.0),
-    "Myoepithelial": (0.55, 0.34, 0.29, 1.0),
-    "CD4_T": (0.89, 0.47, 0.76, 1.0),
-    "CD8_T": (0.50, 0.50, 0.50, 1.0),
-    "Tregs": (0.74, 0.74, 0.13, 1.0),
-    "NK": (0.09, 0.75, 0.81, 1.0),
-    "B_cell": (0.68, 0.78, 0.91, 1.0),
-    "Plasma": (1.00, 0.73, 0.47, 1.0),
-    "DC": (0.60, 0.87, 0.54, 1.0),
-    "Macrophage": (0.99, 0.60, 0.60, 1.0),
-    "Neutrophil": (0.79, 0.70, 0.84, 1.0),
-    "Fibroblast": (0.77, 0.61, 0.58, 1.0),
-    "Myofibroblast": (0.97, 0.71, 0.82, 1.0),
-    "Stromal": (0.78, 0.78, 0.78, 1.0),
-    "Endothelial": (0.86, 0.86, 0.55, 1.0),
-    "Neural": (0.62, 0.85, 0.90, 1.0),
+    "Tumor": (0.82, 0.05, 0.09, 1.0),
+    "DCIS": (0.93, 0.25, 0.62, 1.0),
+    "Epithelial": (0.80, 0.32, 0.30, 1.0),
+    "Alveolar": (0.42, 0.02, 0.18, 1.0),
+    "Injury_epithelial": (0.98, 0.70, 0.48, 1.0),
+    "Myoepithelial": (0.72, 0.36, 0.48, 1.0),
+    "CD4_T": (0.10, 0.40, 0.95, 1.0),
+    "CD8_T": (0.02, 0.08, 0.32, 1.0),
+    "Tregs": (0.62, 0.70, 0.98, 1.0),
+    "NK": (0.00, 0.42, 0.68, 1.0),
+    "B_cell": (0.00, 0.62, 0.50, 1.0),
+    "Plasma": (0.08, 0.26, 0.34, 1.0),
+    "Macrophage": (0.62, 0.38, 0.08, 1.0),
+    "Neutrophil": (0.86, 0.66, 0.08, 1.0),
+    "DC": (0.28, 0.16, 0.02, 1.0),
+    "Fibroblast": (0.18, 0.62, 0.24, 1.0),
+    "Myofibroblast": (0.66, 0.82, 0.16, 1.0),
+    "Stromal": (0.04, 0.32, 0.14, 1.0),
+    "Endothelial": (0.98, 0.48, 0.00, 1.0),
+    "Neural": (0.55, 0.18, 0.68, 1.0),
 }
 
 Cell_Type_COLORS_Xenium_brca_level0 = {
@@ -916,6 +921,59 @@ def get_palette(
     if rgba:
         return {str(key): normalize_color_rgba(value) for key, value in palette.items()}
     return dict(palette)
+
+
+def palette_for(classes: dict[str, list[str]]) -> dict[str, dict[str, tuple]]:
+    """Name→RGBA for pan-cancer L1 / L12 / L2. Missing names are gray."""
+    maps = {
+        "L1": get_palette("pancancer", "coarse"),
+        "L12": get_palette("pancancer", "intermediate"),
+        "L2": get_palette("pancancer", "fine"),
+    }
+    out = {}
+    for key, pal in maps.items():
+        names = list(classes[key])
+        out[key] = {n: pal.get(n, (0.55, 0.55, 0.55, 1.0)) for n in names}
+    return out
+
+
+def write_pancancer_swatch(path: str | Path | None = None) -> Path:
+    """Save the L1 / L12 / L2 swatch from ``palette_for``.
+
+    Colors are the same RGBA values the spatial plots use. Class order is the
+    ontology order in ``pancancer_labels.ontology_class_names``.
+    """
+    import matplotlib.pyplot as plt
+
+    try:
+        from Hist2Pheno_pkg.pancancer_labels import ontology_class_names
+    except ImportError:
+        from pancancer_labels import ontology_class_names
+
+    colors = palette_for(ontology_class_names())
+    rows = [("L1", colors["L1"]), ("L12", colors["L12"]), ("L2", colors["L2"])]
+    n = max(len(pal) for _, pal in rows)
+    fig = plt.figure(figsize=(0.48 * n + 1.2, 4.4))
+    for i, (title, pal) in enumerate(rows):
+        names = list(pal)
+        ax = fig.add_axes([0.07, 0.70 - i * 0.30, 0.91 * len(names) / n, 0.18])
+        ax.set_xlim(-0.5, len(names) - 0.5)
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        ax.set_xticks(range(len(names)))
+        ax.set_xticklabels(names, rotation=55, ha="right", fontsize=8)
+        for j, name in enumerate(names):
+            ax.add_patch(plt.Rectangle((j - 0.45, 0.15), 0.9, 0.7, color=pal[name], lw=0))
+        ax.set_ylabel(title, fontsize=11)
+        ax.tick_params(length=0)
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    fig.suptitle("Pan-cancer palette", fontsize=12, y=0.98)
+    out = Path(path) if path is not None else Path(__file__).resolve().parent / "figures" / "pancancer_L1_L12_L2_swatch.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    return out
 
 
 def resolve_palette(

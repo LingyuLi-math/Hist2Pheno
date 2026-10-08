@@ -66,7 +66,8 @@ Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/be
 Outputs:
   data/Visium/NPC/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
   data/Visium/NPC/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/Visium/NPC/pred_pancancer_section/figures/
+  data/Visium/NPC/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/NPC/Pred_visual_npc.ipynb
 Log: code/External_val/NPC/NPC.log  (appended; each step and the whole run record elapsed time)
@@ -82,7 +83,7 @@ cd "${REPO}"
 
 run_step() {
   extval_time_step "NPC" "$1" \
-    "${PYTHON}" -u code/External_val/NPC/npc_external.py "$1" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
+    "${PYTHON}" -u code/Hist2Pheno_pkg/external_validation.py NPC "$1" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
 }
 
 run_steps() {
@@ -94,7 +95,6 @@ run_steps() {
       run_step features || return $?
       run_step h5ad || return $?
       run_step predict || return $?
-      run_step plot || return $?
       ;;
     *)
       usage

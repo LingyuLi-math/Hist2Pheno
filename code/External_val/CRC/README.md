@@ -1,6 +1,6 @@
 # CRC external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.08. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py`; `crc_external.py` only points that module at `data/Visium/CRC` and sets `he_suffix=".btf"`.
+2026.10.08. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py` (`_SIMPLE_COHORTS["CRC"]`, HE suffix `.btf`).
 
 | Sample | HE | StarDist nuclei |
 |--------|----|-----------------|
@@ -57,7 +57,4 @@ Screen output is appended to `code/External_val/CRC/CRC.log`. Each step and the 
 | `data/Visium/CRC/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
 | `data/Visium/CRC/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/Visium/CRC/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-| `data/Visium/CRC/pred_pancancer_section/composition.csv` | class fractions |
-| `data/Visium/CRC/pred_pancancer_section/figures/` | spatial panels and composition bars |
-
-`Pred_visual_crc.ipynb` loads those figures and the TLS / SRI / TNI niche indices (each a 1×3 row). There is no ROC: this slide has no ground-truth cell type.
+`Pred_visual_crc.ipynb` draws the spatial maps, composition bars, and TLS / SRI / TNI indices. `SAVE_FIGURES = False` only displays them. There is no ROC: this slide has no ground-truth cell type.

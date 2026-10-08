@@ -1,6 +1,6 @@
 # HCC external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.07. Seven HE JPEGs, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py`; `hcc_external.py` only points that module at `data/Visium/HCC`.
+2026.10.07. Seven HE JPEGs, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py` (`_SIMPLE_COHORTS["HCC"]`). `MPP_UM` is still required.
 
 | Sample | HE | pixels (W × H) | StarDist nuclei |
 |--------|----|----------------|-----------------|
@@ -56,7 +56,4 @@ One slide: `SAMPLE=P1_T`. Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=2` 
 | `data/Visium/HCC/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
 | `data/Visium/HCC/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/Visium/HCC/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-| `data/Visium/HCC/pred_pancancer_section/composition.csv` | class fractions |
-| `data/Visium/HCC/pred_pancancer_section/figures/` | spatial panels and composition bars |
-
-`Pred_visual_hcc.ipynb` loads those figures and uses `MPP_UM = 0.5`, the value in `HCC.log`. There is no ROC: these slides have no ground-truth cell type.
+`Pred_visual_hcc.ipynb` draws the spatial maps, composition bars, and TLS / SRI / TNI indices. `SAVE_FIGURES = False` only displays them. It uses `MPP_UM = 0.5`, the value in `HCC.log`. There is no ROC: these slides have no ground-truth cell type.

@@ -1,4 +1,4 @@
-"""Pan-cancer L1 / L12 / L2 colors and 4×3 GT / pred / ROC / StarDist-all panels."""
+"""Pan-cancer L1 / L12 / L2 panels. Colors come from plotting_palettes."""
 
 from __future__ import annotations
 
@@ -11,21 +11,7 @@ _PKG = Path(__file__).resolve().parents[1] / "Hist2Pheno_pkg"
 if str(_PKG) not in sys.path:
     sys.path.insert(0, str(_PKG))
 
-from plotting_palettes import get_palette  # noqa: E402
-
-
-def palette_for(classes: dict[str, list[str]]) -> dict[str, dict[str, tuple]]:
-    """Name→RGBA for each head; same maps as ``plotting_palettes`` pan-cancer schemes."""
-    maps = {
-        "L1": get_palette("pancancer", "coarse"),
-        "L12": get_palette("pancancer", "intermediate"),
-        "L2": get_palette("pancancer", "fine"),
-    }
-    out = {}
-    for key, pal in maps.items():
-        names = list(classes[key])
-        out[key] = {n: pal.get(n, (0.55, 0.55, 0.55, 1.0)) for n in names}
-    return out
+from plotting_palettes import palette_for  # noqa: E402
 
 
 def _scatter(ax, xy, labels, names, palette, s: float) -> None:

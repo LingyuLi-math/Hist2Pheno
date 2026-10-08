@@ -47,9 +47,7 @@ CUDA_DEVICE=2 SAMPLE=A1 bash code/External_val/BRCA_ST/demo.sh all
 
 `SAMPLE` is a HER2ST id (`A1`), a patient letter (`A`–`H`), or the HE stem (`9769_C1_HE_small`). Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=0` by default.
 
-`plot` overwrites `composition.csv` and the composition bar charts for the samples in that call. Per-slide spatial PNGs accumulate.
-
-Screen output is appended to `code/External_val/BRCA_ST/BRCA_ST.log`. Each step and the whole run record elapsed time there.
+Screen output is appended to `code/External_val/BRCA_ST/BRCA_ST.log`. Each step and the whole run record elapsed time there. Figures are drawn in the patient notebooks.
 
 ## Outputs
 
@@ -58,7 +56,4 @@ Screen output is appended to `code/External_val/BRCA_ST/BRCA_ST.log`. Each step 
 | `data/ST/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
 | `data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-| `data/ST/BRCA/pred_pancancer_section/composition.csv` | class fractions |
-| `data/ST/BRCA/pred_pancancer_section/figures/` | spatial panels and composition bars |
-
-`Pred_visual_brca_st_A.ipynb` through `Pred_visual_brca_st_H.ipynb` load those figures and the TLS / SRI / TNI niche indices (each a 1×3 row), one HER2ST patient per notebook. There is no ROC: these slides have no ground-truth cell type.
+`Pred_visual_brca_st_A.ipynb` through `Pred_visual_brca_st_H.ipynb` draw the spatial maps and the TLS / SRI / TNI indices, one HER2ST patient per notebook. `SAVE_FIGURES = False` only displays them. There is no ROC: these slides have no ground-truth cell type.

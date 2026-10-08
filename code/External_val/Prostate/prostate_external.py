@@ -175,6 +175,8 @@ sample_paths = COHORT.sample_paths
 geometry = COHORT.geometry
 composition_table = COHORT.composition_table
 ensure_l2_probs = COHORT.ensure_l2_probs
+plot_spatial = COHORT.plot_spatial
+plot_composition = COHORT.plot_composition
 cmd_plot = COHORT.cmd_plot
 
 

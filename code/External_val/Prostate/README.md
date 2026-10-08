@@ -40,7 +40,6 @@ bash code/External_val/Prostate/demo.sh dry-run
 SAMPLE=Patient_1__H1_2 bash code/External_val/Prostate/demo.sh features
 SAMPLE=Patient_1__H1_2 bash code/External_val/Prostate/demo.sh h5ad
 SAMPLE=Patient_1__H1_2 bash code/External_val/Prostate/demo.sh predict
-SAMPLE=Patient_1__H1_2 bash code/External_val/Prostate/demo.sh plot
 
 # one patient (7 slides)
 SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh all
@@ -68,7 +67,4 @@ SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh all
 | `data/Visium/Prostate/project_all_UNI/{Patient_1__H1_2}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
 | `data/Visium/Prostate/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/Visium/Prostate/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-| `data/Visium/Prostate/pred_pancancer_section/composition.csv` | class fractions for the samples included in that `plot` |
-| `data/Visium/Prostate/pred_pancancer_section/figures/` | spatial panels and composition bars |
-
-`Pred_visual_prostate_patient1.ipynb` and `Pred_visual_prostate_patient2.ipynb` load those figures and the TLS / SRI / TNI niche indices (each index is a 1×3 row). They are split so one file does not store both patients' images. There is no ROC: these slides have no ground-truth cell type. Niche radius 55 µm is converted with that slide's own µm/px, not 0.5.
+`Pred_visual_prostate_patient1.ipynb` and `Pred_visual_prostate_patient2.ipynb` draw the spatial maps and the TLS / SRI / TNI indices. `SAVE_FIGURES = False` only displays them. There is no ROC: these slides have no ground-truth cell type. Niche radius 55 µm is converted with that slide's own µm/px, not 0.5.

@@ -8,8 +8,12 @@ cell-type ground truth, share this pipeline:
 3. Predict L1 / L12 / L2 with spatial k=8.
 4. Cache L2 softmax for histology niche indices, and plot spatial maps.
 
-A new cancer is an ``ExternalCohort`` with a data root. Cancer folders under
-``code/External_val`` only construct that object and call ``main``.
+NPC, BRCA, CRC, and HCC are one row in ``_SIMPLE_COHORTS`` and are started with
+
+``python code/Hist2Pheno_pkg/external_validation.py BRCA dry-run``.
+
+Prostate and HER2ST stay in their own scripts: sample ids and µm/px are not
+a single folder plus one HE suffix.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -34,6 +39,47 @@ HEADS = ("L1", "L12", "L2")
 OBS_COL = {"L1": "pred_lineage", "L12": "pred_sublineage", "L2": "pred_CT"}
 PALETTE_TIER = {"L1": "coarse", "L12": "intermediate", "L2": "fine"}
 
+# name -> (data path under the repo, HE suffix, whether MPP_UM is required).
+# JPEG/BigTIFF cohorts that still have one flat StarDist folder.
+_SIMPLE_COHORTS: dict[str, tuple[str, str, bool]] = {
+    "NPC": ("data/Visium/NPC", ".tif", False),
+    "BRCA": ("data/Visium/BRCA", ".tif", False),
+    "CRC": ("data/Visium/CRC", ".btf", False),
+    "HCC": ("data/Visium/HCC", ".jpg", True),
+}
+
+
+def _mpp_from_env(name: str) -> float:
+    raw = os.environ.get("MPP_UM", "").strip()
+    if not raw:
+        raise SystemExit(
+            f"Set MPP_UM to the scanner µm/px before running {name}.\n"
+            "The HE files have no OME PhysicalSize, and a JPEG dpi tag is not a pixel size.\n"
+            f"Example: MPP_UM=0.5 bash code/External_val/{name}/demo.sh dry-run"
+        )
+    value = float(raw)
+    if value <= 0:
+        raise SystemExit(f"MPP_UM must be positive, got {value}")
+    return value
+
+
+def simple_cohort(name: str, repo: Path | None = None) -> ExternalCohort:
+    """Build NPC, BRCA, CRC, or HCC. Other cohorts use their own subclass."""
+    key = name.upper()
+    if key not in _SIMPLE_COHORTS:
+        known = ", ".join(sorted(_SIMPLE_COHORTS))
+        raise SystemExit(f"unknown cohort {name!r}. Choose one of: {known}")
+    rel, suffix, need_mpp = _SIMPLE_COHORTS[key]
+    root = Path(repo) if repo is not None else Path(__file__).resolve().parents[2]
+    return ExternalCohort(
+        name=key,
+        data_root=root / rel,
+        repo=root,
+        he_suffix=suffix,
+        mpp_um=_mpp_from_env(key) if need_mpp else None,
+    )
+
+
 _CKPT_REL = Path(
     "data/PanCancer/result_all_spatial/cross_dataset_cv"
     "/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt"
@@ -42,11 +88,11 @@ _SCALER_REL = Path("data/PanCancer/result_all_spatial/scaler.joblib")
 
 
 def _import_sibling(name: str):
-    """Import a Hist2Pheno_pkg or PanCancer module either way the path is set."""
+    """Import a Hist2Pheno_pkg module whether ``code`` or the package dir is on the path."""
     try:
-        return importlib.import_module(name)
-    except ModuleNotFoundError:
         return importlib.import_module(f"Hist2Pheno_pkg.{name}")
+    except ModuleNotFoundError:
+        return importlib.import_module(name)
 
 
 def ome_um_per_px(tif_path: Path) -> tuple[float, float]:
@@ -118,7 +164,7 @@ class ExternalCohort:
         if self.scaler is None:
             self.scaler = self.repo / _SCALER_REL
         code = Path(__file__).resolve().parent.parent
-        for folder in (code, code / "Hist2Pheno_pkg", code / "PanCancer"):
+        for folder in (code, code / "Hist2Pheno_pkg"):
             text = str(folder)
             if text not in sys.path:
                 sys.path.insert(0, text)
@@ -518,12 +564,51 @@ class ExternalCohort:
             arr = np.asarray(im)
         return arr, w, h
 
-    def _scatter_on_he(self, ax, thumb, full_w, full_h, xy, labels, palette, title: str) -> None:
+    # Notebook overview: three panels on one screen, each nucleus a ~2 px dot.
+    # The HE thumbnail is matched to that panel, not the full-resolution slide.
+    _PLOT_DPI = 160
+    _PLOT_FIGSIZE = (17.2, 6.6)
+    _PLOT_HE_MAX_SIDE = 1400
+
+    def _neighbor_spacing_px(self, xy: np.ndarray) -> float:
+        """Median nearest-neighbor distance in HE pixels."""
+        from scipy.spatial import cKDTree
+
+        n = int(xy.shape[0])
+        if n < 5:
+            return 30.0
+        rng = np.random.default_rng(0)
+        sample = xy if n <= 8000 else xy[rng.choice(n, 8000, replace=False)]
+        dist, _ = cKDTree(xy).query(sample, k=2)
+        med = float(np.median(dist[:, 1]))
+        if not np.isfinite(med) or med <= 0:
+            return 30.0
+        return med
+
+    def _scatter_on_he(
+        self,
+        ax,
+        thumb,
+        full_w,
+        full_h,
+        xy,
+        labels,
+        palette,
+        title: str,
+        point_s: float,
+    ) -> None:
         ax.imshow(thumb, extent=(0, full_w, full_h, 0), interpolation="bilinear")
         ax.set_xlim(0, full_w)
         ax.set_ylim(full_h, 0)
         colors = [palette.get(str(lab), (0.55, 0.55, 0.55, 1.0)) for lab in labels]
-        ax.scatter(xy[:, 0], xy[:, 1], c=colors, s=0.35, linewidths=0, rasterized=True)
+        ax.scatter(
+            xy[:, 0],
+            xy[:, 1],
+            c=colors,
+            s=point_s,
+            linewidths=0,
+            rasterized=True,
+        )
         ax.set_xticks([])
         ax.set_yticks([])
         ax.set_title(title, fontsize=11)
@@ -553,25 +638,42 @@ class ExternalCohort:
                     )
         return pd.DataFrame(rows)
 
-    def cmd_plot(self, samples: list[str]) -> None:
+    def plot_spatial(
+        self,
+        samples: list[str],
+        *,
+        figsize: tuple[float, float] | None = None,
+        dpi: int | None = None,
+        he_max_side: int | None = None,
+        marker_px: float = 2.2,
+        save: bool = False,
+    ) -> list:
+        """Draw one L1/L12/L2 panel per sample. ``save=False`` writes nothing."""
         ad = importlib.import_module("anndata")
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
 
-        fig_dir = self.pred_root / "figures"
-        fig_dir.mkdir(parents=True, exist_ok=True)
-        comp = self.composition_table(samples)
-        comp_path = self.pred_root / "composition.csv"
-        comp.to_csv(comp_path, index=False)
-        print(f"[plot] {comp_path}", flush=True)
+        figsize = self._PLOT_FIGSIZE if figsize is None else tuple(figsize)
+        dpi = self._PLOT_DPI if dpi is None else int(dpi)
+        he_max_side = self._PLOT_HE_MAX_SIDE if he_max_side is None else int(he_max_side)
+        point_s = (float(marker_px) * 72.0 / dpi) ** 2
         palettes = self._palette()
-
+        fig_dir = self.pred_root / "figures"
+        if save:
+            fig_dir.mkdir(parents=True, exist_ok=True)
+        figures = []
         for sample in samples:
             paths = self.sample_paths(sample)
             adata = ad.read_h5ad(paths["pred"])
             xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
-            thumb, full_w, full_h = self._he_thumbnail(paths["he"])
-            fig, axes = plt.subplots(1, 3, figsize=(16.5, 6.2))
+            spacing = self._neighbor_spacing_px(xy)
+            thumb, full_w, full_h = self._he_thumbnail(paths["he"], max_side=he_max_side)
+            fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi)
+            print(
+                f"[plot] {sample}  nuclei={len(xy):,}  neighbor={spacing:.1f}px  "
+                f"figsize={figsize}  dpi={dpi}  marker_px={marker_px}",
+                flush=True,
+            )
             for ax, head in zip(axes, HEADS):
                 labels = adata.obs[OBS_COL[head]].astype(str).to_numpy()
                 self._scatter_on_he(
@@ -583,6 +685,7 @@ class ExternalCohort:
                     labels,
                     palettes[head],
                     f"{head}  n={adata.n_obs:,}",
+                    point_s,
                 )
                 names = list(dict.fromkeys(labels.tolist()))
                 handles = [
@@ -611,13 +714,24 @@ class ExternalCohort:
                 fontsize=12,
             )
             fig.tight_layout()
-            out = fig_dir / f"{sample}_spatial_L1_L12_L2.png"
-            fig.savefig(out, dpi=140, bbox_inches="tight")
-            plt.close(fig)
-            print(f"[plot] {out}", flush=True)
+            if save:
+                out = fig_dir / f"{sample}_spatial_L1_L12_L2.png"
+                fig.savefig(out, dpi=dpi, bbox_inches="tight")
+                print(f"[plot] {out}", flush=True)
+            figures.append(fig)
+        return figures
 
+    def plot_composition(self, samples: list[str], *, save: bool = False) -> list:
+        """Bar charts from ``composition_table``. ``save=False`` writes nothing."""
+        import matplotlib.pyplot as plt
+
+        comp = self.composition_table(samples)
         labels = _import_sibling("pancancer_labels")
         class_order = labels.ontology_class_names()
+        fig_dir = self.pred_root / "figures"
+        if save:
+            fig_dir.mkdir(parents=True, exist_ok=True)
+        figures = []
         for head in HEADS:
             sub = comp[comp["head"] == head]
             present = set(sub["class"].astype(str))
@@ -636,10 +750,21 @@ class ExternalCohort:
             ax.set_title(f"{self.name} predicted composition  {head}")
             ax.legend(frameon=False, fontsize=8)
             fig.tight_layout()
-            out = fig_dir / f"composition_{head}.png"
-            fig.savefig(out, dpi=140, bbox_inches="tight")
+            if save:
+                out = fig_dir / f"composition_{head}.png"
+                fig.savefig(out, dpi=140, bbox_inches="tight")
+                print(f"[plot] {out}", flush=True)
+            figures.append(fig)
+        return figures
+
+    def cmd_plot(self, samples: list[str]) -> None:
+        """Optional batch export. ``demo.sh all`` does not call this."""
+        import matplotlib.pyplot as plt
+
+        for fig in self.plot_spatial(samples, save=True):
             plt.close(fig)
-            print(f"[plot] {out}", flush=True)
+        for fig in self.plot_composition(samples, save=True):
+            plt.close(fig)
 
     def main(self, argv: list[str] | None = None) -> int:
         p = argparse.ArgumentParser(
@@ -664,3 +789,20 @@ class ExternalCohort:
         elif args.step == "plot":
             self.cmd_plot(samples)
         return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """``python external_validation.py BRCA dry-run [--sample ID]``."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    known = ", ".join(sorted(_SIMPLE_COHORTS))
+    if not argv or argv[0].upper() not in _SIMPLE_COHORTS:
+        raise SystemExit(
+            "usage: python code/Hist2Pheno_pkg/external_validation.py "
+            f"{{{known}}} {{dry-run|features|h5ad|predict|probs|plot}}"
+        )
+    name = argv.pop(0)
+    return simple_cohort(name).main(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

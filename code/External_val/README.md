@@ -2,7 +2,7 @@
 
 Apply the pan-cancer **cross-section** checkpoint to a cancer that was not in training. Each cohort has HE and StarDist nuclei only: no 10x `tissue_positions` / `scalefactors` JSON and no ground-truth cell type. There is no ROC. The readout is L1 / L12 / L2 plus TLS / SRI / TNI.
 
-Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py) (`ExternalCohort`). A cohort folder only sets the data root and calls `main`. Notebooks import `ExternalCohort` the same way.
+Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py). NPC, BRCA, CRC, and HCC are rows in `_SIMPLE_COHORTS`; `demo.sh` calls `external_validation.py <COHORT> <step>`. Prostate and BRCA_ST keep their own scripts because the sample id and µm/px are not one flat folder. Notebooks construct `ExternalCohort` the same way.
 
 Checkpoint (section CV, not cell-stratified):
 
@@ -28,10 +28,9 @@ From the repo root, `conda activate SeededNTM` (or `Hist2Pheno`).
 bash code/External_val/<COHORT>/demo.sh dry-run    # mpp, scale, nucleus counts
 bash code/External_val/<COHORT>/demo.sh features   # UNI
 bash code/External_val/<COHORT>/demo.sh h5ad
-bash code/External_val/<COHORT>/demo.sh predict    # also writes {sample}_l2_probs.npz
-bash code/External_val/<COHORT>/demo.sh plot
+bash code/External_val/<COHORT>/demo.sh predict    # h5ad + {sample}_l2_probs.npz
 # or
-bash code/External_val/<COHORT>/demo.sh all        # features, h5ad, predict, plot
+bash code/External_val/<COHORT>/demo.sh all        # features, h5ad, predict
 ```
 
 `SAMPLE=<id>` limits one slide. `FORCE=1` redoes a finished step. `features` is the long step (UNI, one 16×16 crop per nucleus).
@@ -52,7 +51,7 @@ Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/READ
 
 ## After prediction
 
-`Pred_visual_*.ipynb` loads the spatial L1/L12/L2 figures and builds TLS / SRI / TNI from L2 softmax (`ensure_l2_probs`), not from the argmax label. Radius is 55 µm on native `spatial_HE` pixels. Each index is a 1×3 row: abundance, spatial score, spatial score with the within-slide 95th-percentile candidates. Lung ARI / FRI are not used.
+`Pred_visual_*.ipynb` draws the spatial L1/L12/L2 maps and the composition bars from the pred h5ad. `SAVE_FIGURES`, `FIGSIZE`, `DPI`, `HE_MAX_SIDE`, and `MARKER_PX` are at the top of the notebook. The default only displays the figure. `demo.sh plot` is an optional batch export of the same panels; `all` does not call it. TLS / SRI / TNI use L2 softmax (`ensure_l2_probs`), not the argmax label. Radius is 55 µm on native `spatial_HE` pixels. Each index is a 1×3 row: abundance, spatial score, spatial score with the within-slide 95th-percentile candidates. Lung ARI / FRI are not used.
 
 A new cancer with the same folder layout (`HE_images/`, `StarDist_Segment/{sample}/{sample}_Float_prob0.01_nms_0.3.csv`) is:
 

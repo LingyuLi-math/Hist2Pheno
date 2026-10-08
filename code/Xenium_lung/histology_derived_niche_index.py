@@ -3651,6 +3651,37 @@ def _plot_tls_candidate_markers(
         ax.legend(loc="upper right", markerscale=legend_markerscale)
 
 
+def _overview_marker_area(
+    x: np.ndarray,
+    y: np.ndarray,
+    figsize: tuple[float, float],
+    dpi: int,
+    ncols: int,
+) -> float:
+    """Scatter area so each nucleus is a ~2 px dot on a notebook-sized panel."""
+    from scipy.spatial import cKDTree
+
+    panel_px = (float(figsize[0]) / max(ncols, 1)) * float(dpi) * 0.82
+    span = float(np.ptp(x))
+    if not np.isfinite(span) or span <= 0:
+        span = 1.0
+    xy = np.column_stack([x, y])
+    n = int(xy.shape[0])
+    if n >= 5:
+        rng = np.random.default_rng(0)
+        sample = xy if n <= 8000 else xy[rng.choice(n, 8000, replace=False)]
+        dist, _ = cKDTree(xy).query(sample, k=2)
+        nn = float(np.median(dist[:, 1]))
+    else:
+        nn = span / 40.0
+    if not np.isfinite(nn) or nn <= 0:
+        nn = span / 40.0
+    nn_out = nn * (panel_px / span)
+    diam_px = float(np.clip(max(2.2, 0.55 * nn_out), 2.2, 3.4))
+    diam_pt = diam_px * 72.0 / float(dpi)
+    return diam_pt ** 2
+
+
 def plot_tls_abundance_vs_spatial(
     df: pd.DataFrame,
     sample: str,
@@ -3669,7 +3700,7 @@ def plot_tls_abundance_vs_spatial(
     candidate_size: float = 2.0,
     candidate_color: str = "cyan",
     figsize: tuple[float, float] | None = None,
-    dpi: int = 150,
+    dpi: int = 160,
     save_path: str | Path | None = None,
     axes: Sequence | None = None,
     split_spatial_candidates: bool = False,
@@ -3752,6 +3783,13 @@ def plot_tls_abundance_vs_spatial(
         panels[1] = (panels[1][0], panels[1][1], panels[1][2], shared_spatial_vlim)
         panels[2] = (panels[2][0], panels[2][1], panels[2][2], shared_spatial_vlim)
 
+    # Values below 5 are the old sub-pixel defaults. Draw a ~2 px disk instead,
+    # on the same notebook-sized figure as the L1/L12/L2 maps.
+    if point_size < 5:
+        point_size = _overview_marker_area(x, y, figsize, dpi, ncols)
+    if candidate_size < 8:
+        candidate_size = point_size * 2.4
+
     for ax, (values, title, cmap, fixed_vlim) in zip(axes, panels):
         if fixed_vlim is None:
             vmin, vmax = percentile_vlim(
@@ -3759,7 +3797,7 @@ def plot_tls_abundance_vs_spatial(
             )
         else:
             vmin, vmax = fixed_vlim
-        sc = ax.scatter(x, y, c=values, s=point_size, cmap=cmap, alpha=0.6, vmin=vmin, vmax=vmax)
+        sc = ax.scatter(x, y, c=values, s=point_size, cmap=cmap, alpha=0.85, vmin=vmin, vmax=vmax, linewidths=0)
         ax.set_title(title)
         ax.set_aspect("equal")
         plt.colorbar(sc, ax=ax, fraction=0.046)

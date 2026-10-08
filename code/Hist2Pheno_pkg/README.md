@@ -6,6 +6,18 @@ for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
 ## Changelog
 
+### 2026-10-08 — Ontology and fold assignment live in the package
+
+- `pancancer_labels.py` and `pancancer_cv.py` moved here from `code/PanCancer`. The PanCancer copies re-export them so existing scripts and notebooks keep `from pancancer_labels import ...`.
+- `palette_for` is in `plotting_palettes.py`. `pancancer_viz` imports it. `write_palette_swatch.py` writes the paper swatch from that same map.
+- `external_validation.py` no longer puts `code/PanCancer` on `sys.path`.
+- Cohort paths, the section index, and the train / predict CLIs stay in `code/PanCancer`.
+
+### 2026-10-08 — Pan-cancer L12 / L2 colors
+
+- `Cell_Type_COLORS_PANCANCER_level0` (L1) is unchanged.
+- L1 stays the five lineage colors. L12 and L2 use the parent hue (epithelial warm, T blue, B teal, myeloid ochre, stromal green, endothelial orange, neural purple), with lightness changes inside each family so neighboring classes stay apart. `get_palette("pancancer", ...)` is the only map.
+
 ### 2026-10-07 — StarDist external validation
 
 - Added `external_validation.py`. `ome_um_per_px` reads OME `PhysicalSizeX` / `PhysicalSizeY` from the TIFF `ImageDescription` at run time. `ExternalCohort.geometry` turns that into the scale that maps the slide onto 0.5 µm/px (16 px = 8 µm). TIFF 96 dpi tags are not read.

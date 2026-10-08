@@ -1,6 +1,6 @@
 # NPC external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.06. Two HE slides, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py`; `npc_external.py` only points that module at `data/Visium/NPC`.
+2026.10.06. Two HE slides, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py` (`_SIMPLE_COHORTS["NPC"]`).
 
 | Sample | HE | StarDist nuclei |
 |--------|----|-----------------|
@@ -48,10 +48,9 @@ Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial context k=8, 
 bash code/External_val/NPC/demo.sh dry-run    # mpp, scale, nucleus counts
 bash code/External_val/NPC/demo.sh features   # UNI via code/Image_feature_extraction.py
 bash code/External_val/NPC/demo.sh h5ad
-bash code/External_val/NPC/demo.sh predict
-bash code/External_val/NPC/demo.sh plot
+bash code/External_val/NPC/demo.sh predict    # h5ad + l2_probs.npz
 # or
-bash code/External_val/NPC/demo.sh all
+bash code/External_val/NPC/demo.sh all        # features, h5ad, predict
 ```
 
 One slide: `SAMPLE=20210809-C-AH4199551`. Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=0`.
@@ -65,7 +64,4 @@ Screen output is appended to `code/External_val/NPC/NPC.log`. Each step and the 
 | `data/Visium/NPC/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
 | `data/Visium/NPC/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/Visium/NPC/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-| `data/Visium/NPC/pred_pancancer_section/composition.csv` | class fractions |
-| `data/Visium/NPC/pred_pancancer_section/figures/` | spatial panels and composition bars |
-
-`Pred_visual_npc.ipynb` loads those figures. There is no ROC: these slides have no ground-truth cell type.
+`Pred_visual_npc.ipynb` draws the spatial maps, composition bars, and TLS / SRI / TNI indices. `SAVE_FIGURES = False` only displays them. There is no ROC: these slides have no ground-truth cell type.

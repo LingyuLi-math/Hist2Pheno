@@ -27,8 +27,7 @@
 ##     7 sections, about 0.57–0.69 µm/px
 ##   code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
 ##     28 sections, about 0.34–0.35 µm/px
-## Full-resolution PNGs: data/Visium/Prostate/pred_pancancer_section/figures/
-## Each notebook embeds a resized preview so it does not store the full images.
+## The notebooks draw the maps. SAVE_FIGURES=False only displays them.
 ##   SAMPLE=Patient_2 bash code/External_val/Prostate/demo.sh all
 
 set -euo pipefail
@@ -81,7 +80,8 @@ Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/be
 Outputs:
   data/Visium/Prostate/project_all_UNI/{Patient_1__H1_2}/ImgEmbeddings_all_stardist/sc_pth_16_16/
   data/Visium/Prostate/pred_pancancer_section/{Patient_1__H1_2}/{Patient_1__H1_2}_stardist_pred.h5ad
-  data/Visium/Prostate/pred_pancancer_section/figures/
+  data/Visium/Prostate/pred_pancancer_section/{Patient_1__H1_2}/{Patient_1__H1_2}_l2_probs.npz
+Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebooks: code/External_val/Prostate/Pred_visual_prostate_patient1.ipynb
           code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
@@ -110,7 +110,6 @@ run_steps() {
       run_step features || return $?
       run_step h5ad || return $?
       run_step predict || return $?
-      run_step plot || return $?
       ;;
     *)
       usage

@@ -23,8 +23,7 @@
 ##   code/External_val/BRCA_ST/Pred_visual_brca_st_{A,B,C,D,E,F,G,H}.ipynb
 ## A is 9769 (~0.92 µm/px, A1–A6). B–H are ~0.69 µm/px
 ## (B 10737, C 5714, D 10426 have 6 sections; E–H have 3).
-## Full-resolution PNGs: data/ST/BRCA/pred_pancancer_section/figures/
-## Each notebook embeds a resized preview.
+## The notebooks draw the maps. SAVE_FIGURES=False only displays them.
 
 set -euo pipefail
 
@@ -71,7 +70,8 @@ Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/be
 Outputs:
   data/ST/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
   data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/ST/BRCA/pred_pancancer_section/figures/
+  data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebooks: code/External_val/BRCA_ST/Pred_visual_brca_st_{A,B,C,D,E,F,G,H}.ipynb
 Log: code/External_val/BRCA_ST/BRCA_ST.log  (appended; each step and the whole run record elapsed time)
@@ -101,7 +101,6 @@ run_steps() {
       run_step features || return $?
       run_step h5ad || return $?
       run_step predict || return $?
-      run_step plot || return $?
       ;;
     *)
       usage
