@@ -43,23 +43,48 @@ def assign_section_folds(
     *,
     n_splits: int = 5,
     seed: int = 42,
+    existing: dict[str, int] | None = None,
 ) -> dict[str, int]:
     """Map each section to a fold.
 
     Within a dataset, sections are shuffled then assigned round-robin, so every
-    fold holds out ~1/k sections from **each** cohort (CRC with 2 sections only
-    appears in two val folds).
+    fold holds out ~1/k sections from **each** cohort. A cohort with fewer than
+    ``n_splits`` sections appears in that many validation folds (CRC P1/P2/P5
+    occupy three folds).
+
+    ``existing`` freezes section→fold pairs already written to ``fold_plan.csv``.
+    Sections absent from that map are placed on the least-filled fold of their
+    own dataset (lowest fold index wins ties). Adding CRC P5 does not move the
+    sections that were already assigned.
     """
     n_splits = int(n_splits)
     if n_splits < 2:
         raise ValueError(f"n_splits must be >= 2, got {n_splits}")
     if len(section_ids) != len(datasets):
         raise ValueError("section_ids and datasets must be the same length")
-    rng = np.random.default_rng(int(seed))
     by_ds: dict[str, list[str]] = {}
     for sid, ds in zip(section_ids, datasets):
         by_ds.setdefault(str(ds), []).append(str(sid))
-    out: dict[str, int] = {}
+    if existing:
+        out: dict[str, int] = {}
+        for _ds, sids in by_ds.items():
+            counts = {i: 0 for i in range(n_splits)}
+            fresh: list[str] = []
+            for sid in sids:
+                if sid in existing:
+                    fold = int(existing[sid])
+                    out[sid] = fold
+                    if 0 <= fold < n_splits:
+                        counts[fold] += 1
+                else:
+                    fresh.append(sid)
+            for sid in fresh:
+                fold = min(counts, key=lambda f: (counts[f], f))
+                out[sid] = int(fold)
+                counts[fold] += 1
+        return out
+    rng = np.random.default_rng(int(seed))
+    out = {}
     for _ds, sids in by_ds.items():
         order = np.asarray(sids, dtype=object)
         rng.shuffle(order)
@@ -77,11 +102,28 @@ def ok_mask(index: pd.DataFrame) -> pd.Series:
     return s.astype(str).str.lower().isin(["true", "1", "yes"])
 
 
+def load_existing_folds(path: Path) -> dict[str, int]:
+    """Section→fold map from ``fold_plan.csv``, or empty if the file is absent."""
+    path = Path(path)
+    if not path.is_file():
+        return {}
+    old = pd.read_csv(path)
+    if "section_id" not in old.columns or "fold" not in old.columns:
+        return {}
+    out: dict[str, int] = {}
+    for sid, fold in zip(old["section_id"], old["fold"]):
+        if pd.isna(fold):
+            continue
+        out[str(sid)] = int(fold)
+    return out
+
+
 def fold_plan_frame(
     index: pd.DataFrame,
     *,
     n_splits: int = 5,
     seed: int = 42,
+    existing: dict[str, int] | None = None,
 ) -> pd.DataFrame:
     ok = index.loc[ok_mask(index)].copy()
     if ok.empty:
@@ -91,6 +133,7 @@ def fold_plan_frame(
         ok["dataset"].astype(str).tolist(),
         n_splits=n_splits,
         seed=seed,
+        existing=existing or None,
     )
     out = ok.copy()
     out["fold"] = out["section_id"].astype(str).map(mapping)

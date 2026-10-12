@@ -18,12 +18,15 @@
 ##              result_cell_stratified_spatial/  pred_cell_stratified_spatial/
 ##              train_cell_stratified.log
 ##
-## Xenium: Lung, BRCA, CRC (CV train: P1CRC+P2CRC; predict also P5CRC).  ESCC omitted.
+## Xenium: Lung, BRCA, CRC (CV train: P1CRC+P2CRC+P5CRC).  ESCC omitted.
 ## CODEX:  HCC, PDAC c001/c003, GIST c009/c011/c013, GBM.
 ## Full pool ≈ 5.51M cells × 1024-d float32 (~22 GB). Smoke before full train.
 ## Resume: train reuses hce_group_fold_*.pt and only fits missing folds.
 ## A fold killed mid-run is treated as DONE (best-so-far .pt). Delete that file to retrain it.
 ## Exit 137 = Linux OOM killer. Override GPU with CUDA_DEVICE=1 (default 2).
+
+## 2026.10.12 Forget CRC P5, now re-train the model
+
 
 set -euo pipefail
 

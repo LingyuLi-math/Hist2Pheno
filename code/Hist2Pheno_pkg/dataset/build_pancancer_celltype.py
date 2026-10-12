@@ -129,13 +129,13 @@ GT = {
         "path": REPO / "data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx",
         "sheet": "celltype",
         "rel": "data/Xemium/CRC/Annotation/CRC_Barcode_Cell_Type_Matrices.xlsx",
-        "n_he": "2 labeled (P1/P2); P5 HE only",
-        "gt_cells": 364539,
+        "n_he": "3 labeled (P1/P2/P5)",
+        "gt_cells": 494004,
         "l2_train": 38,
         "l12_train": 9,
         "l1_train": 4,
         "l1_native": "Epithelial / Immune / Stromal / Endothelial (Neuronal folded into Stromal)",
-        "note": "Visium HD RCTD DeconvolutionLabel1 transferred onto Xenium cells (singlet only), not native Xenium GT. Drop Unlabeled. Flex L12=9 (Tumor / Intestinal Epithelial / Fibroblast / Smooth Muscle / Myeloid / T cells / B cells / Endothelial / Neuronal). P5 HE + alignment exist; annotation sheet not written yet. Oliveira et al., Nat Genet 2025.",
+        "note": "Visium HD RCTD DeconvolutionLabel1 transferred onto Xenium cells (singlet only), not native Xenium GT. Drop Unlabeled. Flex L12=9 (Tumor / Intestinal Epithelial / Fibroblast / Smooth Muscle / Myeloid / T cells / B cells / Endothelial / Neuronal). Annotation sheets P1_CRC, P2_CRC, and P5_CRC. Oliveira et al., Nat Genet 2025.",
     },
 }
 
@@ -682,7 +682,7 @@ def main() -> None:
             ("How to add Prostate", "New sheet with native labels. Map onto celltype_initial L2 (Tumor / Epithelial / Neural / Stromal). Do not add new L2 rows until celltype_pancancer is defined."),
             ("CRC", "Sheet CRC: Flex / RCTD Label1 (38 L2). v1 collapses Tumor I–V → Tumor, Enterocyte/Goblet/Tuft/NE → Epithelial, enteric glia → Neural, SM/vSM/CAF/pericyte → Stromal; CD4/CD8/NK/B/Plasma/DC/mac/neutrophil/endothelial reuse core classes; Flex NK → NK (not T_cell). v0 fills reserved Enterocyte / Tuft / Nerve / Smooth_muscle. Labels are transferred Visium HD RCTD, not Xenium GT."),
             ("Head names", "Hist2Pheno train heads: L2=fine=final_CT, L12=intermediate=final_sublineage, L1=coarse=final_lineage."),
-            ("Counts", "GT_cells_on_HE from Hist2Pheno_Datasets.xlsx (2026-09-15 snapshot). Lung GT cells = Complete_Cases only. CRC = P1+P2 transferred singlets on HE."),
+            ("Counts", "GT_cells_on_HE from Hist2Pheno_Datasets.xlsx. Lung GT cells = Complete_Cases only. CRC = P1+P2+P5 transferred singlets on HE."),
         ],
         columns=["item", "text"],
     )

@@ -127,9 +127,8 @@ def discover_h5ads(
         elif name == "GIST":
             paths = [p for p in paths if _coverslip_ok(p, GIST_COVERSLIPS)]
         elif name == "CRC" and skip_crc_unlabeled:
-            # Training CV used P1+P2 only. P5CRC has RCTD labels and UNI h5ads;
-            # include it at predict time via discover_crc_predict_extras().
-            paths = [p for p in paths if p.parent.name in {"P1CRC", "P2CRC"}]
+            # Labeled HE in the training CV: P1CRC, P2CRC, P5CRC.
+            paths = [p for p in paths if p.parent.name in {"P1CRC", "P2CRC", "P5CRC"}]
         for p in paths:
             rows.append(
                 {
@@ -152,10 +151,10 @@ def stardist_all_h5ad_for_matched(matched_h5ad: Path) -> Path:
 
 
 def discover_crc_predict_extras(existing_samples: set[str] | None = None) -> list[dict]:
-    """CRC matched sections omitted from pan-cancer CV (currently P5CRC).
+    """CRC matched sections missing from an older pan-cancer index.
 
-    P5 has transferred RCTD GT + UNI embeddings; it was left out of the 5-fold
-    train index so fold_plan stays unchanged.
+    P5CRC is in the training CV. This still appends it when predicting from a
+    ``section_index.csv`` written before P5 was added.
     """
     have = {str(s) for s in (existing_samples or set())}
     extra = []

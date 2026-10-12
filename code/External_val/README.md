@@ -44,10 +44,11 @@ bash code/External_val/<COHORT>/demo.sh all        # features, h5ad, predict
 | HCC | `data/Visium/HCC` | JPEG | 7 (`P1_N` `P1_T` `P2_N` `P3_T` `P5_N` `P5_T` `P7_T`) | ~1.34M | `MPP_UM` (required; 96 dpi is not a pixel size) | `CUDA_DEVICE` default **2** |
 | CRC | `data/Visium/CRC` | OME BigTIFF | 1 (`Visium_V2_Human_Colon_Cancer_P2_tissue_image`) | 579,587 | read by `ome_um_per_px` (~0.274) | `CUDA_DEVICE` default 0 |
 | BRCA_ST | `data/ST/BRCA` | JPEG | 36 HER2ST (A1–H3) | 2,417,153 | 200 µm spot pitch (~0.92 on A, ~0.69 on B–H) | `CUDA_DEVICE` default 0 |
+| Prostate | `data/Visium/Prostate` | JPEG | 35 (patient 1: 7; patient 2: 28) | 7.43M | HEST spot spacing (~0.57–0.69 on patient 1, ~0.34–0.35 on patient 2) | `CUDA_DEVICE` default 0 |
 
-Predicted NPC, BRCA, and HCC outputs are under `data/Visium/{NPC,BRCA,HCC}/pred_pancancer_section/`. CRC and BRCA_ST are wired the same way and have not been predicted yet.
+Predicted outputs are under `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/` and `data/ST/BRCA/pred_pancancer_section/`.
 
-Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md), [`CRC/README.md`](CRC/README.md), [`BRCA_ST/README.md`](BRCA_ST/README.md).
+Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md), [`CRC/README.md`](CRC/README.md), [`BRCA_ST/README.md`](BRCA_ST/README.md), [`Prostate/README.md`](Prostate/README.md).
 
 ## After prediction
 

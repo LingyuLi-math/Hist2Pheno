@@ -688,13 +688,19 @@ class ExternalCohort:
                     point_s,
                 )
                 names = list(dict.fromkeys(labels.tolist()))
+                if len(names) <= 5:
+                    ncol = 1
+                elif len(names) <= 10:
+                    ncol = 2
+                else:
+                    ncol = 3
                 handles = [
                     Line2D(
                         [0],
                         [0],
                         linestyle="none",
                         marker="o",
-                        markersize=5,
+                        markersize=9,
                         markerfacecolor=palettes[head].get(n, (0.5, 0.5, 0.5, 1))[:3],
                         markeredgecolor="none",
                         label=n,
@@ -704,16 +710,20 @@ class ExternalCohort:
                 ax.legend(
                     handles=handles,
                     loc="upper center",
-                    bbox_to_anchor=(0.5, -0.02),
-                    fontsize=6,
+                    bbox_to_anchor=(0.5, -0.04),
+                    fontsize=10,
                     frameon=False,
-                    ncol=2 if len(names) > 8 else 1,
+                    ncol=ncol,
+                    handletextpad=0.3,
+                    columnspacing=0.8,
+                    labelspacing=0.35,
                 )
             fig.suptitle(
                 f"{self.name} {sample}  pan-cancer cross-section Hist2Pheno  (no GT)",
                 fontsize=12,
             )
             fig.tight_layout()
+            fig.subplots_adjust(bottom=0.22, top=0.90)
             if save:
                 out = fig_dir / f"{sample}_spatial_L1_L12_L2.png"
                 fig.savefig(out, dpi=dpi, bbox_inches="tight")

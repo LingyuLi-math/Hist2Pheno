@@ -72,6 +72,7 @@ from pancancer_cv import (  # noqa: E402
     cache_path_for,
     fold_plan_frame,
     is_cell_stratified_splitter,
+    load_existing_folds,
     ok_mask,
     summarize_cell_stratified_folds,
 )
@@ -288,6 +289,7 @@ def prepare_pooled_cv_data(
     cache_dir: Path | None = None,
     cv_k: int = 5,
     group_splitter: str = "cross_dataset_section",
+    fold_of: dict[str, int] | None = None,
 ) -> dict:
     ok = index.loc[ok_mask(index)].copy()
     if ok.empty:
@@ -374,7 +376,18 @@ def prepare_pooled_cv_data(
             flush=True,
         )
     else:
-        fold_of = assign_section_folds(sample_names, datasets, n_splits=cv_k, seed=seed)
+        if fold_of is None:
+            fold_of = assign_section_folds(sample_names, datasets, n_splits=cv_k, seed=seed)
+        else:
+            missing = [s for s in sample_names if s not in fold_of]
+            if missing:
+                fold_of = assign_section_folds(
+                    sample_names,
+                    datasets,
+                    n_splits=cv_k,
+                    seed=seed,
+                    existing=fold_of,
+                )
         cv["fold_id_f"] = np.asarray(
             [fold_of[g2s[int(g)]] for g in cv["groups_f"]], dtype=np.int64
         )
@@ -467,8 +480,20 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         json.dumps({"L1": classes["L1"], "L12": classes["L12"], "L2": classes["L2"]}, indent=2)
     )
     index = load_or_build_index(ctx, index_csv)
-    plan = fold_plan_frame(index, n_splits=ctx.cv_k, seed=ctx.seed)
-    plan.to_csv(ctx.data_root / "fold_plan.csv", index=False)
+    plan_path = ctx.data_root / "fold_plan.csv"
+    existing = load_existing_folds(plan_path)
+    plan = fold_plan_frame(
+        index,
+        n_splits=ctx.cv_k,
+        seed=ctx.seed,
+        existing=existing or None,
+    )
+    plan.to_csv(plan_path, index=False)
+    fold_of = {
+        str(s): int(f)
+        for s, f in zip(plan["section_id"], plan["fold"])
+        if pd.notna(f)
+    }
     print(f"\n[Prepare] {index['dataset'].nunique() if len(index) else 0} datasets", flush=True)
     if not plan.empty:
         print(pd.crosstab(plan["fold"], plan["dataset"]).reindex(columns=COHORT_ORDER).fillna(0).astype(int), flush=True)
@@ -480,6 +505,7 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         cache_dir=ctx.data_root / "label_cache",
         cv_k=ctx.cv_k,
         group_splitter=ctx.group_splitter,
+        fold_of=fold_of,
     )
     if is_cell_stratified_splitter(ctx.group_splitter):
         cell_plan = summarize_cell_stratified_folds(

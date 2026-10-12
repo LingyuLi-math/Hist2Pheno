@@ -23,7 +23,7 @@ _REPO_ROOT = _HERE.parents[1]
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from pancancer_cv import cache_path_for, fold_plan_frame, ok_mask  # noqa: E402
+from pancancer_cv import cache_path_for, fold_plan_frame, load_existing_folds, ok_mask  # noqa: E402
 from pancancer_labels import map_native_series, ontology_class_names  # noqa: E402
 from pancancer_paths import (  # noqa: E402
     COHORT_ORDER,
@@ -140,8 +140,14 @@ def main(argv: list[str] | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     index_path = out_dir / "section_index.csv"
     index.to_csv(index_path, index=False)
-    plan = fold_plan_frame(index, n_splits=args.cv_k, seed=args.seed)
     plan_path = out_dir / "fold_plan.csv"
+    existing = load_existing_folds(plan_path)
+    plan = fold_plan_frame(
+        index,
+        n_splits=args.cv_k,
+        seed=args.seed,
+        existing=existing or None,
+    )
     plan.to_csv(plan_path, index=False)
 
     ok = index.loc[ok_mask(index)]

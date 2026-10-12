@@ -453,7 +453,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--no-crc-p5",
         action="store_true",
-        help="do not add CRC P5CRC (hold-out of pan-cancer CV; still has RCTD GT)",
+        help="do not add CRC P5CRC when it is absent from section_index.csv",
     )
     p.add_argument(
         "--scaler-path",

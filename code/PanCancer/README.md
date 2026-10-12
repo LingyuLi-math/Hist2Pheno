@@ -5,7 +5,7 @@ Joint three-head model (L2 / L12 / L1) trained on all public datasets in
 
 | Tech | Dataset | Notes |
 |------|---------|--------|
-| Xenium | Lung, BRCA, CRC | CRC CV train is P1+P2 transferred RCTD; **P5CRC is predicted** (RCTD GT exists; not in fold_plan) |
+| Xenium | Lung, BRCA, CRC | CRC CV train is P1+P2+P5 transferred RCTD |
 | CODEX | HCC, PDAC, GIST, GBM | PDAC coverslips c001/c003; GIST c009/c011/c013 |
 
 Heads follow the workbook:
@@ -23,7 +23,7 @@ Default splitter is **cross-dataset section** 5-fold (`--group-splitter cross_da
 
 - group = one HE section (`dataset::sample`)
 - within each dataset, sections are shuffled then assigned round-robin to folds 0–4
-- every fold therefore holds out ~1/5 of **each** cohort (CRC has only 2 sections, so it appears in two val folds)
+- every fold therefore holds out ~1/5 of **each** cohort (CRC has 3 sections, so it appears in three val folds)
 - a section is **wholly** train or val; cells from the same slide are never mixed
 - the three heads (L1 / L12 / L2) share that same section split; class mix is **not** stratified
 - `train_balance_sampler` is off (L2/L1 use `class_weight_mode=balanced` only)
@@ -128,7 +128,7 @@ CLI: `PanCancer_predict_visualize.py` (spatial on by default; `--no-spatial-cont
 
 | Step | What |
 |------|------|
-| 1 | Load each of 895 CV matched h5ads **plus CRC P5CRC** (held out of fold_plan; RCTD GT present), remap to pan-cancer L1/L12/L2, predict three heads |
+| 1 | Load each CV matched h5ad, including CRC P1CRC, P2CRC, and P5CRC, remap to pan-cancer L1/L12/L2, predict three heads |
 | 2 | If `{sample}_all_features_stardist.h5ad` exists, predict all StarDist nuclei (row 4; Lung Incomplete_Cases via `--include-incomplete-lung`) |
 | 3 | Write a **4×3** figure per section (rows: GT, Hist2Pheno matched pred, ROC, StarDist-all; cols: L1, L12, L2; per-column legends) |
 | 4 | Notebook `Pred_statistic_visual_pancancer_all.ipynb` pools per-section AUROC CSVs (HCC-style pooled ROC) |

@@ -16,6 +16,7 @@ remove.sh/
 code/CODEX_escc/NCRT_train_validate_cv.ipynb
 code/CODEX_escc/NCRT_train_validate_cv256_3.ipynb
 code/CODEX_escc/NCRT_train_validate_cv_label012.ipynb
+code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
 code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all.ipynb
 code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all_260705.ipynb
 # END AUTO-IGNORED FILES
@@ -30,10 +31,13 @@ code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all_260705.ipynb
 __pycache__/
 code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
 data/
+tools/
+promoter/
 manuscript/
 manuscript_260911/
 code/Hist2Pheno_pkg/dataset/figures_l2_overlap/
 code/Hist2Pheno_pkg/dataset/figures_dataset_overview/
+code/Hist2Pheno_pkg/dataset/figures_fig2_fig3/
 code/Hist2Pheno_pkg/dataset/figures_pancancer_counts/
 tools/
 code_git0725/
