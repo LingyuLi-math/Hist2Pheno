@@ -2,7 +2,7 @@
 
 Apply the pan-cancer **cross-section** checkpoint to a cancer that was not in training. Each cohort has HE and StarDist nuclei only: no 10x `tissue_positions` / `scalefactors` JSON and no ground-truth cell type. There is no ROC. The readout is L1 / L12 / L2 plus TLS / SRI / TNI.
 
-Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py). NPC, BRCA, CRC, and HCC are rows in `_SIMPLE_COHORTS`; `demo.sh` calls `external_validation.py <COHORT> <step>`. Prostate and BRCA_ST keep their own scripts because the sample id and µm/px are not one flat folder. Notebooks construct `ExternalCohort` the same way.
+Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py). NPC, CRC, and HCC are rows in `_SIMPLE_COHORTS`; `demo.sh` calls `external_validation.py <COHORT> <step>`. Prostate, BRCA, and BRCA_ST keep their own scripts (`*_external.py`) because HE suffix and/or µm/px are not one flat folder + one global factor.
 
 Checkpoint (section CV, not cell-stratified):
 
@@ -14,9 +14,11 @@ Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial k=8. Heads: L
 
 Training UNI crops are **8 µm**: 16 px on a **0.5 µm/px** grid. `ExternalCohort.geometry` computes the scale that puts the new slide on that grid, then `patch_size=16`.
 
-For OME TIFF / BigTIFF (NPC, BRCA, CRC), `ome_um_per_px` opens the file with `tifffile` and parses `PhysicalSizeX` / `PhysicalSizeY` from the first page `ImageDescription`. The numbers in the NPC README (0.465 µm/px), the BRCA README (0.548 µm/px), and the CRC README (0.274 µm/px) are what that function returns for those slides. They are not constants in the cohort scripts. Those scripts do not pass `mpp_um`, so every `dry-run` / `features` call reads the file again. CRC sets `he_suffix=".btf"`. TIFF `XResolution = 96` dpi is not used.
+For OME TIFF / BigTIFF (NPC, CRC; BRCA GSM slide), `ome_um_per_px` opens the file with `tifffile` and parses `PhysicalSizeX` / `PhysicalSizeY` from the first page `ImageDescription`. The numbers in the NPC README (0.465 µm/px), BRCA GSM (~0.548 µm/px), and CRC (~0.274 µm/px) are what that function returns. CRC sets `he_suffix=".btf"`. TIFF `XResolution = 96` dpi is not used.
 
 For JPEG (HCC) there is no OME block. Pass the scanner calibration as `MPP_UM`. `geometry` records `mpp_source` as `OME PhysicalSize` or `cohort mpp_um`.
+
+BRCA also has two SpatialVDJ pathology JPEGs: µm/px comes from Visium `scalefactors_json.json` **divided by HE÷SR fullres** (~3.333), ≈0.172 µm/px — see [`BRCA/brca_external.py`](BRCA/brca_external.py). Do not use raw `65/spot_diameter` on those HE files.
 
 `Image_feature_extraction.py` resizes OME TIFF and JPEG/PNG in uint8. StarDist `centroid_x` / `centroid_y` are native full-resolution pixels. The `.pth` filename stores the scaled coordinate divided by `scale`, so the later h5ad match uses the original CSV coordinates (1 px tolerance). `obsm['spatial_HE']` stays on that native grid, so niche radius 55 µm is converted with the same µm/px.
 
@@ -79,7 +81,7 @@ BRCA_ST (36 HER2ST slides) is the same `FORCE=1 predict` pattern; pin its own `C
 | Cohort | Data | HE | Slides | Nuclei | µm/px | GPU default |
 |--------|------|----|--------|--------|-------|-------------|
 | NPC | `data/Visium/NPC` | OME TIFF | 2 | 142,184 + 120,888 | read by `ome_um_per_px` (~0.465) | `CUDA_DEVICE` default 0 |
-| BRCA | `data/Visium/BRCA` | OME TIFF | 1 (`GSM7782699_tissue_image`) | 281,051 | read by `ome_um_per_px` (~0.548) | `CUDA_DEVICE` default 0 |
+| BRCA | `data/Visium/BRCA` | OME TIFF + 2 pathology JPEG | 3 (GSM + `V10F24-113_B1` / `V19T26-031_D1`) | ~281k + ~372k + ~391k | GSM: OME ~0.548; JPEGs: Visium×HE÷SR ~0.172 (`brca_external.py`) | `CUDA_DEVICE` default 0 |
 | HCC | `data/Visium/HCC` | JPEG | 7 (`P1_N` `P1_T` `P2_N` `P3_T` `P5_N` `P5_T` `P7_T`) | ~1.34M | `MPP_UM` (required; 96 dpi is not a pixel size) | `CUDA_DEVICE` default **2** |
 | CRC | `data/Visium/CRC` | OME BigTIFF | 1 (`Visium_V2_Human_Colon_Cancer_P2_tissue_image`) | 579,587 | read by `ome_um_per_px` (~0.274) | `CUDA_DEVICE` default 0 |
 | BRCA_ST | `data/ST/BRCA` | JPEG | 36 HER2ST (A1–H3) | 2,417,153 | 200 µm spot pitch (~0.92 on A, ~0.69 on B–H) | `CUDA_DEVICE` default 0 |
@@ -129,4 +131,4 @@ cohort = ExternalCohort(name="NAME", data_root=repo / "data" / "Visium" / "NAME"
 cohort.main(["dry-run"])
 ```
 
-JPEG with one scanner calibration: also pass `he_suffix=".jpg"` and `mpp_um=...`. BigTIFF: pass `he_suffix=".btf"`. HER2ST (`BRCA_ST`) and the prostate cohort set a per-slide µm/px in the cohort script, from spot spacing, because 72 dpi is not a pixel size. Each `demo.sh` appends screen output and per-step plus whole-run elapsed time to `code/External_val/<COHORT>/<COHORT>.log`.
+JPEG with one scanner calibration: also pass `he_suffix=".jpg"` and `mpp_um=...`. BigTIFF: pass `he_suffix=".btf"`. HER2ST (`BRCA_ST`) uses the 200 µm ST array pitch. Prostate Visium uses that section's `scalefactors_json.json` (`65 / spot_diameter_fullres`), like NPC reads OME per TIFF. Each `demo.sh` appends screen output and per-step plus whole-run elapsed time to `code/External_val/<COHORT>/<COHORT>.log`.

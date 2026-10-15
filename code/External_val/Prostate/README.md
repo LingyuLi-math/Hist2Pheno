@@ -1,6 +1,6 @@
 # Prostate external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.07. Erickson et al., *Nature* 2022 (Mendeley `svw96g68dv`). JPEG HE and StarDist nuclei, no 10x `tissue_positions` JSON in this folder and no cell-type ground truth. Same checkpoint and steps as BRCA / NPC, via `Hist2Pheno_pkg.external_validation.ExternalCohort`. `prostate_external.py` only adapts the on-disk layout and the pixel size.
+2026.10.07. Erickson et al., *Nature* 2022 (Mendeley `svw96g68dv`). JPEG HE and StarDist nuclei, no cell-type ground truth. Patient_1 now has Space Ranger `tissue_positions_list.csv` under `Visium_with_annotation/`. Same checkpoint and steps as BRCA / NPC, via `Hist2Pheno_pkg.external_validation.ExternalCohort`. `prostate_external.py` only adapts the on-disk layout and the pixel size.
 
 Two patients. Section names repeat (`H1_2` is in both), so the sample id is `Patient_1__H1_2`.
 
@@ -11,11 +11,19 @@ Two patients. Section names repeat (`H1_2` is in both), so the sample id is `Pat
 
 StarDist tables: `data/Visium/Prostate/{Patient}/StarDist_Segment/{section}/{section}_Float_prob0.01_nms_0.3.csv` with `centroid_x`, `centroid_y`, `probability`. Those centroids are pixels on the matching JPEG.
 
-## Pixel size: HEST spot spacing, not 72 dpi
+## Pixel size: per-section Visium scalefactors, not BRCA_ST pitch
 
-Every JPEG has EXIF `XResolution = 72` dpi. That is a Photoshop placeholder and is not used.
+Every JPEG has EXIF `XResolution = 72` dpi. That is a Photoshop placeholder and is not used. The HE has no OME `PhysicalSize` (NPC TIFFs do, so NPC reads `PhysicalSizeX` per slide).
 
-These slides have no OME `PhysicalSize`. µm/px is `pixel_size_um_estimated` from [HEST-1k](https://github.com/mahmoodlab/HEST) (`HEST_v1_1_0.csv`, ids MEND139–MEND162), estimated from Visium spot coordinates at 100 µm centre-to-centre on these same pixel dimensions. `prostate_external.py` stores the per-slide value. Sections that HEST did not list (Patient 2 `H1_*`, `H2_3`–`H2_6`, `H3_3`, `V2_3`–`V2_6`) use the median of the HEST slides with the same width and height. `dry-run` prints which source each slide used.
+This cohort is **Visium**. Each section that has `Visium_with_annotation/{section}/scalefactors_json.json` gets its own µm/px, the same way NPC gets a factor per TIFF:
+
+```text
+µm/px = 65 / spot_diameter_fullres
+```
+
+Space Ranger documents `spot_diameter_fullres` as pixels across a theoretical **65 µm** spot. NPC patient 1 is `65 / 139.45 ≈ 0.466`, which matches that slide's OME `0.465`. Do **not** use HER2ST / BRCA_ST `200 µm / array pitch`, and do not use `55 / diameter` (that would disagree with NPC OME).
+
+Patient_2 still uses the HEST table until its `scalefactors_json.json` files are on disk. `dry-run` prints which source each slide used.
 
 A native 16 px crop is about 11 µm on Patient 1 and about 5.5 µm on Patient 2. Training crops were **8 µm** (16 px at 0.5 µm/px).
 

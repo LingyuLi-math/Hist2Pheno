@@ -6,14 +6,20 @@ Patient_1/ and Patient_2/, not one flat OME TIFF folder. The same section
 name (H1_2, V1_2, ...) exists in both patients, so a sample id is
 ``Patient_1__H1_2``.
 
-JPEG EXIF is 72 dpi and is not a pixel size. µm/px is the HEST-1k estimate
-from Visium spot spacing (100 µm centre-to-centre) on these same pixel
-dimensions (MahmoodLab/HEST ``pixel_size_um_estimated``, ids MEND139–MEND162).
-Slides HEST did not list use the median of the same width×height.
+JPEG EXIF is 72 dpi and is not a pixel size. This is Visium, not HER2ST:
+each section with ``Visium_with_annotation/{section}/scalefactors_json.json``
+gets its own µm/px, like NPC reads OME PhysicalSize per TIFF.
+
+Space Ranger ``spot_diameter_fullres`` is pixels across a theoretical **65 µm**
+spot (10x spatial outputs). µm/px = 65 / spot_diameter_fullres. That is the
+same physical scale as NPC OME (~0.465 = 65 / 139.45). Do not use BRCA_ST's
+200 µm array-pitch rule, and do not use 55 / diameter (that disagrees with
+NPC OME). Sections without scalefactors fall back to HEST.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +30,9 @@ if str(_REPO / "code") not in sys.path:
 from Hist2Pheno_pkg.external_validation import ExternalCohort, scale_for_mpp
 
 PATIENTS = ("Patient_1", "Patient_2")
+# 10x Space Ranger: spot_diameter_fullres spans a theoretical 65 µm spot.
+# NPC OME 0.465 µm/px = 65 / patient1 spot_diameter_fullres (139.45).
+_VISIUM_SPOT_DIAMETER_UM = 65.0
 
 # subseries patient_{1,2}_{section} -> HEST pixel_size_um_estimated
 _HEST_MPP = {
@@ -72,8 +81,32 @@ def _split_sample(sample: str) -> tuple[str, str]:
     return patient, section
 
 
+def _visium_dir(patient: str, section: str) -> Path:
+    return _REPO / "data" / "Visium" / "Prostate" / patient / "Visium_with_annotation" / section
+
+
+def mpp_from_scalefactors(patient: str, section: str) -> tuple[float, str] | None:
+    """Per-section Visium factor, analogous to NPC ``ome_um_per_px`` per TIFF."""
+    path = _visium_dir(patient, section) / "scalefactors_json.json"
+    if not path.is_file():
+        return None
+    sf = json.loads(path.read_text())
+    diam_px = float(sf["spot_diameter_fullres"])
+    if diam_px <= 0:
+        raise RuntimeError(f"{path} has non-positive spot_diameter_fullres={diam_px}")
+    mpp = _VISIUM_SPOT_DIAMETER_UM / diam_px
+    return mpp, (
+        f"Visium scalefactors {section} "
+        f"({_VISIUM_SPOT_DIAMETER_UM:.0f} µm / spot_diameter_fullres={diam_px:.4f} px)"
+    )
+
+
 def mpp_for(sample: str, he_path: Path) -> tuple[float, str]:
     """Return (µm/px, source label). JPEG 72 dpi is not used."""
+    patient, section = _split_sample(sample)
+    vis = mpp_from_scalefactors(patient, section)
+    if vis is not None:
+        return vis
     if sample in _HEST_MPP:
         return _HEST_MPP[sample], "HEST spot-spacing estimate"
     from PIL import Image
@@ -128,6 +161,7 @@ class ProstateCohort(ExternalCohort):
             / "ImgEmbeddings_all_stardist"
             / f"sc_pth_{self.patch_size}_{self.patch_size}"
         )
+        vis = _visium_dir(patient, section)
         return {
             "he": patient_root / "HE_images" / f"{section}{self.he_suffix}",
             "csv": (
@@ -136,6 +170,8 @@ class ProstateCohort(ExternalCohort):
                 / section
                 / self.csv_template.format(sample=section)
             ),
+            "visium": vis,
+            "scalefactors": vis / "scalefactors_json.json",
             "emb": emb,
             "feat": self.pred_root / sample / f"{sample}_stardist_features.h5ad",
             "pred": self.pred_root / sample / f"{sample}_stardist_pred.h5ad",

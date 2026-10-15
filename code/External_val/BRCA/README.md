@@ -1,66 +1,105 @@
 # BRCA external validation (pan-cancer cross-section Hist2Pheno)
 
-2026.10.07. One HE slide, StarDist nuclei, no 10x `tissue_positions` / `scalefactors` JSON and no cell-type ground truth. Apply the pan-cancer **cross-section** checkpoint and read out L1 / L12 / L2. The shared steps live in `code/Hist2Pheno_pkg/external_validation.py` (`_SIMPLE_COHORTS["BRCA"]`).
+2026.10.07 — GSM OME TIFF.  
+2026.10.15 — two SpatialVDJ pathology HE JPEGs (same cohort as Zenodo
+`Breast_Cancer_Visium_samples.xlsx` pathology annotations).
 
-| Sample | HE | StarDist nuclei |
-|--------|----|-----------------|
-| `GSM7782699_tissue_image` | `data/Visium/BRCA/HE_images/GSM7782699_tissue_image.tif` (21571 × 19505) | 281,051 |
+Shared steps live in `code/Hist2Pheno_pkg/external_validation.py`. BRCA is **not**
+a `_SIMPLE_COHORTS` row anymore: mixed HE suffixes and per-sample µm/px are handled
+in [`brca_external.py`](brca_external.py).
 
-StarDist table: `data/Visium/BRCA/StarDist_Segment/GSM7782699_tissue_image/GSM7782699_tissue_image_Float_prob0.01_nms_0.3.csv` with columns `centroid_x`, `centroid_y`, `probability`. Those centroids are full-resolution pixels on the same TIFF.
+| Sample | HE | Visium ID | µm/px source | StarDist nuclei |
+|--------|----|-----------|--------------|-----------------|
+| `GSM7782699_tissue_image` | `HE_images/….tif` (21571 × 19505) | — | OME PhysicalSize ~**0.548** | 281,051 |
+| `200715_BC_SA2_C_D_V19F24-113.B1-Spot000001` | `HE_images/….jpg` (48640 × 47104) | **`V10F24-113_B1`** | Visium × HE÷SR ~**0.172** | ~372k |
+| `200219_BC_SA3_V19T26-031_CE_V4-Spot000001` | `HE_images/….jpg` (52736 × 52736) | **`V19T26-031_D1`** | Visium × HE÷SR ~**0.172** | ~391k |
 
-## Pixel size: 0.548 µm/px, not 96 dpi
+StarDist tables:
+`data/Visium/BRCA/StarDist_Segment/{sample}/{sample}_Float_prob0.01_nms_0.3.csv`
+(`centroid_x`, `centroid_y`, `probability` on the HE used for segmentation).
 
-Read with `tifffile` from the page `ImageDescription` (OME-XML):
+Raw pathology images (source):
+`data/Visium/BRCA/npj_data/SpatialVDJ_forZenodo/data/breast_cancer/11_images/raw/`.
+
+Spaceranger (JSON / positions):
+`…/5_spatial_GEX/spaceranger_output/{VisiumID}/outs/spatial/`
+(`scalefactors_json.json`, `tissue_positions_list.csv`, …).  
+Sample map: `Breast_Cancer_Visium_samples.xlsx` (`Raw image` stem → `Visium ID`).
+Note the image string says `V19F24` while the Visium ID is `V10F24-113_B1`.
+
+## Pixel size
+
+### GSM OME TIFF (~0.548 µm/px)
+
+`tifffile` / OME-XML `PhysicalSizeX/Y`. TIFF 96 dpi is ignored. Native 16 px ≈ 8.76 µm;
+rescale by `0.548/0.5 ≈ 1.095` so UNI crops are **8 µm**.
+
+### Zenodo pathology JPEGs (~0.172 µm/px)
+
+These HE files are **~3.333×** Space Ranger fullres (from
+`tissue_hires` size / `tissue_hires_scalef`). On SR fullres,
+`65 / spot_diameter_fullres ≈ 0.573 µm/px`. On the StarDist HE:
 
 ```text
-PhysicalSizeX="0.54758599602876212" PhysicalSizeXUnit="µm"
-PhysicalSizeY="0.54760935218579332"  PhysicalSizeYUnit="µm"
+µm/px_HE = (65 / spot_diameter_fullres) / (HE_width / SR_fullres_width) ≈ 0.172
 ```
 
-X and Y differ only in the fifth decimal, so the slide is **0.548 µm/px**. `external_validation.py` parses `PhysicalSizeX` / `PhysicalSizeY` per TIFF (`ome_um_per_px`); it does not hard-code the number.
+Do **not** apply Prostate’s raw `65 / spot_diameter` to these JPEGs. JPEG EXIF dpi
+is not used. UNI then rescales by `0.172/0.5 ≈ 0.344` (shrink) to the 0.5 µm/px
+training grid; `patch_size=16` → **8 µm**.
 
-The same IFD also has TIFF tags `XResolution = 96`, `YResolution = 96`, `ResolutionUnit = inch`. That is a 96 dpi placeholder and is not used.
-
-A native 16 px crop on this grid is `16 × 0.548 ≈ 8.76 µm`. Pan-cancer UNI crops were **8 µm** (16 px at 0.5 µm/px). Using 16 native pixels here would feed a slightly larger field than training.
-
-## Crop used for UNI
-
-Rescale the HE and the StarDist centroids by `0.548 / 0.5 ≈ 1.095` so the working grid is **0.5 µm/px**, then take `patch_size=16`. The physical field is **8 µm**, the same as training. The factor is greater than 1: this slide is coarser than 0.5 µm/px, so the image is enlarged rather than shrunk. No Visium spot diameter is involved.
-
-`Image_feature_extraction.py` treats this `*.tif` as OME (the XML sits in `ImageDescription` even though the suffix is not `.ome.tif`) and resizes in uint8.
-
-Coordinates stay the original CSV pixels in the `.pth` filename (`{x_scaled}/scale`), so the later h5ad match uses `centroid_x` / `centroid_y` at 1 px tolerance. `obsm['spatial_HE']` is that same native pixel grid. Neighbor identity for k=8 is unchanged by a uniform scale.
+For spot mapping later, scale `tissue_positions` by the same HE÷SR factor (or
+downscale nuclei); StarDist centroids are on the large HE, not SR fullres.
 
 ## Checkpoint
 
-Cross-section weights, not the cell-stratified run:
-
 `data/PanCancer/result_all_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt`
 
-Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial context k=8, same as training. Heads: L1 `pred_lineage`, L12 `pred_sublineage`, L2 `pred_CT`.
+Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial k=8. Heads:
+L1 `pred_lineage`, L12 `pred_sublineage`, L2 `pred_CT`.
 
 ## Commands
 
 `conda activate SeededNTM`, from the repo root.
 
 ```bash
-bash code/External_val/BRCA/demo.sh dry-run    # mpp, scale, nucleus counts
-bash code/External_val/BRCA/demo.sh features   # UNI via code/Image_feature_extraction.py
+bash code/External_val/BRCA/demo.sh dry-run
+bash code/External_val/BRCA/demo.sh features
 bash code/External_val/BRCA/demo.sh h5ad
-bash code/External_val/BRCA/demo.sh predict    # h5ad + l2_probs.npz
+bash code/External_val/BRCA/demo.sh predict
 # or
-bash code/External_val/BRCA/demo.sh all        # features, h5ad, predict
+bash code/External_val/BRCA/demo.sh all
 ```
 
-One slide: `SAMPLE=GSM7782699_tissue_image`. Redo a finished step: `FORCE=1`. GPU: `CUDA_DEVICE=0`.
+One slide:
 
-Screen output is appended to `code/External_val/BRCA/BRCA.log`. Each step and the whole run record elapsed time there.
+```bash
+SAMPLE=GSM7782699_tissue_image bash code/External_val/BRCA/demo.sh all
+SAMPLE=200715_BC_SA2_C_D_V19F24-113.B1-Spot000001 bash code/External_val/BRCA/demo.sh all
+SAMPLE=200219_BC_SA3_V19T26-031_CE_V4-Spot000001 bash code/External_val/BRCA/demo.sh all
+```
+
+`FORCE=1` redo. `CUDA_DEVICE=0`. Log: `code/External_val/BRCA/BRCA.log`.
 
 ## Outputs
 
 | Path | Role |
 |------|------|
-| `data/Visium/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | one UNI `.pth` per in-bounds nucleus |
+| `data/Visium/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/` | UNI `.pth` per in-bounds nucleus |
 | `data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
-| `data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
-`Pred_visual_brca.ipynb` draws the spatial maps, composition bars, and TLS / SRI / TNI indices. `SAVE_FIGURES = False` only displays them. There is no ROC: this slide has no ground-truth cell type.
+| `data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels |
+
+`Pred_visual_brca.ipynb` draws spatial maps, composition, and TLS / SRI / TNI.
+Niche radius uses **per-sample** `geometry(sample)["mpp_um"]`. No ROC (no cell-type GT).
+
+## QuPath (large JPEG)
+
+Pathology HE JPEGs are ~48k–52k on a side; QuPath/Java often cannot open them.
+Convert to a tiled pyramid BigTIFF (keeps the original `.jpg` for Hist2Pheno):
+
+```bash
+conda run --no-capture-output -n SeededNTM python -u \
+  code/External_val/BRCA/jpg_to_qupath_pyramid_tif.py
+```
+
+Outputs next to the JPEGs: `HE_images/{sample}_qupath.tif`. Open those in QuPath.

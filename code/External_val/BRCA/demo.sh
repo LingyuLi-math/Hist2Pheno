@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 ## 2026.10.07 BRCA external validation — pan-cancer cross-section Hist2Pheno
+## 2026.10.15 add two SpatialVDJ pathology HE JPEGs (Visium-corrected µm/px)
 ##
-## One HE slide + StarDist nuclei. No 10x tissue_positions / scalefactors JSON.
-## OME PhysicalSize is ~0.548 µm/px, so a native 16px crop is ~8.76 µm.
-## Features are rescaled to 0.5 µm/px first; patch_size=16 is then an 8 µm field,
-## the same crop the pan-cancer UNI checkpoint was trained on.
+## Samples under data/Visium/BRCA/StarDist_Segment/:
+##   GSM7782699_tissue_image                          OME TIFF ~0.548 µm/px
+##   200715_BC_SA2_C_D_V19F24-113.B1-Spot000001       JPEG; Visium V10F24-113_B1
+##   200219_BC_SA3_V19T26-031_CE_V4-Spot000001        JPEG; Visium V19T26-031_D1
 ##
+## Zenodo JPEGs are ~3.333× Space Ranger fullres. µm/px on the StarDist HE is
+## (65 / spot_diameter_fullres) / (HE÷SR), ~0.172 µm/px — not raw 65/diameter.
+## Entry point: code/External_val/BRCA/brca_external.py (not simple_cohort).
 
 ## 2026.10.07 LLY Run
 ##   bash code/External_val/BRCA/demo.sh dry-run
@@ -17,15 +21,16 @@
 
 ##   bash code/External_val/BRCA/demo.sh all
 ##
-## One slide:  SAMPLE=GSM7782699_tissue_image bash code/External_val/BRCA/demo.sh features
+## One slide:
+##   SAMPLE=GSM7782699_tissue_image bash code/External_val/BRCA/demo.sh features
+##   SAMPLE=200715_BC_SA2_C_D_V19F24-113.B1-Spot000001 bash code/External_val/BRCA/demo.sh all
+##   SAMPLE=200219_BC_SA3_V19T26-031_CE_V4-Spot000001 bash code/External_val/BRCA/demo.sh all
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=0 (default)
 
 ## 2026.10.15 Predict with new model
-## 必须 FORCE=1 predict，否则会跳过 10-07/10-08 的旧 pred
+## 必须 FORCE=1 predict，否则会跳过旧 pred
 # CUDA_DEVICE=0 FORCE=1 bash code/External_val/BRCA/demo.sh predict
-# CUDA_DEVICE=1 FORCE=1 bash code/External_val/NPC/demo.sh predict
-# CUDA_DEVICE=3 FORCE=1 bash code/External_val/CRC/demo.sh predict
 
 set -euo pipefail
 
@@ -68,6 +73,12 @@ usage() {
   cat <<EOF
 Usage: bash code/External_val/BRCA/demo.sh {dry-run|features|h5ad|predict|probs|plot|all}
 
+SAMPLE=GSM7782699_tissue_image
+SAMPLE=200715_BC_SA2_C_D_V19F24-113.B1-Spot000001
+SAMPLE=200219_BC_SA3_V19T26-031_CE_V4-Spot000001
+FORCE=1                     redo a finished step
+CUDA_DEVICE=0               GPU
+
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/Visium/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
@@ -89,7 +100,7 @@ cd "${REPO}"
 
 run_step() {
   extval_time_step "BRCA" "$1" \
-    "${PYTHON}" -u code/Hist2Pheno_pkg/external_validation.py BRCA "$1" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
+    "${PYTHON}" -u code/External_val/BRCA/brca_external.py "$1" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
 }
 
 run_steps() {

@@ -8,12 +8,12 @@ cell-type ground truth, share this pipeline:
 3. Predict L1 / L12 / L2 with spatial k=8.
 4. Cache L2 softmax for histology niche indices, and plot spatial maps.
 
-NPC, BRCA, CRC, and HCC are one row in ``_SIMPLE_COHORTS`` and are started with
+NPC, CRC, and HCC are one row in ``_SIMPLE_COHORTS`` and are started with
 
-``python code/Hist2Pheno_pkg/external_validation.py BRCA dry-run``.
+``python code/Hist2Pheno_pkg/external_validation.py NPC dry-run``.
 
-Prostate and HER2ST stay in their own scripts: sample ids and µm/px are not
-a single folder plus one HE suffix.
+Prostate, BRCA, and HER2ST / BRCA_ST stay in their own scripts: sample ids,
+HE suffix, and µm/px are not a single folder plus one HE suffix.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ PALETTE_TIER = {"L1": "coarse", "L12": "intermediate", "L2": "fine"}
 # JPEG/BigTIFF cohorts that still have one flat StarDist folder.
 _SIMPLE_COHORTS: dict[str, tuple[str, str, bool]] = {
     "NPC": ("data/Visium/NPC", ".tif", False),
-    "BRCA": ("data/Visium/BRCA", ".tif", False),
     "CRC": ("data/Visium/CRC", ".btf", False),
     "HCC": ("data/Visium/HCC", ".jpg", True),
 }
@@ -64,7 +63,7 @@ def _mpp_from_env(name: str) -> float:
 
 
 def simple_cohort(name: str, repo: Path | None = None) -> ExternalCohort:
-    """Build NPC, BRCA, CRC, or HCC. Other cohorts use their own subclass."""
+    """Build NPC, CRC, or HCC. BRCA / Prostate / BRCA_ST use their own subclass."""
     key = name.upper()
     if key not in _SIMPLE_COHORTS:
         known = ", ".join(sorted(_SIMPLE_COHORTS))
@@ -897,13 +896,14 @@ class ExternalCohort:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """``python external_validation.py BRCA dry-run [--sample ID]``."""
+    """``python external_validation.py NPC dry-run [--sample ID]``."""
     argv = list(sys.argv[1:] if argv is None else argv)
     known = ", ".join(sorted(_SIMPLE_COHORTS))
     if not argv or argv[0].upper() not in _SIMPLE_COHORTS:
         raise SystemExit(
             "usage: python code/Hist2Pheno_pkg/external_validation.py "
-            f"{{{known}}} {{dry-run|features|h5ad|predict|probs|plot}}"
+            f"{{{known}}} {{dry-run|features|h5ad|predict|probs|plot}}\n"
+            "BRCA / Prostate / BRCA_ST: use code/External_val/<cohort>/*_external.py"
         )
     name = argv.pop(0)
     return simple_cohort(name).main(argv)

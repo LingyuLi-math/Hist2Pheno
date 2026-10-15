@@ -3,8 +3,10 @@
 ##
 ## Erickson et al. Nature 2022. JPEG HE + StarDist, two patients.
 ## Section names repeat, so a sample id is Patient_1__H1_2.
-## JPEG 72 dpi is not used. µm/px is the HEST spot-spacing estimate
-## (~0.57–0.69 for Patient_1, ~0.34–0.35 for Patient_2).
+## JPEG 72 dpi is not used. This is Visium: each section with
+## Visium_with_annotation/scalefactors_json.json uses
+## µm/px = 65 / spot_diameter_fullres (same physical scale as NPC OME).
+## No BRCA_ST 200 µm pitch. Else HEST (~0.34–0.35 for Patient_2).
 ## Features are rescaled to 0.5 µm/px; patch_size=16 is then an 8 µm field.
 ##
 ## Do not start with every slide: 35 sections, several million nuclei.
@@ -31,9 +33,14 @@
 ##   SAMPLE=Patient_2 bash code/External_val/Prostate/demo.sh all
 
 ## 2026.10.15 Predict with new model
-## Prostate（35 张，~743 万核）：不用 MPP_UM，像素尺寸在脚本里按 HEST spot 间距算。
+## Prostate 不用环境变量 MPP_UM。每个 section 读自己的 scalefactors_json.json：
+## µm/px = 65 / spot_diameter_fullres。没有 json 时退回 HEST。
 # CUDA_DEVICE=1 FORCE=1 SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh predict
 # CUDA_DEVICE=3 FORCE=1 SAMPLE=Patient_2 bash code/External_val/Prostate/demo.sh predict
+
+## 2026.10.15 Patient_1 有 Visium_with_annotation 时，用 Visium 像素尺寸。
+# SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh dry-run
+# CUDA_DEVICE=1 FORCE=1 SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh all
 
 
 set -euo pipefail
