@@ -21,6 +21,11 @@
 ## GPU: CUDA_DEVICE=2 (default for this cohort). Override with CUDA_DEVICE=0.
 ## 0.5 above is only an example. Replace it with the real scanner calibration.
 
+## 2026.10.15 Predict with new model
+## HCC（7 张，~134 万核）：必须带 MPP_UM。上次成功的 features 用的是 0.5。
+# CUDA_DEVICE=0 FORCE=1 MPP_UM=0.5 bash code/External_val/HCC/demo.sh predict
+
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

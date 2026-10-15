@@ -20,6 +20,11 @@
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=0 (default). Override with CUDA_DEVICE=2.
 
+## 2026.10.15 Predict with new model
+# CUDA_DEVICE=0 FORCE=1 bash code/External_val/BRCA/demo.sh predict
+# CUDA_DEVICE=1 FORCE=1 bash code/External_val/NPC/demo.sh predict
+# CUDA_DEVICE=3 FORCE=1 bash code/External_val/CRC/demo.sh predict
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

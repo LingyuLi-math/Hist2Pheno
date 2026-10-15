@@ -110,11 +110,12 @@ class ProstateCohort(ExternalCohort):
         elif only in names:
             hit = [only]
         else:
-            hit = []
+            # series prefix: Patient_2__H1 → Patient_2__H1_1, Patient_2__H1_2, ...
+            hit = [s for s in names if s.startswith(only + "_")]
         if not hit:
             raise SystemExit(
                 f"sample {only!r} not found. Use Patient_1, Patient_2, "
-                "or Patient_1__H1_2."
+                "Patient_2__H1, or Patient_1__H1_2."
             )
         return hit
 

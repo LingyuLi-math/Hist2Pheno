@@ -25,6 +25,10 @@
 ## (B 10737, C 5714, D 10426 have 6 sections; E–H have 3).
 ## The notebooks draw the maps. SAVE_FIGURES=False only displays them.
 
+## 2026.10.15 Predict with new model
+# CUDA_DEVICE=0 FORCE=1 bash code/External_val/BRCA_ST/demo.sh predict
+
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

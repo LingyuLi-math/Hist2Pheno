@@ -22,13 +22,19 @@
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=0 (default)
 ##
-## Figures are two notebooks, not one combined file:
-##   code/External_val/Prostate/Pred_visual_prostate_patient1.ipynb
-##     7 sections, about 0.57–0.69 µm/px
-##   code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
-##     28 sections, about 0.34–0.35 µm/px
+## Figures:
+##   code/External_val/Prostate/Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb
+##     Patient_1 split by series (7 sections, about 0.57–0.69 µm/px)
+##   code/External_val/Prostate/Pred_visual_prostate_patient2_{H1,H2,H3,V1,V2}.ipynb
+##     Patient_2 split by series (28 sections, about 0.34–0.35 µm/px)
 ## The notebooks draw the maps. SAVE_FIGURES=False only displays them.
 ##   SAMPLE=Patient_2 bash code/External_val/Prostate/demo.sh all
+
+## 2026.10.15 Predict with new model
+## Prostate（35 张，~743 万核）：不用 MPP_UM，像素尺寸在脚本里按 HEST spot 间距算。
+# CUDA_DEVICE=1 FORCE=1 SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh predict
+# CUDA_DEVICE=3 FORCE=1 SAMPLE=Patient_2 bash code/External_val/Prostate/demo.sh predict
+
 
 set -euo pipefail
 
@@ -72,6 +78,8 @@ usage() {
 Usage: bash code/External_val/Prostate/demo.sh {dry-run|features|h5ad|predict|probs|plot|all}
 
 SAMPLE=Patient_1            all sections of one patient
+SAMPLE=Patient_1__H1        one Patient_1 series (H1 / H2 / V1)
+SAMPLE=Patient_2__H1        one Patient_2 series (H1 / H2 / H3 / V1 / V2)
 SAMPLE=Patient_1__H1_2      one section
 FORCE=1                     redo a finished step
 CUDA_DEVICE=0               GPU
@@ -83,8 +91,8 @@ Outputs:
   data/Visium/Prostate/pred_pancancer_section/{Patient_1__H1_2}/{Patient_1__H1_2}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
-Notebooks: code/External_val/Prostate/Pred_visual_prostate_patient1.ipynb
-          code/External_val/Prostate/Pred_visual_prostate_patient2.ipynb
+Notebooks: code/External_val/Prostate/Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb
+          code/External_val/Prostate/Pred_visual_prostate_patient2_{H1,H2,H3,V1,V2}.ipynb
 Log: code/External_val/Prostate/Prostate.log  (appended; each step and the whole run record elapsed time)
 EOF
 }

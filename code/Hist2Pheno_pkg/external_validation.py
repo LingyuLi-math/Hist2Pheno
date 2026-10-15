@@ -569,6 +569,21 @@ class ExternalCohort:
     _PLOT_DPI = 160
     _PLOT_FIGSIZE = (17.2, 6.6)
     _PLOT_HE_MAX_SIDE = 1400
+    _SAVE_DPI = 300
+
+    def _savefig_png(self, fig, path: Path, *, dpi: int) -> Path:
+        path = Path(path)
+        if path.suffix.lower() != ".png":
+            path = path.with_suffix(".png")
+        fig.savefig(
+            path,
+            dpi=int(dpi),
+            bbox_inches="tight",
+            facecolor="white",
+            edgecolor="none",
+            format="png",
+        )
+        return path
 
     def _neighbor_spacing_px(self, xy: np.ndarray) -> float:
         """Median nearest-neighbor distance in HE pixels."""
@@ -596,8 +611,13 @@ class ExternalCohort:
         palette,
         title: str,
         point_s: float,
+        *,
+        show_he: bool = True,
     ) -> None:
-        ax.imshow(thumb, extent=(0, full_w, full_h, 0), interpolation="bilinear")
+        if show_he and thumb is not None:
+            ax.imshow(thumb, extent=(0, full_w, full_h, 0), interpolation="bilinear")
+        else:
+            ax.set_facecolor("white")
         ax.set_xlim(0, full_w)
         ax.set_ylim(full_h, 0)
         colors = [palette.get(str(lab), (0.55, 0.55, 0.55, 1.0)) for lab in labels]
@@ -638,6 +658,7 @@ class ExternalCohort:
                     )
         return pd.DataFrame(rows)
 
+    ## 2026.10.15 Add no-HE image background plot
     def plot_spatial(
         self,
         samples: list[str],
@@ -647,14 +668,22 @@ class ExternalCohort:
         he_max_side: int | None = None,
         marker_px: float = 2.2,
         save: bool = False,
+        save_dpi: int | None = None,
     ) -> list:
-        """Draw one L1/L12/L2 panel per sample. ``save=False`` writes nothing."""
+        """Draw L1/L12/L2 for each sample: row 1 on HE, row 2 points only.
+
+        ``dpi`` is the on-screen / notebook figure. Saved JPEGs use ``save_dpi``
+        (300 by default). ``marker_px`` is in display pixels at ``dpi``.
+        """
         ad = importlib.import_module("anndata")
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
 
         figsize = self._PLOT_FIGSIZE if figsize is None else tuple(figsize)
+        if figsize[1] <= 8.5:
+            figsize = (float(figsize[0]), float(figsize[1]) * 1.9)
         dpi = self._PLOT_DPI if dpi is None else int(dpi)
+        save_dpi = self._SAVE_DPI if save_dpi is None else int(save_dpi)
         he_max_side = self._PLOT_HE_MAX_SIDE if he_max_side is None else int(he_max_side)
         point_s = (float(marker_px) * 72.0 / dpi) ** 2
         palettes = self._palette()
@@ -668,76 +697,95 @@ class ExternalCohort:
             xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
             spacing = self._neighbor_spacing_px(xy)
             thumb, full_w, full_h = self._he_thumbnail(paths["he"], max_side=he_max_side)
-            fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi)
+            fig, axes = plt.subplots(2, 3, figsize=figsize, dpi=dpi)
             print(
                 f"[plot] {sample}  nuclei={len(xy):,}  neighbor={spacing:.1f}px  "
-                f"figsize={figsize}  dpi={dpi}  marker_px={marker_px}",
+                f"figsize={figsize}  dpi={dpi}  marker_px={marker_px}  rows=HE+points",
                 flush=True,
             )
-            for ax, head in zip(axes, HEADS):
+            for col, head in enumerate(HEADS):
                 labels = adata.obs[OBS_COL[head]].astype(str).to_numpy()
-                self._scatter_on_he(
-                    ax,
-                    thumb,
-                    full_w,
-                    full_h,
-                    xy,
-                    labels,
-                    palettes[head],
-                    f"{head}  n={adata.n_obs:,}",
-                    point_s,
-                )
-                names = list(dict.fromkeys(labels.tolist()))
+                palette = palettes[head]
+                for row, show_he in enumerate((True, False)):
+                    suffix = "HE" if show_he else "points"
+                    self._scatter_on_he(
+                        axes[row, col],
+                        thumb,
+                        full_w,
+                        full_h,
+                        xy,
+                        labels,
+                        palette,
+                        f"{head}  {suffix}  n={adata.n_obs:,}",
+                        point_s,
+                        show_he=show_he,
+                    )
+                seen = set(map(str, labels.tolist()))
+                names = [n for n in palette if n in seen]
+                names += sorted(seen - set(names))
                 if len(names) <= 5:
                     ncol = 1
                 elif len(names) <= 10:
                     ncol = 2
                 else:
-                    ncol = 3
+                    ncol = 4
                 handles = [
                     Line2D(
                         [0],
                         [0],
                         linestyle="none",
                         marker="o",
-                        markersize=9,
-                        markerfacecolor=palettes[head].get(n, (0.5, 0.5, 0.5, 1))[:3],
+                        markersize=13,
+                        markerfacecolor=palette.get(n, (0.5, 0.5, 0.5, 1))[:3],
                         markeredgecolor="none",
                         label=n,
                     )
                     for n in names
                 ]
-                ax.legend(
+                axes[1, col].legend(
                     handles=handles,
                     loc="upper center",
-                    bbox_to_anchor=(0.5, -0.04),
-                    fontsize=10,
+                    bbox_to_anchor=(0.5, -0.06),
+                    fontsize=13,
                     frameon=False,
                     ncol=ncol,
-                    handletextpad=0.3,
-                    columnspacing=0.8,
-                    labelspacing=0.35,
+                    handletextpad=0.35,
+                    columnspacing=1.0,
+                    labelspacing=0.4,
                 )
             fig.suptitle(
                 f"{self.name} {sample}  pan-cancer cross-section Hist2Pheno  (no GT)",
                 fontsize=12,
             )
             fig.tight_layout()
-            fig.subplots_adjust(bottom=0.22, top=0.90)
+            fig.subplots_adjust(bottom=0.22, top=0.93, hspace=0.28)
             if save:
-                out = fig_dir / f"{sample}_spatial_L1_L12_L2.png"
-                fig.savefig(out, dpi=dpi, bbox_inches="tight")
-                print(f"[plot] {out}", flush=True)
+                out = self._savefig_png(
+                    fig, fig_dir / f"{sample}_spatial_L1_L12_L2.png", dpi=save_dpi
+                )
+                print(f"[plot] {out}  save_dpi={save_dpi}", flush=True)
             figures.append(fig)
         return figures
 
-    def plot_composition(self, samples: list[str], *, save: bool = False) -> list:
-        """Bar charts from ``composition_table``. ``save=False`` writes nothing."""
+    ## 2026.10.15 Add the color for barplot on external validation
+    def plot_composition(
+        self,
+        samples: list[str],
+        *,
+        save: bool = False,
+        dpi: int | None = None,
+        save_dpi: int | None = None,
+    ) -> list:
+        """Bar charts from ``composition_table``, colored by the pan-cancer palette."""
         import matplotlib.pyplot as plt
+        from matplotlib.lines import Line2D
 
+        dpi = self._PLOT_DPI if dpi is None else int(dpi)
+        save_dpi = self._SAVE_DPI if save_dpi is None else int(save_dpi)
         comp = self.composition_table(samples)
         labels = _import_sibling("pancancer_labels")
         class_order = labels.ontology_class_names()
+        palettes = self._palette()
         fig_dir = self.pred_root / "figures"
         if save:
             fig_dir.mkdir(parents=True, exist_ok=True)
@@ -745,25 +793,72 @@ class ExternalCohort:
         for head in HEADS:
             sub = comp[comp["head"] == head]
             present = set(sub["class"].astype(str))
+            palette = palettes[head]
             classes = [c for c in class_order[head] if c in present]
+            classes += [c for c in palette if c in present and c not in classes]
             classes += sorted(present - set(classes))
-            fig, ax = plt.subplots(figsize=(max(8, 0.45 * len(classes) + 2), 4.2))
+            colors = [palette.get(c, (0.55, 0.55, 0.55, 1.0))[:3] for c in classes]
+            fig, ax = plt.subplots(
+                figsize=(max(8, 0.45 * len(classes) + 2), 5.4), dpi=dpi
+            )
             x = np.arange(len(classes))
             width = 0.8 / max(len(samples), 1)
             for i, sample in enumerate(samples):
                 ss = sub[sub["sample"] == sample].set_index("class")
                 vals = [float(ss.loc[c, "fraction"]) if c in ss.index else 0.0 for c in classes]
-                ax.bar(x + i * width, vals, width=width, label=sample)
+                ax.bar(x + i * width, vals, width=width, color=colors)
             ax.set_xticks(x + width * (len(samples) - 1) / 2)
             ax.set_xticklabels(classes, rotation=55, ha="right", fontsize=8)
             ax.set_ylabel("fraction of StarDist nuclei")
             ax.set_title(f"{self.name} predicted composition  {head}")
-            ax.legend(frameon=False, fontsize=8)
+            if len(samples) > 1:
+                short = [str(s).split("__")[-1] for s in samples]
+                ax.text(
+                    0.0,
+                    1.02,
+                    "within each class, left to right: " + "  ·  ".join(short),
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="bottom",
+                    fontsize=8,
+                    color="#333333",
+                )
+            if len(classes) <= 5:
+                ncol = 1
+            elif len(classes) <= 10:
+                ncol = 2
+            else:
+                ncol = 4
+            ax.legend(
+                handles=[
+                    Line2D(
+                        [0],
+                        [0],
+                        linestyle="none",
+                        marker="o",
+                        markersize=12,
+                        markerfacecolor=col,
+                        markeredgecolor="none",
+                        label=name,
+                    )
+                    for name, col in zip(classes, colors)
+                ],
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.28),
+                fontsize=11,
+                frameon=False,
+                ncol=ncol,
+                handletextpad=0.3,
+                columnspacing=0.9,
+                labelspacing=0.35,
+            )
             fig.tight_layout()
+            fig.subplots_adjust(bottom=0.38)
             if save:
-                out = fig_dir / f"composition_{head}.png"
-                fig.savefig(out, dpi=140, bbox_inches="tight")
-                print(f"[plot] {out}", flush=True)
+                out = self._savefig_png(
+                    fig, fig_dir / f"composition_{head}.png", dpi=save_dpi
+                )
+                print(f"[plot] {out}  save_dpi={save_dpi}", flush=True)
             figures.append(fig)
         return figures
 

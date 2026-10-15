@@ -3702,6 +3702,7 @@ def plot_tls_abundance_vs_spatial(
     figsize: tuple[float, float] | None = None,
     dpi: int = 160,
     save_path: str | Path | None = None,
+    save_dpi: int | None = None,
     axes: Sequence | None = None,
     split_spatial_candidates: bool = False,
     score_name: str = "TLS",
@@ -3828,7 +3829,20 @@ def plot_tls_abundance_vs_spatial(
     if created_fig:
         fig.tight_layout()
         if save_path is not None:
-            fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+            out_dpi = int(dpi if save_dpi is None else save_dpi)
+            save_path = Path(save_path)
+            if save_path.suffix.lower() in {".jpg", ".jpeg"}:
+                fig.savefig(
+                    save_path,
+                    dpi=out_dpi,
+                    bbox_inches="tight",
+                    facecolor="white",
+                    edgecolor="none",
+                    format="jpeg",
+                    pil_kwargs={"quality": 95},
+                )
+            else:
+                fig.savefig(save_path, dpi=out_dpi, bbox_inches="tight")
     return fig, axes
 
 

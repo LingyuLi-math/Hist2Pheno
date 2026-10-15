@@ -2337,6 +2337,105 @@ def plot_stardist_level2_roc_pooled(
     )
 
 
+def plot_per_class_auc_bars(
+    per_class,
+    *,
+    roc_color_scheme: str | None = None,
+    class_color_overrides=None,
+    pan_organ: str | None = None,
+    color_tier: str | None = None,
+    ylabel: str = "cell type",
+    title: str = "Per-class one-vs-rest AUROC",
+    macro_auc: float | None = None,
+    save_path=None,
+    show: bool = True,
+    figsize: tuple[float, float] | None = None,
+):
+    """Horizontal AUROC bars using the same cell-type colors as the ROC curves."""
+    import matplotlib.pyplot as plt
+    from plot import _roc_colors_for_class_names, nature_methods_style
+
+    plot_df = per_class.sort_values("auc_ovr", ascending=True).copy()
+    names = plot_df["class_name"].astype(str).tolist()
+    aucs = plot_df["auc_ovr"].to_numpy(dtype=float)
+    colors = _roc_colors_for_class_names(
+        names,
+        roc_color_scheme=roc_color_scheme,
+        class_color_overrides=class_color_overrides,
+        pan_organ=pan_organ,
+        color_tier=color_tier,
+    )
+    face = [c[:3] if len(c) >= 3 else c for c in colors]
+    n = len(names)
+    if figsize is None:
+        # Nature double-column width (~183 mm) keeps labels readable for L2.
+        figsize = (7.2, max(2.4, 0.22 * n + 0.85))
+    if macro_auc is None and len(aucs):
+        macro_auc = float(np.mean(aucs))
+
+    with nature_methods_style():
+        fig, ax = plt.subplots(figsize=figsize, facecolor="white")
+        y = np.arange(n)
+        ax.barh(
+            y,
+            aucs,
+            height=0.72,
+            color=face,
+            edgecolor="white",
+            linewidth=0.25,
+            zorder=2,
+        )
+        ax.axvline(0.5, color="#888888", ls=(0, (2.5, 2.0)), lw=0.7, zorder=1)
+        if macro_auc is not None and np.isfinite(macro_auc):
+            ax.axvline(float(macro_auc), color="#222222", ls=(0, (1.2, 1.2)), lw=0.7, zorder=3)
+            ax.text(
+                float(macro_auc),
+                n - 0.35,
+                f" macro {float(macro_auc):.3f}",
+                ha="left",
+                va="bottom",
+                color="#222222",
+                fontsize=6.5,
+                clip_on=False,
+            )
+        ax.set_yticks(y)
+        ax.set_yticklabels(names)
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(-0.6, n - 0.4)
+        ax.set_xlabel("One-vs-rest AUROC")
+        ax.set_ylabel(ylabel)
+        ax.set_title(title, pad=4)
+        ax.set_xticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        for i, val in enumerate(aucs):
+            ax.text(
+                min(float(val) + 0.012, 0.985),
+                i,
+                f"{val:.3f}",
+                va="center",
+                ha="left",
+                fontsize=6,
+                color="#222222",
+            )
+        ax.tick_params(axis="y", length=0, pad=3)
+        ax.tick_params(axis="x", length=3.0, width=0.6, pad=2)
+        fig.tight_layout()
+        if save_path is not None:
+            save_path = Path(save_path)
+            fig.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")
+            if save_path.suffix.lower() != ".png":
+                fig.savefig(
+                    save_path.with_suffix(".png"),
+                    dpi=300,
+                    bbox_inches="tight",
+                    facecolor="white",
+                )
+            print(f"  ✓ Saved AUROC bars: {save_path}", flush=True)
+        if show:
+            plt.show()
+        plt.close(fig)
+    return fig
+
+
 def plot_pooled_stardist_tier_roc(
     stardist_result_root,
     out_dir,
@@ -2410,21 +2509,21 @@ def plot_pooled_stardist_tier_roc(
             per_class.to_csv(per_class_path, index=False)
 
         if show_barplot and len(per_class):
-            try:
-                import seaborn as sns
-            except ImportError:  # pragma: no cover
-                sns = None
-            if sns is not None:
-                fig, ax = plt.subplots(figsize=(8, max(5, 0.22 * len(per_class))))
-                plot_df = per_class.sort_values("auc_ovr", ascending=True)
-                sns.barplot(data=plot_df, y="class_name", x="auc_ovr", ax=ax, color="steelblue")
-                ax.set_xlim(0, 1)
-                ax.set_xlabel("One-vs-rest AUROC")
-                ax.set_ylabel(spec["names_col"])
-                ax.set_title(f"Per-class AUROC ({tier_key.upper()}, cross-dataset pooled)")
-                plt.tight_layout()
-                if show:
-                    plt.show()
+            bar_pdf = out_dir / (
+                f"roc_stardist_{tier_key}_cross_dataset_all_Complete_Cases_per_class_auc.pdf"
+            )
+            plot_per_class_auc_bars(
+                per_class,
+                roc_color_scheme=eff_scheme,
+                class_color_overrides=class_color_overrides,
+                pan_organ=pan_organ,
+                color_tier=tier_key,
+                ylabel=spec.get("names_col", "class"),
+                title=f"Per-class one-vs-rest AUROC  ({tier_key.upper()})",
+                macro_auc=roc_info.get("macro_auc"),
+                save_path=bar_pdf,
+                show=show,
+            )
 
     return {
         "pooled": pooled,

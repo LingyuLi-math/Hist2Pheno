@@ -25,7 +25,31 @@
 ## A fold killed mid-run is treated as DONE (best-so-far .pt). Delete that file to retrain it.
 ## Exit 137 = Linux OOM killer. Override GPU with CUDA_DEVICE=1 (default 2).
 
+
+##################################
+# Cross-section CV
+##################################
 ## 2026.10.12 Forget CRC P5, now re-train the model
+# bash code/PanCancer/demo.sh section train
+## 2026.10.15 Predict with new model
+# rm -rf data/PanCancer/pred_all_spatial/stardist_roc \
+#        data/PanCancer/pred_all_spatial/pooled_roc \
+#        data/PanCancer/pred_all_spatial/metrics_per_section.csv
+# bash code/PanCancer/demo.sh section predict
+
+##################################
+# Cross-celltype CV
+##################################
+## 2026.10.15 Predict with new model
+## 不要动 result_all_spatial/（那是 cross-section）
+# rm -f data/PanCancer/result_cell_stratified_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer_cellstrat/hce_group_fold_*.pt
+# rm -f data/PanCancer/result_cell_stratified_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer_cellstrat/best_mlp_gpu.pt
+
+## GPU 2 若还在跑 section repredict，换一张卡
+# CUDA_DEVICE=1 bash code/PanCancer/demo.sh celltype train
+
+## 训完再刷预测（覆盖旧 pred）：
+# CUDA_DEVICE=1 bash code/PanCancer/demo.sh celltype repredict
 
 
 set -euo pipefail
@@ -45,8 +69,8 @@ FOLD_DIR_CELL="$OUT/result_cell_stratified_spatial/cross_dataset_cv/${TAG_CELL}"
 usage() {
   cat <<EOF
 Usage:
-  bash code/PanCancer/demo.sh section  {smoke|train|predict|status}
-  bash code/PanCancer/demo.sh celltype {smoke|train|predict|status}
+  bash code/PanCancer/demo.sh section  {smoke|train|predict|repredict|status}
+  bash code/PanCancer/demo.sh celltype {smoke|train|predict|repredict|status}
   bash code/PanCancer/demo.sh index
   bash code/PanCancer/demo.sh status
 
@@ -57,7 +81,8 @@ Protocols (independent output trees):
 Steps:
   smoke     BRCA+GBM, 5k cells/section, 2 epochs (own result_smoke* folder)
   train     full 7-cohort prepare + train + he_validate (resume existing fold .pt)
-  predict   apply that protocol's best_mlp_gpu.pt (does not train)
+  predict   apply best_mlp_gpu.pt; skip sections that already have a panel PNG
+  repredict same as predict but overwrite (use after a new train)
   status    print checkpoints / pred dirs for one or both protocols
   index     scan 7-cohort h5ads → section_index + label_cache (shared)
 
@@ -147,6 +172,8 @@ cmd_section_predict() {
   need_ckpt "$CKPT_SECTION" section
   mkdir -p "$OUT/pred_all_spatial"
   local logp="$OUT/pred_all_spatial/predict.log"
+  local skip=()
+  [[ "${1:-skip}" == "skip" ]] && skip=(--skip-existing)
   {
     echo "===== PanCancer cross-section predict start $(date '+%F %T') ====="
     /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
@@ -155,7 +182,7 @@ cmd_section_predict() {
           --cuda-device "$CUDA_DEVICE" \
           --checkpoint "$CKPT_SECTION" \
           --pred-root "$OUT/pred_all_spatial" \
-          --include-incomplete-lung --skip-existing
+          --include-incomplete-lung "${skip[@]}"
     echo "===== PanCancer cross-section predict end $(date '+%F %T') ====="
   } 2>&1 | tee -a "$logp"
 }
@@ -199,6 +226,8 @@ cmd_celltype_predict() {
   need_ckpt "$CKPT_CELL" celltype
   mkdir -p "$OUT/pred_cell_stratified_spatial"
   local logpc="$OUT/pred_cell_stratified_spatial/predict.log"
+  local skip=()
+  [[ "${1:-skip}" == "skip" ]] && skip=(--skip-existing)
   {
     echo "===== PanCancer cross-celltype predict start $(date '+%F %T') ====="
     /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
@@ -208,7 +237,7 @@ cmd_celltype_predict() {
           --checkpoint "$CKPT_CELL" \
           --pred-root "$OUT/pred_cell_stratified_spatial" \
           --scaler-path "$OUT/result_cell_stratified_spatial/scaler.joblib" \
-          --include-incomplete-lung --skip-existing
+          --include-incomplete-lung "${skip[@]}"
     echo "===== PanCancer cross-celltype predict end $(date '+%F %T') ====="
   } 2>&1 | tee -a "$logpc"
 }
@@ -224,18 +253,20 @@ dispatch() {
       case "$step" in
         smoke) cmd_section_smoke ;;
         train) cmd_section_train ;;
-        predict) cmd_section_predict ;;
+        predict) cmd_section_predict skip ;;
+        repredict) cmd_section_predict overwrite ;;
         status) cmd_status section ;;
-        *) die "section steps: smoke | train | predict | status" ;;
+        *) die "section steps: smoke | train | predict | repredict | status" ;;
       esac
       ;;
     celltype|cell-stratified|cell_stratified|cross-celltype|cross_celltype)
       case "$step" in
         smoke) cmd_celltype_smoke ;;
         train) cmd_celltype_train ;;
-        predict) cmd_celltype_predict ;;
+        predict) cmd_celltype_predict skip ;;
+        repredict) cmd_celltype_predict overwrite ;;
         status) cmd_status celltype ;;
-        *) die "celltype steps: smoke | train | predict | status" ;;
+        *) die "celltype steps: smoke | train | predict | repredict | status" ;;
       esac
       ;;
     *) die "unknown protocol '$proto' (section | celltype | index | status)" ;;

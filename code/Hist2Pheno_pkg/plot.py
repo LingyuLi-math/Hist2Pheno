@@ -1,14 +1,49 @@
 ## 2026.08.13, add function for visualize_celltype_spatial_distribution_all on HCC dataset
 ## 2026.08.13, adjust the code to fit pan_organ and scheme_for_pan_organ and resolve_effective_scheme for CODEX ESCC and Xenium Lung dataset
 
+from contextlib import contextmanager
+from pathlib import Path
+
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import pandas as pd
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 import glob
 import numpy as np
+
+
+@contextmanager
+def nature_methods_style():
+    """Sans-serif, editable Type-42 PDF text, thin spines — Nature Methods-ready."""
+    rc = {
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
+        "font.size": 7,
+        "axes.labelsize": 8,
+        "axes.titlesize": 8,
+        "axes.linewidth": 0.6,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "xtick.labelsize": 7,
+        "ytick.labelsize": 7,
+        "xtick.major.width": 0.6,
+        "ytick.major.width": 0.6,
+        "xtick.major.size": 3.0,
+        "ytick.major.size": 3.0,
+        "xtick.direction": "out",
+        "ytick.direction": "out",
+        "legend.fontsize": 6,
+        "legend.frameon": False,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "savefig.dpi": 300,
+        "savefig.bbox": "tight",
+        "savefig.facecolor": "white",
+    }
+    with mpl.rc_context(rc):
+        yield
 
 
 ## 2026.08.13, add plotting_palettes for HCC dataset
@@ -3175,9 +3210,6 @@ def plot_multiclass_roc_curves(
             "increase figsize[0] or report this as a bug."
         )
 
-    fig = plt.figure(figsize=(fig_w, fig_h))
-    ax = fig.add_axes([left, bottom, sq_w, sq_h])
-
     class_colors = _roc_colors_for_class_names(
         class_names,
         roc_color_scheme=roc_color_scheme,
@@ -3212,60 +3244,73 @@ def plot_multiclass_roc_curves(
     elif _eff:
         print(f"  ROC colors: {_eff} (aligned with dataset spatial palette).")
 
-    for i, curve in enumerate(sel):
-        k, fpr, tpr, ak, thr = curve
-        col = class_colors[k]
-        ax.plot(
-            fpr,
-            tpr,
-            color=col,
-            lw=1.1,
-            label=f"{class_names[k]} ({ak:.3f})",
+    with nature_methods_style():
+        fig = plt.figure(figsize=(fig_w, fig_h), facecolor="white")
+        ax = fig.add_axes([left, bottom, sq_w, sq_h])
+        for i, curve in enumerate(sel):
+            k, fpr, tpr, ak, thr = curve
+            col = class_colors[k]
+            ax.plot(
+                fpr,
+                tpr,
+                color=col,
+                lw=1.15,
+                solid_capstyle="round",
+                label=f"{class_names[k]} ({ak:.3f})",
+            )
+            if threshold_marker is not None and thr is not None and len(thr):
+                thr_arr = np.asarray(thr, dtype=float)
+                finite = np.isfinite(thr_arr)
+                if np.any(finite):
+                    dist = np.abs(thr_arr - float(threshold_marker))
+                    dist = np.where(finite, dist, np.inf)
+                    ji = int(np.argmin(dist))
+                    ax.plot(
+                        fpr[ji],
+                        tpr[ji],
+                        "o",
+                        color=col,
+                        ms=3.6,
+                        mew=0.45,
+                        mec="white",
+                        zorder=5,
+                        clip_on=False,
+                    )
+        ax.plot([0, 1], [0, 1], color="#888888", ls=(0, (2.5, 2.0)), lw=0.7, zorder=0)
+        ax.set_xlim(0.0, 1.0)
+        ax.set_ylim(0.0, 1.0)
+        ax.set_box_aspect(1)
+        ax.set_xlabel("False-positive rate")
+        ax.set_ylabel("True-positive rate")
+        ax.set_title(
+            f"{title}\nmacro-AUROC = {macro_auc:.3f}   ({len(sel)} classes)",
+            pad=5,
         )
-        if threshold_marker is not None and thr is not None and len(thr):
-            thr_arr = np.asarray(thr, dtype=float)
-            finite = np.isfinite(thr_arr)
-            if np.any(finite):
-                dist = np.abs(thr_arr - float(threshold_marker))
-                dist = np.where(finite, dist, np.inf)
-                ji = int(np.argmin(dist))
-                ax.plot(
-                    fpr[ji],
-                    tpr[ji],
-                    "o",
-                    color=col,
-                    ms=5.5,
-                    mew=0.65,
-                    mec="white",
-                    zorder=5,
-                    clip_on=False,
-                )
-    ax.plot([0, 1], [0, 1], "k--", lw=0.8, alpha=0.45)
-    ax.set_xlim(0.0, 1.0)
-    ax.set_ylim(0.0, 1.0)
-    ax.set_box_aspect(1)
-    ax.set_xlabel("False positive rate")
-    ax.set_ylabel("True positive rate")
-    ax.set_title(
-        f"{title}\nmacro AUROC = {macro_auc:.4f}  |  top {len(sel)} / {len(curves)} classes",
-        fontsize=9,
-        pad=6,
-    )
-    ax.legend(
-        bbox_to_anchor=(1.02, 1),
-        loc="upper left",
-        fontsize=8,
-        frameon=False,
-        ncol=ncol,
-    )
-    ax.grid(True, alpha=0.25)
-    # Manual margins: avoid tight_layout fighting a physically square ROC axes.
-    fig.subplots_adjust(left=left - 0.02, bottom=bottom - 0.03, right=0.995, top=0.94)
-    if save_path:
-        plt.savefig(save_path, dpi=dpi, bbox_inches="tight")
-        print(f"  ✓ Saved ROC figure: {save_path}")
-    plt.show()
-    plt.close(fig)
+        ax.legend(
+            bbox_to_anchor=(1.03, 1.01),
+            loc="upper left",
+            frameon=False,
+            ncol=ncol,
+            handlelength=1.15,
+            handletextpad=0.4,
+            columnspacing=0.9,
+            labelspacing=0.22,
+            borderaxespad=0.0,
+        )
+        ax.grid(False)
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.6)
+        ax.tick_params(length=3.0, width=0.6, pad=2)
+        fig.subplots_adjust(left=left - 0.02, bottom=bottom - 0.03, right=0.995, top=0.94)
+        if save_path:
+            plt.savefig(save_path, dpi=dpi, bbox_inches="tight", facecolor="white")
+            print(f"  ✓ Saved ROC figure: {save_path}")
+            save_p = Path(save_path)
+            if save_p.suffix.lower() != ".png":
+                png_path = save_p.with_suffix(".png")
+                plt.savefig(png_path, dpi=dpi, bbox_inches="tight", facecolor="white")
+        plt.show()
+        plt.close(fig)
 
     auc_df = pd.DataFrame(per_rows).sort_values("auc_ovr", ascending=False) if per_rows else None
     return {"macro_auc": macro_auc, "per_class_auc": auc_df}
