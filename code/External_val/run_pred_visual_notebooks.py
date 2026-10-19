@@ -49,6 +49,9 @@ _ORDER = (
     "Prostate/Pred_visual_prostate_patient2_H3.ipynb",
     "Prostate/Pred_visual_prostate_patient2_V1.ipynb",
     "Prostate/Pred_visual_prostate_patient2_V2.ipynb",
+    "Lung_Incomplete/Pred_visual_lung_incomplete.ipynb",
+    "HCC_unlabel/Pred_visual_hcc_unlabel.ipynb",
+    "PDAC_unlabel/Pred_visual_pdac_unlabel.ipynb",
 )
 
 

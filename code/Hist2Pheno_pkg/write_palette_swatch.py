@@ -3,7 +3,8 @@
 
     python code/Hist2Pheno_pkg/write_palette_swatch.py
 
-The PNG is ``Hist2Pheno_pkg/figures/pancancer_L1_L12_L2_swatch.png``.
+The PNG and PDF are ``Hist2Pheno_pkg/figures/pancancer_L1_L12_L2_swatch.png``
+and ``.pdf``.
 Colors come from ``plotting_palettes.palette_for``, the same map as the
 spatial plots.
 """

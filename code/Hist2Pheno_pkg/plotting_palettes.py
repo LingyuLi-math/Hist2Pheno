@@ -971,7 +971,8 @@ def write_pancancer_swatch(path: str | Path | None = None) -> Path:
     fig.suptitle("Pan-cancer palette", fontsize=12, y=0.98)
     out = Path(path) if path is not None else Path(__file__).resolve().parent / "figures" / "pancancer_L1_L12_L2_swatch.png"
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, dpi=200, bbox_inches="tight")
+    fig.savefig(out, dpi=200, bbox_inches="tight", facecolor="white")
+    fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight", facecolor="white")
     plt.close(fig)
     return out
 

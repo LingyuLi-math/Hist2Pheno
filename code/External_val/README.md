@@ -87,6 +87,16 @@ BRCA_ST (36 HER2ST slides) is the same `FORCE=1 predict` pattern; pin its own `C
 | BRCA_ST | `data/ST/BRCA` | JPEG | 36 HER2ST (A1–H3) | 2,417,153 | 200 µm spot pitch (~0.92 on A, ~0.69 on B–H) | `CUDA_DEVICE` default 0 |
 | Prostate | `data/Visium/Prostate` | JPEG | 35 (patient 1: 7; patient 2: 28) | 7.43M | HEST spot spacing (~0.57–0.69 on patient 1, ~0.34–0.35 on patient 2) | `CUDA_DEVICE` default 0 |
 
+Unlabeled leftovers from the **seven training cohorts** (StarDist-all UNI already extracted; no cell-type GT; notebooks draw 3–5 slides; **no niches**):
+
+| Folder | Data | Slides | What is plotted |
+|--------|------|--------|-----------------|
+| [`Lung_Incomplete`](Lung_Incomplete/README.md) | Xenium `Incomplete_Cases` | 20 (preds already in `pred_all_spatial/incomplete_lung/`) | all 20; top 5 L2 AUROC first |
+| [`HCC_unlabel`](HCC_unlabel/README.md) | CODEX HCC rest (not Visium `HCC/`) | 8 | 5 largest |
+| [`PDAC_unlabel`](PDAC_unlabel/README.md) | CODEX PDAC Incomplete_Cases | 195 | 5 largest |
+
+Shared CLI: [`unlabeled_external.py`](unlabeled_external.py). HCC/PDAC preds go to `data/PanCancer/pred_unlabel/`.
+
 Predicted outputs are under `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/` and `data/ST/BRCA/pred_pancancer_section/`.
 
 Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md), [`CRC/README.md`](CRC/README.md), [`BRCA_ST/README.md`](BRCA_ST/README.md), [`Prostate/README.md`](Prostate/README.md).

@@ -442,6 +442,12 @@ def parse_args(argv=None):
     p.add_argument("--checkpoint", type=Path, default=DEFAULT_CKPT)
     p.add_argument("--index-csv", type=Path, default=None)
     p.add_argument("--datasets", nargs="*", default=None)
+    p.add_argument(
+        "--fold",
+        type=int,
+        default=None,
+        help="restrict to this cross-section CV fold from fold_plan.csv (0 = held-out for best_mlp)",
+    )
     p.add_argument("--max-sections", type=int, default=None)
     p.add_argument("--no-spatial-context", action="store_true", help="disable kNN fusion (checkpoint is spatial)")
     p.add_argument("--spatial-k", type=int, default=DEFAULT_SPATIAL_K)
@@ -521,8 +527,23 @@ def main(argv=None) -> int:
     index = full_index
     if args.datasets:
         index = index[index["dataset"].isin(args.datasets)].copy()
+    if args.fold is not None:
+        plan_path = Path(args.data_root) / "fold_plan.csv"
+        if not plan_path.is_file():
+            raise FileNotFoundError(plan_path)
+        plan = pd.read_csv(plan_path)
+        keys = set(
+            zip(
+                plan.loc[plan["fold"].astype(int) == int(args.fold), "dataset"].astype(str),
+                plan.loc[plan["fold"].astype(int) == int(args.fold), "sample"].astype(str),
+            )
+        )
+        index = index[
+            index.apply(lambda r: (str(r.dataset), str(r.sample)) in keys, axis=1)
+        ].copy()
+        print(f"  fold={int(args.fold)}  {len(index)} sections from {plan_path.name}", flush=True)
     want_crc = (not args.datasets) or ("CRC" in args.datasets)
-    if want_crc and not args.no_crc_p5:
+    if want_crc and not args.no_crc_p5 and args.fold is None:
         have = set(index["sample"].astype(str)) if len(index) and "sample" in index.columns else set()
         extra = discover_crc_predict_extras(have)
         if extra:
