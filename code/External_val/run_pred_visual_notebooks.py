@@ -33,6 +33,8 @@ _ORDER = (
     "NPC/Pred_visual_npc.ipynb",
     "CRC/Pred_visual_crc.ipynb",
     "HCC/Pred_visual_hcc.ipynb",
+    "HCC_nature/Pred_visual_hcc_nature_ready.ipynb",
+    "HCC_nature/Pred_visual_hcc_nature.ipynb",
     "BRCA_ST/Pred_visual_brca_st_A.ipynb",
     "BRCA_ST/Pred_visual_brca_st_B.ipynb",
     "BRCA_ST/Pred_visual_brca_st_C.ipynb",

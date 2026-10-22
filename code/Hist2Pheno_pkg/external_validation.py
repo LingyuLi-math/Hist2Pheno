@@ -8,7 +8,7 @@ cell-type ground truth, share this pipeline:
 3. Predict L1 / L12 / L2 with spatial k=8.
 4. Cache L2 softmax for histology niche indices, and plot spatial maps.
 
-NPC, CRC, and HCC are one row in ``_SIMPLE_COHORTS`` and are started with
+NPC, CRC, HCC, and HCC_NATURE are rows in ``_SIMPLE_COHORTS`` and are started with
 
 ``python code/Hist2Pheno_pkg/external_validation.py NPC dry-run``.
 
@@ -26,6 +26,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -39,13 +40,19 @@ HEADS = ("L1", "L12", "L2")
 OBS_COL = {"L1": "pred_lineage", "L12": "pred_sublineage", "L2": "pred_CT"}
 PALETTE_TIER = {"L1": "coarse", "L12": "intermediate", "L2": "fine"}
 
-# name -> (data path under the repo, HE suffix, whether MPP_UM is required).
-# JPEG/BigTIFF cohorts that still have one flat StarDist folder.
-_SIMPLE_COHORTS: dict[str, tuple[str, str, bool]] = {
+# name -> (data path under the repo, HE suffix, whether MPP_UM is required
+# for every slide). Optional 4th/5th: demo-folder name, fallback µm/px when a
+# TIFF has no plausible OME / Aperio calibration.
+# JPEG/BigTIFF / mixed-TIFF cohorts that still have one flat StarDist folder.
+_SIMPLE_COHORTS: dict[str, tuple] = {
     "NPC": ("data/Visium/NPC", ".tif", False),
     "CRC": ("data/Visium/CRC", ".btf", False),
     "HCC": ("data/Visium/HCC", ".jpg", True),
+    "HCC_NATURE": ("data/Visium/HCC/nature_data", ".tif", False, "HCC_nature", 0.5),
 }
+
+# OME PhysicalSize outside this range is treated as a dpi placeholder (e.g. 84.67 µm/px = 300 dpi).
+_PLAUSIBLE_MPP_UM = (0.05, 5.0)
 
 
 def _mpp_from_env(name: str) -> float:
@@ -63,19 +70,23 @@ def _mpp_from_env(name: str) -> float:
 
 
 def simple_cohort(name: str, repo: Path | None = None) -> ExternalCohort:
-    """Build NPC, CRC, or HCC. BRCA / Prostate / BRCA_ST use their own subclass."""
+    """Build NPC, CRC, HCC, or HCC_NATURE. BRCA / Prostate / BRCA_ST use their own subclass."""
     key = name.upper()
     if key not in _SIMPLE_COHORTS:
         known = ", ".join(sorted(_SIMPLE_COHORTS))
         raise SystemExit(f"unknown cohort {name!r}. Choose one of: {known}")
-    rel, suffix, need_mpp = _SIMPLE_COHORTS[key]
+    spec = _SIMPLE_COHORTS[key]
+    rel, suffix, need_mpp = spec[0], spec[1], spec[2]
+    display = spec[3] if len(spec) > 3 else key
+    fallback = spec[4] if len(spec) > 4 else None
     root = Path(repo) if repo is not None else Path(__file__).resolve().parents[2]
     return ExternalCohort(
-        name=key,
+        name=str(display),
         data_root=root / rel,
         repo=root,
         he_suffix=suffix,
-        mpp_um=_mpp_from_env(key) if need_mpp else None,
+        mpp_um=_mpp_from_env(display) if need_mpp else None,
+        mpp_fallback=None if need_mpp else (float(fallback) if fallback is not None else None),
     )
 
 
@@ -109,6 +120,49 @@ def ome_um_per_px(tif_path: Path) -> tuple[float, float]:
     if not mx or not my:
         raise RuntimeError(f"no OME PhysicalSize in {tif_path}")
     return float(mx.group(1)), float(my.group(1))
+
+
+def aperio_um_per_px(tif_path: Path) -> float | None:
+    """Aperio ``MPP`` of the raster we load (not ``OriginalMPP`` of the 20× SVS)."""
+    import re
+    import tifffile
+
+    with tifffile.TiffFile(tif_path) as tif:
+        desc = tif.pages[0].description or ""
+    match = re.search(r"(?:^|\|)\s*MPP\s*=\s*([0-9.]+)", desc)
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def _plausible_mpp(mpp: float) -> bool:
+    lo, hi = _PLAUSIBLE_MPP_UM
+    return lo < float(mpp) < hi
+
+
+def resolve_he_um_per_px(
+    he_path: Path,
+    *,
+    fallback: float | None = None,
+) -> tuple[float, str]:
+    """µm/px for one HE file: plausible OME, else Aperio MPP, else ``fallback``."""
+    try:
+        mpp_x, mpp_y = ome_um_per_px(he_path)
+        if abs(mpp_x - mpp_y) > 1e-3:
+            raise RuntimeError(f"{he_path.name} anisotropic pixel size {mpp_x} vs {mpp_y}")
+        if _plausible_mpp(mpp_x):
+            return float(mpp_x), "OME PhysicalSize"
+    except RuntimeError:
+        pass
+    aperio = aperio_um_per_px(he_path)
+    if aperio is not None and _plausible_mpp(aperio):
+        return float(aperio), "Aperio MPP"
+    if fallback is not None and fallback > 0:
+        return float(fallback), "cohort mpp_um fallback"
+    raise RuntimeError(
+        f"no plausible µm/px in {he_path}. "
+        "Set MPP_UM to the scanner calibration, or pass mpp_fallback on the cohort."
+    )
 
 
 def scale_for_mpp(mpp: float, target_um_per_px: float = TARGET_UM_PER_PX) -> float:
@@ -150,6 +204,7 @@ class ExternalCohort:
     csv_template: str = "{sample}_Float_prob0.01_nms_0.3.csv"
     he_suffix: str = ".tif"
     mpp_um: float | None = None
+    mpp_fallback: float | None = None
     checkpoint: Path | None = None
     scaler: Path | None = None
     dataset_tag: str = "PanCancer"
@@ -196,16 +251,32 @@ class ExternalCohort:
     def _uns_key(self) -> str:
         return f"{self.name.lower()}_uni"
 
-    def discover_samples(self, only: str | None = None) -> list[str]:
+    def discover_samples(self, only: str | Sequence[str] | None = None) -> list[str]:
         root = self.stardist_root
         names = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
-        if only:
-            if only not in names:
-                raise SystemExit(f"sample {only!r} not under {root}")
-            return [only]
         if not names:
             raise SystemExit(f"no StarDist sample folders in {root}")
-        return names
+        if only is None or only == "":
+            return names
+        if isinstance(only, str):
+            wanted = [only]
+        else:
+            wanted = [str(s).strip() for s in only if str(s).strip()]
+        missing = [s for s in wanted if s not in names]
+        if missing:
+            raise SystemExit(f"sample {missing[0]!r} not under {root}")
+        keep = set(wanted)
+        return [s for s in names if s in keep]
+
+    def has_uni_embeddings(self, sample: str) -> bool:
+        """True when UNI `.pth` count is at least 90% of the StarDist CSV."""
+        paths = self.sample_paths(sample)
+        if not paths["csv"].is_file():
+            return False
+        n_rows = n_csv_rows(paths["csv"])
+        if n_rows <= 0:
+            return False
+        return n_pth(paths["emb"]) >= int(0.9 * n_rows)
 
     def sample_paths(self, sample: str) -> dict[str, Path]:
         emb = (
@@ -229,15 +300,17 @@ class ExternalCohort:
             raise FileNotFoundError(paths["he"])
         if self.mpp_um is not None:
             mpp_x = float(self.mpp_um)
+            mpp_source = "cohort mpp_um"
         else:
-            mpp_x, mpp_y = ome_um_per_px(paths["he"])
-            if abs(mpp_x - mpp_y) > 1e-3:
-                raise RuntimeError(f"{sample} anisotropic pixel size {mpp_x} vs {mpp_y}")
+            env_raw = os.environ.get("MPP_UM", "").strip()
+            env_fallback = float(env_raw) if env_raw else None
+            fallback = env_fallback if env_fallback is not None else self.mpp_fallback
+            mpp_x, mpp_source = resolve_he_um_per_px(paths["he"], fallback=fallback)
         scale = scale_for_mpp(mpp_x, self.target_um_per_px)
         return {
             "sample": sample,
             "mpp_um": mpp_x,
-            "mpp_source": "cohort mpp_um" if self.mpp_um is not None else "OME PhysicalSize",
+            "mpp_source": mpp_source,
             "scale": scale,
             "scale_image": abs(scale - 1.0) > 1e-3,
             "patch_size_px": self.patch_size,
@@ -875,11 +948,26 @@ class ExternalCohort:
             description=f"{self.name} external validation (pan-cancer cross-section Hist2Pheno)"
         )
         p.add_argument("step", choices=("dry-run", "features", "h5ad", "predict", "probs", "plot"))
-        p.add_argument("--sample", default="", help="one sample id; default all StarDist folders")
+        p.add_argument(
+            "--sample",
+            action="append",
+            default=[],
+            help="sample id; repeat or pass several. Default: all StarDist folders",
+        )
+        p.add_argument(
+            "--ready",
+            action="store_true",
+            help="keep only slides whose UNI embeddings are already on disk",
+        )
         p.add_argument("--force", action="store_true")
         p.add_argument("--allow-cpu", action="store_true")
         args = p.parse_args(argv)
         samples = self.discover_samples(args.sample or None)
+        if args.ready:
+            samples = [s for s in samples if self.has_uni_embeddings(s)]
+            if not samples:
+                raise SystemExit("no slides have UNI embeddings yet (--ready)")
+            print("[ready] " + ", ".join(samples), flush=True)
         if args.step == "dry-run":
             self.cmd_dry_run(samples)
         elif args.step == "features":

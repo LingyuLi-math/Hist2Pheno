@@ -361,6 +361,188 @@ def plot_spatial_gt_pred(
     return fig
 
 
+def _scatter_classes(ax, xy, labels, palette, s: float) -> list[str]:
+    labels = np.asarray(labels, dtype=str)
+    present = {str(x) for x in labels}
+    names = [n for n in palette if n in present]
+    for name in names:
+        mask = labels == name
+        if not np.any(mask):
+            continue
+        ax.scatter(
+            xy[mask, 0],
+            xy[mask, 1],
+            s=s,
+            c=[palette[name][:3]],
+            linewidths=0,
+            rasterized=True,
+        )
+    ax.set_aspect("equal")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    return names
+
+
+def save_celltype_and_roc(
+    dataset: str,
+    sample: str,
+    *,
+    dpi: int = 300,
+    celltype_figsize: tuple[float, float] | None = None,
+    stardist_figsize: tuple[float, float] | None = None,
+    roc_figsize: tuple[float, float] = (4.0, 4.0),
+    bar_figsize: tuple[float, float] | None = None,
+    point_s: float = 0.45,
+) -> dict[str, Path]:
+    """Cell-type maps as a 300 dpi PNG; ROC in the pooled StarDist style as PDF.
+
+    Written next to the existing 4x3 panel. ROC uses ``plot_multiclass_roc_curves``
+    with ``pan_organ='pancancer'`` and a per-class AUROC bar, same as
+    ``plot_pooled_stardist_tier_rocs``.
+    """
+    import anndata as ad
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+    from panel_figures import load_stardist_roc_tiers
+
+    paths = pred_paths(dataset, sample)
+    matched = ad.read_h5ad(paths["pred"])
+    star = ad.read_h5ad(paths["star"]) if paths["star"].is_file() else None
+    xy = np.asarray(matched.obsm["spatial_HE"], dtype=np.float64)
+    xy_star = None if star is None else np.asarray(star.obsm["spatial_HE"], dtype=np.float64)
+    heads = ("L1", "L12", "L2")
+    matched_rows = (
+        ("GT", xy, {h: matched.obs[OBS_GT[h]].astype(str).to_numpy() for h in heads}, point_s),
+        ("Hist2Pheno", xy, {h: matched.obs[OBS_PR[h]].astype(str).to_numpy() for h in heads}, point_s),
+    )
+    star_rows = ()
+    if xy_star is not None:
+        star_rows = (
+            (
+                "StarDist all",
+                xy_star,
+                {h: star.obs[OBS_PR[h]].astype(str).to_numpy() for h in heads},
+                point_s * 0.4,
+            ),
+        )
+
+    def _render(rows, figsize, stem):
+        n_leg = max(len(PALETTES[h]) for h in heads)
+        extra_h = 0.18 * int(np.ceil(n_leg / 2)) + 0.35
+        if figsize is None:
+            figsize = (12.5, 3.3 * len(rows) + extra_h)
+        fig, axes = plt.subplots(
+            len(rows) + 1,
+            3,
+            figsize=figsize,
+            gridspec_kw={"height_ratios": [3.0] * len(rows) + [extra_h]},
+        )
+        seen = {h: set() for h in heads}
+        for i, (row_name, row_xy, labs, s) in enumerate(rows):
+            for j, head in enumerate(heads):
+                ax = axes[i, j]
+                names = _scatter_classes(ax, row_xy, labs[head], PALETTES[head], s)
+                seen[head].update(names)
+                if j == 0:
+                    ax.set_ylabel(row_name, fontsize=8)
+                if i == 0:
+                    ax.set_title(head, fontsize=11)
+        frame = np.concatenate([row_xy for _, row_xy, _, _ in rows], axis=0)
+        pad_x = (frame[:, 0].max() - frame[:, 0].min()) * 0.02
+        pad_y = (frame[:, 1].max() - frame[:, 1].min()) * 0.02
+        xlim = (frame[:, 0].min() - pad_x, frame[:, 0].max() + pad_x)
+        ylim = (frame[:, 1].max() + pad_y, frame[:, 1].min() - pad_y)
+        for i in range(len(rows)):
+            for j in range(3):
+                axes[i, j].set_xlim(*xlim)
+                axes[i, j].set_ylim(*ylim)
+        for j, head in enumerate(heads):
+            axL = axes[-1, j]
+            axL.axis("off")
+            names = [n for n in PALETTES[head] if n in seen[head]]
+            axL.legend(
+                handles=[
+                    Line2D(
+                        [0], [0], linestyle="none", marker="o", markersize=6,
+                        markerfacecolor=PALETTES[head][n][:3], markeredgecolor="none", label=n,
+                    )
+                    for n in names
+                ],
+                loc="upper center",
+                fontsize=6.5,
+                frameon=False,
+                ncol=2 if len(names) > 6 else 1,
+                columnspacing=0.7,
+                handletextpad=0.3,
+                borderaxespad=0.0,
+            )
+        fig.suptitle(sample, fontsize=12, y=0.995)
+        fig.tight_layout(rect=(0, 0, 1, 0.98))
+        out_path = paths["panel"].with_name(stem)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor="white")
+        plt.close(fig)
+        return out_path
+
+    celltype = _render(matched_rows, celltype_figsize, f"{sample}_celltype.png")
+    stardist = None
+    if star_rows:
+        stardist = _render(star_rows, stardist_figsize, f"{sample}_celltype_stardist.png")
+
+    from uni_label_cv_helpers import plot_per_class_auc_bars, plot_stardist_tier_roc_pooled
+
+    tiers = load_stardist_roc_tiers(paths["roc"])
+    roc_titles = {
+        "l2": "StarDist Level2 ROC",
+        "l12": "StarDist Level12 ROC",
+        "l1": "StarDist Level1 ROC",
+    }
+    roc_pdfs: dict[str, Path] = {}
+    for tier in ("l2", "l12", "l1"):
+        head = tier.upper() if tier != "l12" else "L12"
+        names, y_true, y_score = tiers[head]
+        pdf = paths["panel"].with_name(f"{sample}_roc_{tier}.pdf")
+        info = plot_stardist_tier_roc_pooled(
+            y_true,
+            y_score,
+            names,
+            tier=tier,
+            save_path=str(pdf),
+            title=f"{roc_titles[tier]} — {sample}",
+            pan_organ="pancancer",
+            figsize=roc_figsize,
+        )
+        roc_pdfs[tier] = pdf
+        per_class = None if info is None else info.get("per_class_auc")
+        if per_class is not None and len(per_class):
+            plot_per_class_auc_bars(
+                per_class,
+                pan_organ="pancancer",
+                color_tier=tier,
+                ylabel="cell type",
+                title=f"Per-class one-vs-rest AUROC  ({head})",
+                macro_auc=info.get("macro_auc"),
+                figsize=bar_figsize,
+                save_path=paths["panel"].with_name(f"{sample}_roc_{tier}_per_class_auc.pdf"),
+                show=False,
+            )
+            macro = info.get("macro_auc", float("nan"))
+            print(f"  {head} macro AUROC = {float(macro):.4f}")
+
+    old_roc = paths["panel"].with_name(f"{sample}_roc.pdf")
+    if old_roc.is_file():
+        old_roc.unlink()
+
+    out = {"panel": paths["panel"], "celltype": celltype, "stardist": stardist, "roc": roc_pdfs["l2"]}
+    print(f"panel: {paths['panel']}")
+    print(f"celltype: {celltype}")
+    if stardist is not None:
+        print(f"stardist: {stardist}")
+    for tier, pdf in roc_pdfs.items():
+        print(f"roc {tier}: {pdf}")
+    return out
+
+
 def cmd_status(dataset: str | None = None) -> None:
     cov = coverage(dataset)
     print(f"checkpoint  {'yes' if CKPT.is_file() else 'NO'}  {CKPT}")

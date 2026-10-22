@@ -2,7 +2,7 @@
 
 Apply the pan-cancer **cross-section** checkpoint to a cancer that was not in training. Each cohort has HE and StarDist nuclei only: no 10x `tissue_positions` / `scalefactors` JSON and no ground-truth cell type. There is no ROC. The readout is L1 / L12 / L2 plus TLS / SRI / TNI.
 
-Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py). NPC, CRC, and HCC are rows in `_SIMPLE_COHORTS`; `demo.sh` calls `external_validation.py <COHORT> <step>`. Prostate, BRCA, and BRCA_ST keep their own scripts (`*_external.py`) because HE suffix and/or µm/px are not one flat folder + one global factor.
+Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py). NPC, CRC, HCC, and HCC_NATURE are rows in `_SIMPLE_COHORTS`; `demo.sh` calls `external_validation.py <COHORT> <step>`. Prostate, BRCA, and BRCA_ST keep their own scripts (`*_external.py`) because HE suffix and/or µm/px are not one flat folder + one global factor.
 
 Checkpoint (section CV, not cell-stratified):
 
@@ -16,7 +16,7 @@ Training UNI crops are **8 µm**: 16 px on a **0.5 µm/px** grid. `ExternalCohor
 
 For OME TIFF / BigTIFF (NPC, CRC; BRCA GSM slide), `ome_um_per_px` opens the file with `tifffile` and parses `PhysicalSizeX` / `PhysicalSizeY` from the first page `ImageDescription`. The numbers in the NPC README (0.465 µm/px), BRCA GSM (~0.548 µm/px), and CRC (~0.274 µm/px) are what that function returns. CRC sets `he_suffix=".btf"`. TIFF `XResolution = 96` dpi is not used.
 
-For JPEG (HCC) there is no OME block. Pass the scanner calibration as `MPP_UM`. `geometry` records `mpp_source` as `OME PhysicalSize` or `cohort mpp_um`.
+For JPEG (HCC) there is no OME block. Pass the scanner calibration as `MPP_UM`. Mixed Nature TIFFs (`HCC_nature`) resolve µm/px **per slide**: plausible OME `PhysicalSize` (0.05–5 µm/px), else Aperio `MPP`, else fallback 0.5. A 300 dpi OME tag (84.67 µm/px on `L-8015`) is skipped. `geometry` records `mpp_source` as `OME PhysicalSize`, `Aperio MPP`, `cohort mpp_um`, or `cohort mpp_um fallback`.
 
 BRCA also has two SpatialVDJ pathology JPEGs: µm/px comes from Visium `scalefactors_json.json` **divided by HE÷SR fullres** (~3.333), ≈0.172 µm/px — see [`BRCA/brca_external.py`](BRCA/brca_external.py). Do not use raw `65/spot_diameter` on those HE files.
 
@@ -63,6 +63,17 @@ CUDA_DEVICE=0 FORCE=1 MPP_UM=0.5 bash code/External_val/HCC/demo.sh predict
 
 Then `code/External_val/HCC/Pred_visual_hcc.ipynb`. Keep `MPP_UM=0.5` unless you truly change the scanner calibration (that would also require re-extracting UNI).
 
+### HCC Nature (17 TIFFs, ~3.68M nuclei)
+
+Distinct from the seven JPEG Visium slides. Data: `data/Visium/HCC/nature_data/`. µm/px is **per slide** (OME ~0.501, Aperio `MPP` on `L-8001_HE`, fallback 0.5). `MPP_UM` is optional. Default GPU is **0**. OME sample ids keep the `.ome` stem (`SAMPLE=L-8006_HE.ome`).
+
+```bash
+CUDA_DEVICE=0 bash code/External_val/HCC_nature/demo.sh dry-run
+CUDA_DEVICE=0 bash code/External_val/HCC_nature/demo.sh all
+```
+
+Then `code/External_val/HCC_nature/Pred_visual_hcc_nature.ipynb`.
+
 ### Prostate (35 JPEGs, ~7.43M nuclei)
 
 No `MPP_UM`: µm/px comes from HEST spot spacing in `prostate_external.py` (~0.57–0.69 on Patient 1, ~0.34–0.35 on Patient 2). Do not start all 35 slides on a GPU that is already busy. Default GPU is 0. `SAMPLE` is a patient or one section (`Patient_1__H1_2`).
@@ -83,6 +94,7 @@ BRCA_ST (36 HER2ST slides) is the same `FORCE=1 predict` pattern; pin its own `C
 | NPC | `data/Visium/NPC` | OME TIFF | 2 | 142,184 + 120,888 | read by `ome_um_per_px` (~0.465) | `CUDA_DEVICE` default 0 |
 | BRCA | `data/Visium/BRCA` | OME TIFF + 2 pathology JPEG | 3 (GSM + `V10F24-113_B1` / `V19T26-031_D1`) | ~281k + ~372k + ~391k | GSM: OME ~0.548; JPEGs: Visium×HE÷SR ~0.172 (`brca_external.py`) | `CUDA_DEVICE` default 0 |
 | HCC | `data/Visium/HCC` | JPEG | 7 (`P1_N` `P1_T` `P2_N` `P3_T` `P5_N` `P5_T` `P7_T`) | ~1.34M | `MPP_UM` (required; 96 dpi is not a pixel size) | `CUDA_DEVICE` default **2** |
+| HCC_nature | `data/Visium/HCC/nature_data` | TIFF + OME TIFF | 17 (`L-8001_HE` … `L-8017_1_HE.ome`) | ~3.68M | per slide (OME ~0.501 / Aperio / fallback 0.5) | `CUDA_DEVICE` default 0 |
 | CRC | `data/Visium/CRC` | OME BigTIFF | 1 (`Visium_V2_Human_Colon_Cancer_P2_tissue_image`) | 579,587 | read by `ome_um_per_px` (~0.274) | `CUDA_DEVICE` default 0 |
 | BRCA_ST | `data/ST/BRCA` | JPEG | 36 HER2ST (A1–H3) | 2,417,153 | 200 µm spot pitch (~0.92 on A, ~0.69 on B–H) | `CUDA_DEVICE` default 0 |
 | Prostate | `data/Visium/Prostate` | JPEG | 35 (patient 1: 7; patient 2: 28) | 7.43M | HEST spot spacing (~0.57–0.69 on patient 1, ~0.34–0.35 on patient 2) | `CUDA_DEVICE` default 0 |
@@ -97,9 +109,9 @@ Unlabeled leftovers from the **seven training cohorts** (StarDist-all UNI alread
 
 Shared CLI: [`unlabeled_external.py`](unlabeled_external.py). HCC/PDAC preds go to `data/PanCancer/pred_unlabel/`.
 
-Predicted outputs are under `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/` and `data/ST/BRCA/pred_pancancer_section/`.
+Predicted outputs are under `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/`, `data/Visium/HCC/nature_data/pred_pancancer_section/`, and `data/ST/BRCA/pred_pancancer_section/`.
 
-Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md), [`CRC/README.md`](CRC/README.md), [`BRCA_ST/README.md`](BRCA_ST/README.md), [`Prostate/README.md`](Prostate/README.md).
+Per-cohort notes: [`NPC/README.md`](NPC/README.md), [`BRCA/README.md`](BRCA/README.md), [`HCC/README.md`](HCC/README.md), [`HCC_nature/README.md`](HCC_nature/README.md), [`CRC/README.md`](CRC/README.md), [`BRCA_ST/README.md`](BRCA_ST/README.md), [`Prostate/README.md`](Prostate/README.md).
 
 ## After prediction
 
@@ -113,7 +125,7 @@ Do not click Run All in the editor: that embeds rasters into the `.ipynb` and Pr
 cd /home/lingyu/ssd2/Python/Hist2Pheno
 conda activate SeededNTM
 
-# all cohorts (BRCA → NPC → CRC → HCC → BRCA_ST A–H → Prostate series)
+# all cohorts (BRCA → NPC → CRC → HCC → HCC_nature → BRCA_ST A–H → Prostate series)
 # default SAVE_FIGURES=1 → 300 dpi PNG under pred_pancancer_section/figures/
 screen -S extval_nb
 bash code/External_val/demo.sh notebooks

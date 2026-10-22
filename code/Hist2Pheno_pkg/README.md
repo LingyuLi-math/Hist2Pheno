@@ -6,6 +6,12 @@ for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
 ## Changelog
 
+### 2026-10-21 — HCC Nature mixed TIFFs in `external_validation`
+
+- `_SIMPLE_COHORTS["HCC_NATURE"]` points at `data/Visium/HCC/nature_data`.
+- Per-slide µm/px: plausible OME `PhysicalSize`, else Aperio `MPP`, else fallback 0.5.
+- OME sizes outside 0.05–5 µm/px (300 dpi placeholders) are ignored.
+
 ### 2026-10-08 — Ontology and fold assignment live in the package
 
 - `pancancer_labels.py` and `pancancer_cv.py` moved here from `code/PanCancer`. The PanCancer copies re-export them so existing scripts and notebooks keep `from pancancer_labels import ...`.
