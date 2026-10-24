@@ -16,6 +16,7 @@ remove.sh/
 code/CODEX_escc/NCRT_train_validate_cv.ipynb
 code/CODEX_escc/NCRT_train_validate_cv256_3.ipynb
 code/CODEX_escc/NCRT_train_validate_cv_label012.ipynb
+code/External_val/PDAC_unlabel/Pred_visual_pdac_unlabel.ipynb
 code/H-optimus-1/assets/ckpts/pytorch_model.bin
 code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
 code/UNI2/assets/ckpts/uni2-h/pytorch_model.bin

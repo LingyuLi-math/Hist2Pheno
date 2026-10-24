@@ -6,7 +6,7 @@
 
 **Predict cell phenotypes from H&E histology**, then map those predictions in space.
 
-Hist2Pheno takes per-nucleus H&E patch embeddings (UNI / HIPT / Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS / SRI / TNI on CODEX; FRI / ARI / APNB on Xenium).
+Hist2Pheno takes per-nucleus H&E patch embeddings (UNI, UNI2-h, H-optimus-1, HIPT, Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS / SRI / TNI on CODEX; FRI / ARI / APNB on Xenium). The published pan-cancer track uses **UNI**.
 
 The **s1167 Pancreas (PDAC) and GIST TMA tracks** are complete end-to-end: match → UNI → h5ad → cross-dataset CV → StarDist inference → pooled ROC / clinical AUROC → TLS / SRI / TNI.
 
@@ -19,7 +19,7 @@ Raw images and embeddings are **not** shipped in this repository. Each dataset f
 ## Highlights
 
 - **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, CV helpers, and the TLS / SRI / TNI engine
-- **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / HIPT / Virchow2 patches from H&E
+- **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / UNI2-h / H-optimus-1 / HIPT / Virchow2 patches from H&E. Weights are gated and **not** in git; see the checkpoint READMEs below.
 - **Multi-cohort pipelines** — Xenium lung / BRCA / CRC plus CODEX HCC, ESCC, PDAC, GIST, and GBM; optional **joint pan-cancer** three-head model on the shared 20/8/5 ontology ([`code/PanCancer/`](code/PanCancer/))
 - **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei. The pan-cancer **section-CV** checkpoint is applied to (i) **new cancers** with HE + StarDist and no GT ([`code/External_val/`](code/External_val/): NPC, Visium BRCA / CRC / HCC, HCC Nature / TIMES, HER2ST, prostate) and (ii) **unlabeled leftovers** from the training cohorts (Lung Incomplete, CODEX HCC rest, PDAC Incomplete_Cases; no niches)
 - **Internal fold-0 validation** — same checkpoint on the 182 held-out training sections ([`code/Internal_val/`](code/Internal_val/)); 4×3 GT / pred / ROC / StarDist-all panels plus composition
@@ -107,6 +107,10 @@ Hist2Pheno/
 │   │   └── dataset/             # Hist2Pheno_Datasets.xlsx + PanCancerCellType.xlsx
 │   ├── Image_feature_extraction.py
 │   ├── StarDist_nuclei_segmente.py
+│   ├── UNI/                     # UNI-l weights (not shipped)
+│   ├── UNI2/                    # UNI2-h weights (not shipped)
+│   ├── H-optimus-1/             # H-optimus-1 weights (not shipped)
+│   ├── HIPT/
 │   ├── Xenium_lung/
 │   ├── Xenium_brca/             # 10x FFPE breast preview (rep1 / rep2)
 │   ├── Xenium_crc/              # Oliveira et al. Visium HD + Xenium CRC
@@ -123,7 +127,7 @@ Hist2Pheno/
 └── LICENSE
 ```
 
-Processed data are expected under a local `data/` tree (gitignored). Do not commit `.h5ad`, `.pth`, TIFF, or model weights.
+Processed data are expected under a local `data/` tree (gitignored). Do not commit `.h5ad`, `.pth`, `.bin`, TIFF, or model weights. `python ignore_large_files.py` scans `code/` for files over 100 MiB and lists them in `.gitignore`.
 
 ## Installation
 
@@ -161,7 +165,15 @@ conda activate Hist2Pheno
 
 Then run Hist2Pheno with `conda activate Hist2Pheno` (or `conda run -n Hist2Pheno ...`) instead of `SeededNTM`.
 
-UNI / HIPT / Virchow2 **weights are not bundled**. Place them where `Image_feature_extraction.py` expects, or pass the checkpoint path used in your dataset `demo.sh`.
+Foundation-model **weights are not bundled** (GitHub’s 100 MiB limit; UNI2-h is ~2.6 GiB, H-optimus-1 ~4.3 GiB). Accept each model’s license on Hugging Face, `huggingface_hub.login()` with a token, then download into the paths below. Dataset `demo.sh` scripts use **UNI** unless you change `--method`.
+
+| `--method` | Hugging Face | Put `pytorch_model.bin` here | Embedding | Notes |
+|------------|--------------|------------------------------|-----------|-------|
+| `UNI` | [MahmoodLab/uni](https://huggingface.co/MahmoodLab/uni) | [`code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/`](code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/README.md) | 1024-d | default pan-cancer embedder (~1.2 GiB); ViT-L/16 class token |
+| `UNI2` | [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) | [`code/UNI2/assets/ckpts/uni2-h/`](code/UNI2/assets/ckpts/uni2-h/README.md) | 1536-d | gated; ViT-H/14 class token |
+| `H-optimus-1` | [bioptimus/H-optimus-1](https://huggingface.co/bioptimus/H-optimus-1) | [`code/H-optimus-1/assets/ckpts/`](code/H-optimus-1/assets/ckpts/README.md) | 1536-d | gated; **CC BY-NC-ND 4.0**; ViT-G/14 class token; `--patch_size 224` |
+| `HIPT` | [mahmoodlab/HIPT](https://github.com/mahmoodlab/HIPT) | `code/HIPT/HIPT_4K/Checkpoints/` | 384-d | ViT-256 CLS (`vit256_small_dino.pth`) |
+| `Virchow2` | [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) | Hugging Face hub (timm) | 1280-d | gated; per-token after dropping 5 register tokens |
 
 Scripts add `code/Hist2Pheno_pkg` to `sys.path`. For ad-hoc imports:
 
@@ -425,7 +437,17 @@ Unified mapping across the seven public cohorts in the workbook: [`PanCancerCell
 
 ## Citation
 
-If you use this code, please cite the associated publication (TBD) and the source datasets:
+If you use this code, please cite the associated publication (TBD), the **histology foundation model** you extract embeddings with, and the source datasets.
+
+### Histology foundation models
+
+- **UNI** — Chen RJ, Ding T, Lu MY, et al. Towards a general-purpose foundation model for computational pathology. *Nat Med* **30**, 850–862 (2024). [doi:10.1038/s41591-024-02857-3](https://www.nature.com/articles/s41591-024-02857-3). Weights: [MahmoodLab/uni](https://huggingface.co/MahmoodLab/uni). Default pan-cancer embedder in this repo.
+- **UNI2-h** — same UNI paper; ViT-H/14 weights [MahmoodLab/UNI2-h](https://huggingface.co/MahmoodLab/UNI2-h) (gated). Local path: [`code/UNI2/assets/ckpts/uni2-h/`](code/UNI2/assets/ckpts/uni2-h/README.md).
+- **H-optimus-1** — Bioptimus. [bioptimus/H-optimus-1](https://huggingface.co/bioptimus/H-optimus-1). CC BY-NC-ND 4.0; non-commercial research only (gated). Local path: [`code/H-optimus-1/assets/ckpts/`](code/H-optimus-1/assets/ckpts/README.md).
+- **HIPT** — Chen RJ, Chen C, Li Y, et al. Scaling vision transformers to gigapixel images via hierarchical self-supervised learning. *CVPR* (2022). [doi:10.1109/CVPR52688.2022.01567](https://openaccess.thecvf.com/content/CVPR2022/html/Chen_Scaling_Vision_Transformers_to_Gigapixel_Images_via_Hierarchical_Self-Supervised_Learning_CVPR_2022_paper.html). Code / checkpoints: [mahmoodlab/HIPT](https://github.com/mahmoodlab/HIPT).
+- **Virchow2** — Zimmermann E, Vorontsov E, Viret J, et al. Virchow2: Scaling self-supervised mixed magnification models in pathology. *arXiv* (2024). [arXiv:2408.00738](https://arxiv.org/abs/2408.00738). Weights: [paige-ai/Virchow2](https://huggingface.co/paige-ai/Virchow2) (gated).
+
+### Datasets
 
 - **CODEX HCC** — Wu Z, Boen J, Jindal S, et al. Spatial multi-omics and deep learning reveal fingerprints of immunotherapy response and resistance in hepatocellular carcinoma. *bioRxiv* (2025). [doi:10.1101/2025.06.11.656869](https://doi.org/10.1101/2025.06.11.656869). Processed CODEX / Visium / co-registered H&E: [Zenodo](https://doi.org/10.5281/zenodo.15392699).
 - **HCC Nature / TIMES (external validation)** — Jia G, He P, Dai T, et al. Spatial immune scoring system predicts hepatocellular carcinoma recurrence. *Nature* **640**, 1031–1041 (2025). [doi:10.1038/s41586-025-08668-x](https://www.nature.com/articles/s41586-025-08668-x). HE + StarDist only in this repo; extras on [OSF](https://osf.io/db3uf/). See [`code/External_val/HCC_nature/README.md`](code/External_val/HCC_nature/README.md).
@@ -441,4 +463,4 @@ If you use this code, please cite the associated publication (TBD) and the sourc
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-Foundation-model checkpoints (UNI, HIPT, Virchow2) keep their original licenses and must be obtained separately.
+Foundation-model checkpoints (UNI, UNI2-h, H-optimus-1, HIPT, Virchow2) keep their original licenses and must be obtained separately. H-optimus-1 is **CC BY-NC-ND 4.0** (non-commercial).
