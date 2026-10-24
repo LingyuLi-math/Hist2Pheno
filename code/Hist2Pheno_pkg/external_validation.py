@@ -643,19 +643,38 @@ class ExternalCohort:
     _PLOT_HE_MAX_SIDE = 1400
     _SAVE_DPI = 300
 
-    def _savefig_png(self, fig, path: Path, *, dpi: int) -> Path:
+    def _save_figure(
+        self, fig, path: Path, *, dpi: int, png: bool = True, pdf: bool = True
+    ) -> Path:
+        import matplotlib as mpl
+
+        mpl.rcParams["pdf.fonttype"] = 42
+        mpl.rcParams["ps.fonttype"] = 42
         path = Path(path)
-        if path.suffix.lower() != ".png":
-            path = path.with_suffix(".png")
-        fig.savefig(
-            path,
-            dpi=int(dpi),
-            bbox_inches="tight",
-            facecolor="white",
-            edgecolor="none",
-            format="png",
-        )
-        return path
+        written = path
+        if png:
+            written = path.with_suffix(".png")
+            fig.savefig(
+                written,
+                dpi=int(dpi),
+                bbox_inches="tight",
+                facecolor="white",
+                edgecolor="none",
+                format="png",
+            )
+        if pdf:
+            written = path.with_suffix(".pdf")
+            fig.savefig(
+                written,
+                bbox_inches="tight",
+                facecolor="white",
+                edgecolor="none",
+                format="pdf",
+            )
+        return written
+
+    def _savefig_png(self, fig, path: Path, *, dpi: int) -> Path:
+        return self._save_figure(fig, path, dpi=dpi, png=True, pdf=True)
 
     def _neighbor_spacing_px(self, xy: np.ndarray) -> float:
         """Median nearest-neighbor distance in HE pixels."""
@@ -740,12 +759,14 @@ class ExternalCohort:
         he_max_side: int | None = None,
         marker_px: float = 2.2,
         save: bool = False,
+        save_pdf: bool | None = None,
         save_dpi: int | None = None,
     ) -> list:
         """Draw L1/L12/L2 for each sample: row 1 on HE, row 2 points only.
 
-        ``dpi`` is the on-screen / notebook figure. Saved JPEGs use ``save_dpi``
-        (300 by default). ``marker_px`` is in display pixels at ``dpi``.
+        ``dpi`` is the on-screen / notebook figure. Saved PNGs use ``save_dpi``
+        (300 by default). ``save_pdf=None`` follows ``save``; PDF uses Type 42
+        so labels stay editable. ``marker_px`` is in display pixels at ``dpi``.
         """
         ad = importlib.import_module("anndata")
         import matplotlib.pyplot as plt
@@ -756,11 +777,13 @@ class ExternalCohort:
             figsize = (float(figsize[0]), float(figsize[1]) * 1.9)
         dpi = self._PLOT_DPI if dpi is None else int(dpi)
         save_dpi = self._SAVE_DPI if save_dpi is None else int(save_dpi)
+        if save_pdf is None:
+            save_pdf = bool(save)
         he_max_side = self._PLOT_HE_MAX_SIDE if he_max_side is None else int(he_max_side)
         point_s = (float(marker_px) * 72.0 / dpi) ** 2
         palettes = self._palette()
         fig_dir = self.pred_root / "figures"
-        if save:
+        if save or save_pdf:
             fig_dir.mkdir(parents=True, exist_ok=True)
         figures = []
         for sample in samples:
@@ -831,9 +854,13 @@ class ExternalCohort:
             )
             fig.tight_layout()
             fig.subplots_adjust(bottom=0.22, top=0.93, hspace=0.28)
-            if save:
-                out = self._savefig_png(
-                    fig, fig_dir / f"{sample}_spatial_L1_L12_L2.png", dpi=save_dpi
+            if save or save_pdf:
+                out = self._save_figure(
+                    fig,
+                    fig_dir / f"{sample}_spatial_L1_L12_L2.png",
+                    dpi=save_dpi,
+                    png=bool(save),
+                    pdf=bool(save_pdf),
                 )
                 print(f"[plot] {out}  save_dpi={save_dpi}", flush=True)
             figures.append(fig)

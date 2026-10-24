@@ -21,7 +21,7 @@ Raw images and embeddings are **not** shipped in this repository. Each dataset f
 - **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, CV helpers, and the TLS / SRI / TNI engine
 - **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / HIPT / Virchow2 patches from H&E
 - **Multi-cohort pipelines** — Xenium lung / BRCA / CRC plus CODEX HCC, ESCC, PDAC, GIST, and GBM; optional **joint pan-cancer** three-head model on the shared 20/8/5 ontology ([`code/PanCancer/`](code/PanCancer/))
-- **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei. The pan-cancer **section-CV** checkpoint is applied to (i) **new cancers** with HE + StarDist and no GT ([`code/External_val/`](code/External_val/): NPC, Visium BRCA / CRC / HCC, HER2ST, prostate) and (ii) **unlabeled leftovers** from the training cohorts (Lung Incomplete, CODEX HCC rest, PDAC Incomplete_Cases; no niches)
+- **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei. The pan-cancer **section-CV** checkpoint is applied to (i) **new cancers** with HE + StarDist and no GT ([`code/External_val/`](code/External_val/): NPC, Visium BRCA / CRC / HCC, HCC Nature / TIMES, HER2ST, prostate) and (ii) **unlabeled leftovers** from the training cohorts (Lung Incomplete, CODEX HCC rest, PDAC Incomplete_Cases; no niches)
 - **Internal fold-0 validation** — same checkpoint on the 182 held-out training sections ([`code/Internal_val/`](code/Internal_val/)); 4×3 GT / pred / ROC / StarDist-all panels plus composition
 - **s1167 TMAs done** — PDAC (278 annotated + 195 unlabeled cores) and GIST (550 annotated) share one TMA root but keep separate StarDist trees, pooled weights, and clinical notebooks
 - **BRCA / GBM / CRC ports** — leave-one-sample-out (or leave-one-dataset-out) OOF + all-sample deployment weights when there are fewer sections than folds; Pred statistic notebooks (`xenium_brca`, `codex_gbm`, `xenium_crc`)
@@ -117,7 +117,7 @@ Hist2Pheno/
 │   ├── CODEX_gbm/               # WangLab microscope HE + Visium HD labels
 │   ├── PanCancer/               # joint 7-cohort 3-head model (sheet celltype_pancancer)
 │   ├── Internal_val/            # fold-0 hold-out of the 7 training cohorts
-│   └── External_val/            # new cancers (no GT) + unlabeled leftovers (Lung Incomplete, HCC rest, PDAC Incomplete)
+│   └── External_val/            # new cancers (no GT; includes HCC Nature / TIMES) + unlabeled leftovers (Lung Incomplete, HCC rest, PDAC Incomplete)
 ├── environment.yml              # dedicated Hist2Pheno conda env
 ├── requirements.txt
 └── LICENSE
@@ -374,7 +374,7 @@ Open `Pred_visual_{lung,brca,crc,hcc,pdac,gist,gbm}.ipynb`. Each shows the exist
 | Visium BRCA | 3 (GSM OME + 2 pathology JPEGs) | ~281k + ~372k + ~391k | GSM OME ~0.548; JPEGs Visium×HE÷SR ~0.172 | predicted |
 | Visium CRC | 1 OME BigTIFF (P2) | 579,587 | OME ~0.274 | predicted |
 | Visium HCC | 7 JPEGs (`P1_N` … `P7_T`) | ~1.34M | `MPP_UM` | predicted |
-| HCC Nature | 17 TIFFs (`L-8001_HE` … `L-8017_1_HE.ome`) | ~3.68M | OME / Aperio / fallback 0.5 | ready (not yet predicted) |
+| HCC Nature | 17 TIFFs (`L-8001_HE` … `L-8017_1_HE.ome`) | ~3.68M | OME / Aperio / fallback 0.5 | predicted |
 | HER2ST | 36 JPEGs (A1–H3) | 2.42M | 200 µm spot pitch | predicted |
 | Prostate | 35 JPEGs (patient 1: 7; patient 2: 28) | 7.43M | HEST spot spacing | predicted |
 
@@ -382,18 +382,18 @@ Unlabeled leftovers (StarDist-all UNI already extracted; notebooks draw 3–5 sl
 
 | Folder | Data | Slides | Notebook |
 |--------|------|--------|----------|
-| [`Lung_Incomplete`](code/External_val/Lung_Incomplete/) | Xenium `Incomplete_Cases` | 20 (preds in `pred_all_spatial/incomplete_lung/`) | all 20; top 5 matched L2 AUROC first |
+| [`Lung_Incomplete`](code/External_val/Lung_Incomplete/) | Xenium `Incomplete_Cases` | 20 (preds in `pred_all_spatial/incomplete_lung/`) | all 20; top 5 matched L2 AUROC first; TILD113LA / VUILD105MA1 ROI zooms |
 | [`HCC_unlabel`](code/External_val/HCC_unlabel/) | CODEX HCC rest (not Visium `HCC/`) | 8 | 5 largest |
 | [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) | CODEX PDAC Incomplete_Cases | 195 | 5 largest |
 
-Outputs: `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/`, `data/Visium/HCC/nature_data/pred_pancancer_section/`, `data/ST/BRCA/pred_pancancer_section/`, and `data/PanCancer/pred_unlabel/` (HCC / PDAC unlabeled). Notebooks `Pred_visual_*.ipynb` show L1/L12/L2; new-cancer notebooks also draw TLS / SRI / TNI from L2 softmax (radius 55 µm). Saved panels are **300 dpi PNG**. HER2ST is one notebook per patient (`Pred_visual_brca_st_A.ipynb` … `H`); Prostate is split by series (`Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb`, `Pred_visual_prostate_patient2_{H1,H2,H3,V1,V2}.ipynb`). This track is separate from Xenium BRCA training, Xenium CRC training, and CODEX HCC (s4769) training.
+Outputs: `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/`, `data/Visium/HCC/nature_data/pred_pancancer_section/`, `data/ST/BRCA/pred_pancancer_section/`, and `data/PanCancer/pred_unlabel/` (HCC / PDAC unlabeled). Notebooks `Pred_visual_*.ipynb` show L1/L12/L2; new-cancer notebooks also draw TLS / SRI / TNI from L2 softmax (radius 55 µm). Saved panels are **300 dpi PNG**. HER2ST is one notebook per patient (`Pred_visual_brca_st_A.ipynb` … `H`); Prostate is split by series (`Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb`, `Pred_visual_prostate_patient2_{H1,H2,H3,V1,V2}.ipynb`). HCC Nature is **not** the seven Visium HCC JPEGs: 17 TIFFs from Jia *et al.*, *Nature* 2025 (TIMES). All 17 have `*_stardist_pred.h5ad`. [`Pred_visual_hcc_nature.ipynb`](code/External_val/HCC_nature/Pred_visual_hcc_nature.ipynb) adds an H&E-only AS / IF / TC analogue on the L-8012 Extended Data Fig. 1a zoom (do **not** claim a TIMES score). [`Pred_visual_hcc_nature_ready.ipynb`](code/External_val/HCC_nature/Pred_visual_hcc_nature_ready.ipynb) is the first five slides. This track is separate from Xenium BRCA training, Xenium CRC training, and CODEX HCC (s4769) training.
 
 ```bash
 bash code/External_val/NPC/demo.sh all
 bash code/External_val/BRCA/demo.sh all
 bash code/External_val/CRC/demo.sh all
 MPP_UM=0.5 bash code/External_val/HCC/demo.sh dry-run   # 0.5 is a placeholder; set the scanner µm/px
-bash code/External_val/HCC_nature/demo.sh dry-run       # 17 Nature TIFFs; per-slide µm/px
+bash code/External_val/HCC_nature/demo.sh status        # 17 Nature TIFFs; all predicted
 SAMPLE=A bash code/External_val/BRCA_ST/demo.sh dry-run          # one HER2ST patient; all 36 slides are ~2.4M nuclei
 SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh dry-run # one patient; 35 sections are ~7.4M nuclei
 bash code/External_val/Lung_Incomplete/demo.sh status
@@ -428,6 +428,7 @@ Unified mapping across the seven public cohorts in the workbook: [`PanCancerCell
 If you use this code, please cite the associated publication (TBD) and the source datasets:
 
 - **CODEX HCC** — Wu Z, Boen J, Jindal S, et al. Spatial multi-omics and deep learning reveal fingerprints of immunotherapy response and resistance in hepatocellular carcinoma. *bioRxiv* (2025). [doi:10.1101/2025.06.11.656869](https://doi.org/10.1101/2025.06.11.656869). Processed CODEX / Visium / co-registered H&E: [Zenodo](https://doi.org/10.5281/zenodo.15392699).
+- **HCC Nature / TIMES (external validation)** — Jia G, He P, Dai T, et al. Spatial immune scoring system predicts hepatocellular carcinoma recurrence. *Nature* **640**, 1031–1041 (2025). [doi:10.1038/s41586-025-08668-x](https://www.nature.com/articles/s41586-025-08668-x). HE + StarDist only in this repo; extras on [OSF](https://osf.io/db3uf/). See [`code/External_val/HCC_nature/README.md`](code/External_val/HCC_nature/README.md).
 - **Xenium lung** — Kedlian et al., spatial multi-omics lung fibrosis atlas ([GSE250346](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE250346)).
 - **Xenium BRCA** — Janesick A, Shelansky R, Gottscho AD, et al. High resolution mapping of the tumor microenvironment using integrated single-cell, spatial and in situ analysis. *Nat Commun* **14**, 8353 (2023). [doi:10.1038/s41467-023-43458-x](https://www.nature.com/articles/s41467-023-43458-x). GEO: [GSE243275](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE243275).
 - **HER2ST (external validation)** — Andersson A, Larsson L, Stenbeck L, et al. Spatial deconvolution of HER2-positive breast cancer delineates tumor-associated cell type interactions. *Nat Commun* **12**, 6012 (2021). [doi:10.1038/s41467-021-26271-2](https://doi.org/10.1038/s41467-021-26271-2).

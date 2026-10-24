@@ -80,6 +80,26 @@ HCC_REST = (
 PDAC_ROOT = _REPO / "data" / "CODEX" / "HCC" / "Michael_data_transfer" / "s1167"
 VIZ_N = {"Lung_Incomplete": 0, "HCC_unlabel": 5, "PDAC_unlabel": 5}
 LUNG_RANKS = LUNG_LEGACY / "ranks_matched.csv"
+PDAC_COVERSLIPS = ("c003", "c005", "c007")
+# 3 cores / coverslip for the notebook. c003/c007 = largest. c005 = immune /
+# stroma / mixed among the already-scored large cores (not three CD8-high twins).
+PDAC_REPRESENTATIVE = {
+    "c003": (
+        "Charvill-94_c003_v001_r001_reg146",
+        "Charvill-94_c003_v001_r001_reg141",
+        "Charvill-94_c003_v001_r001_reg147",
+    ),
+    "c005": (
+        "Charvill-94_c005_v001_r001_reg075",
+        "Charvill-94_c005_v001_r001_reg047",
+        "Charvill-94_c005_v001_r001_reg037",
+    ),
+    "c007": (
+        "Charvill-94_c007_v001_r001_reg062",
+        "Charvill-94_c007_v001_r001_reg081",
+        "Charvill-94_c007_v001_r001_reg069",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -262,6 +282,67 @@ def top_lung_incomplete(n: int = 5) -> list[str]:
     return viz_samples("Lung_Incomplete", n=int(n))
 
 
+def coverslip_of(sample: str) -> str:
+    for part in str(sample).split("_"):
+        if part.startswith("c") and part[1:].isdigit():
+            return part
+    return "unknown"
+
+
+def representative_pdac_samples() -> list[str]:
+    """Nine Incomplete_Cases: 3 per coverslip (c003 / c005 / c007)."""
+    out: list[str] = []
+    for cs in PDAC_COVERSLIPS:
+        out.extend(PDAC_REPRESENTATIVE[cs])
+    return out
+
+
+def mixed_rectangle_roi(
+    xy: np.ndarray,
+    labels: np.ndarray,
+    *,
+    win_frac: float = 0.40,
+    step_frac: float = 0.18,
+    min_n: int = 350,
+) -> tuple[float, float, float, float]:
+    """Axis-aligned window with several predicted classes (for TMA zoom)."""
+    xy = np.asarray(xy, dtype=np.float64)
+    labels = np.asarray(labels).astype(str)
+    x0, y0 = xy.min(axis=0)
+    x1, y1 = xy.max(axis=0)
+    span = np.minimum(x1 - x0, y1 - y0)
+    win = float(max(400.0, win_frac * span))
+    step = float(max(80.0, step_frac * win))
+    best = None
+    xs = np.arange(x0, max(x0 + 1.0, x1 - win), step)
+    ys = np.arange(y0, max(y0 + 1.0, y1 - win), step)
+    if len(xs) == 0:
+        xs = np.array([x0])
+    if len(ys) == 0:
+        ys = np.array([y0])
+    for xa in xs:
+        for ya in ys:
+            hit = (
+                (xy[:, 0] >= xa)
+                & (xy[:, 0] < xa + win)
+                & (xy[:, 1] >= ya)
+                & (xy[:, 1] < ya + win)
+            )
+            n = int(hit.sum())
+            if n < min_n:
+                continue
+            vc = pd.Series(labels[hit]).value_counts(normalize=True)
+            ncls = int((vc > 0.04).sum())
+            top = float(vc.iloc[0])
+            score = ncls + 0.15 * np.log1p(n) - (1.6 if top > 0.72 else 0.0)
+            rec = (score, n, float(xa), float(ya), float(xa + win), float(ya + win))
+            if best is None or rec[0] > best[0]:
+                best = rec
+    if best is None:
+        return float(x0), float(y0), float(x1), float(y1)
+    return best[2], best[3], best[4], best[5]
+
+
 def coverage(name: str) -> pd.DataFrame:
     cohort = _cohort(name)
     rows = []
@@ -334,6 +415,32 @@ def _he_thumbnail(path: Path, max_side: int = 1400) -> tuple[np.ndarray, int, in
 
 def _palettes() -> dict:
     return {head: get_palette("pancancer", PALETTE_TIER[head]) for head in HEADS}
+
+
+def _save_png_pdf(fig, path: Path, *, dpi: int) -> Path:
+    """PNG preview plus Type 42 PDF so labels stay editable."""
+    import matplotlib as mpl
+
+    mpl.rcParams["pdf.fonttype"] = 42
+    mpl.rcParams["ps.fonttype"] = 42
+    path = Path(path)
+    fig.savefig(
+        path.with_suffix(".png"),
+        dpi=int(dpi),
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="none",
+        format="png",
+    )
+    pdf = path.with_suffix(".pdf")
+    fig.savefig(
+        pdf,
+        format="pdf",
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="none",
+    )
+    return pdf
 
 
 def composition_table(name: str, samples: list[str]) -> pd.DataFrame:
@@ -450,8 +557,9 @@ def plot_spatial(
         fig.tight_layout()
         fig.subplots_adjust(bottom=0.18, top=0.93, hspace=0.28)
         if save:
-            out = fig_dir / f"{sample}_spatial_L1_L12_L2.png"
-            fig.savefig(out, dpi=save_dpi, bbox_inches="tight", facecolor="white")
+            out = _save_png_pdf(
+                fig, fig_dir / f"{sample}_spatial_L1_L12_L2.png", dpi=save_dpi
+            )
             print(out)
         figures.append(fig)
     return figures
@@ -528,8 +636,9 @@ def plot_composition(
         fig.tight_layout()
         fig.subplots_adjust(bottom=0.38)
         if save:
-            out = fig_dir / f"composition_{head}.png"
-            fig.savefig(out, dpi=save_dpi, bbox_inches="tight", facecolor="white")
+            out = _save_png_pdf(
+                fig, fig_dir / f"composition_{head}.png", dpi=save_dpi
+            )
             print(out)
         figures.append(fig)
     return figures
