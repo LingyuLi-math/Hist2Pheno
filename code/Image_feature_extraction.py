@@ -21,6 +21,15 @@
 ## 2026.05.20 Xenium Select4 — VUHD113 (CSV: X_pix_HE/Y_pix_HE from 0.2125 um/px)
 ##            Target 0.5 um/px so patch_size=16 -> ~8 um: scale_image=True, scale=0.2125/0.5=0.425
 ## 2026.07.06 LLY add the CODEX_HCC HE cell feature extraction from given cell_data.csv and HE image(.tif) with X Y
+## 2026.10.22 add UNI2-h (MahmoodLab/UNI2-h): ViT-H/14, class token (1, 1, 1536)  https://huggingface.co/MahmoodLab/UNI2-h
+## 2026.10.22 add H-optimus-1 (bioptimus/H-optimus-1): ViT-G/14, 224 px at 0.5 µm/px,
+##            class token (1, 1, 1536). https://huggingface.co/bioptimus/H-optimus-1
+##            CC BY-NC-ND 4.0, non-commercial research only. Gated weights.
+## 2026.10.22 LLY add the Xenium CRC HE cell feature extraction from given cell_data.csv and HE image(.tif) with x_centroid, y_centroid
+##            cell_data.csv: x_centroid, y_centroid in µm; X_pix_HE,Y_pix_HE on HE grid
+##            X_pix_HE,Y_pix_HE = x_centroid / 0.2125, y_centroid / 0.2125
+##            scale_image=True, scale=0.2125/0.5=0.425
+
 
 import os
 import sys
@@ -423,7 +432,7 @@ def embed_patch_subtensors(
     transform_fn,
     device: torch.device,
 ):
-    """Run one RGB patch through HIPT / Virchow2 / UNI; return save-ready tensors."""
+    """Run one RGB patch through HIPT / Virchow2 / UNI / UNI2 / H-optimus-1; return save-ready tensors."""
     patch_image = patch_image.convert("RGB")
     p_image = transform_fn(patch_image).unsqueeze(dim=0).to(device, non_blocking=True)
     if method == "HIPT":
@@ -436,6 +445,15 @@ def embed_patch_subtensors(
         subtensors = lay[:, 5:]
         return torch.split(subtensors, 1, dim=1)
     if method == "UNI":
+        lay = model(p_image)
+        return (lay.unsqueeze(1),)
+    if method == "UNI2":
+        # num_classes=0 returns the class token, shape (1, 1536).
+        lay = model(p_image)
+        return (lay.unsqueeze(1),)
+    if method == "H-optimus-1":
+        # global_pool='token' returns the class token, shape (1, 1536).
+        # Register tokens stay inside the model and are not saved.
         lay = model(p_image)
         return (lay.unsqueeze(1),)
     raise ValueError(f"Unsupported method: {method}")
@@ -485,11 +503,17 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
         Feature extraction method: 'HIPT' or 'Virchow2'
         - 'HIPT': Uses HIPT vision transformer (vit256_small_dino)
         - 'Virchow2': Uses Virchow2 model from Hugging Face
+        - 'UNI2': MahmoodLab/UNI2-h ViT-H/14, class token (1, 1536)
+        - 'H-optimus-1': bioptimus/H-optimus-1 ViT-G/14, class token (1, 1536).
+          Requires patch_size=224. The slide is already scaled to 0.5 µm/px,
+          so this crop is a 112 µm window, which is the tile size the model
+          was trained on. Its normalization is not ImageNet.
     patch_size : int
         Size of image patches to extract (in pixels)
         - For Visium: typically 112 (for Virchow2) or 64 (for HIPT)
         - For Visium HD: typically 28 (for 16um bins with Virchow2)
         - For single-cell resolution: typically 14 or 16
+        - For H-optimus-1: 224 (fixed). Do not reuse the 14 or 16 px crop.
     output_img : str
         Output directory for extracted image patches (.png files). Ignored when
         save_patch_images=False.
@@ -702,7 +726,9 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
         model256.to(device)
 
         if os.path.isfile(pretrained_weights):
-            state_dict = torch.load(pretrained_weights, map_location="cpu")
+            # HIPT's vit256 checkpoint is a DINO pickle (teacher/student), not a
+            # bare state_dict. PyTorch 2.6+ defaults weights_only=True and rejects it.
+            state_dict = torch.load(pretrained_weights, map_location="cpu", weights_only=False)
             if checkpoint_key is not None and checkpoint_key in state_dict:
                 logger.info(f"Take key {checkpoint_key} in provided checkpoint dict")
                 state_dict = state_dict[checkpoint_key]
@@ -718,7 +744,12 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
     # Load model and setup transforms
     if method == 'HIPT':
         logger.info(f"Method: {method}")
-        weight_path = "https://github.com/mahmoodlab/HIPT/blob/master/HIPT_4K/Checkpoints/vit256_small_dino.pth"
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        weight_path = os.path.join(
+            script_dir, "HIPT", "HIPT_4K", "Checkpoints", "vit256_small_dino.pth"
+        )
+        if not os.path.isfile(weight_path):
+            raise FileNotFoundError(f"HIPT vit256 checkpoint not found: {weight_path}")
         model = get_vit256(pretrained_weights=weight_path, device=device)
 
         # https://github.com/mahmoodlab/HIPT/blob/a9b5bb8d159684fc4c2c497d68950ab915caeb7e/HIPT_4K/hipt_model_utils.py#L111
@@ -860,7 +891,162 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
         # model = model.eval()
 
         logger.info(f"UNI model loaded successfully and transform created")
+    ######################################################################
+    # 2026.10.22 LLY add UNI2 https://huggingface.co/MahmoodLab/UNI2-h
+    ######################################################################
+    elif method == 'UNI2':
+        logger.info(f"Method: {method}")
+        # MahmoodLab/UNI2-h (https://huggingface.co/MahmoodLab/UNI2-h).
+        # Same crop path as UNI: ImageNet norm, no Resize(224). The card's
+        # Resize(224) is for large ROIs; a nucleus crop stays at patch_size.
+        # patch_size must be a multiple of 14 (ViT-H/14). Output is the class
+        # token, saved as (1, 1, 1536).
+        try:
+            import timm
+            from huggingface_hub import hf_hub_download
+        except ImportError:
+            error_msg = (
+                "timm package is required for UNI2 method. "
+                "Please install it with: pip install timm"
+            )
+            logger.error(error_msg)
+            raise ImportError(error_msg)
 
+        if patch_size % 14 != 0:
+            logger.warning(
+                "UNI2 ViT patch is 14; patch_size=%s is not a multiple of 14",
+                patch_size,
+            )
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        local_dir = os.path.join(script_dir, "UNI2", "assets", "ckpts", "uni2-h")
+        os.makedirs(local_dir, exist_ok=True)
+        weight_file = os.path.join(local_dir, "pytorch_model.bin")
+        if not os.path.isfile(weight_file):
+            weight_file = hf_hub_download(
+                repo_id="MahmoodLab/UNI2-h",
+                filename="pytorch_model.bin",
+                local_dir=local_dir,
+                force_download=False,
+            )
+        if os.path.getsize(weight_file) < 1_000_000:
+            raise RuntimeError(
+                f"UNI2 checkpoint looks incomplete (size {os.path.getsize(weight_file)} "
+                f"bytes): {weight_file}. MahmoodLab/UNI2-h is gated; accept the license "
+                "and download pytorch_model.bin into this path."
+            )
+
+        model = timm.create_model(
+            "vit_giant_patch14_224",
+            img_size=224,
+            patch_size=14,
+            depth=24,
+            num_heads=24,
+            init_values=1e-5,
+            embed_dim=1536,
+            mlp_ratio=2.66667 * 2,
+            num_classes=0,
+            no_embed_class=True,
+            mlp_layer=timm.layers.SwiGLUPacked,
+            act_layer=torch.nn.SiLU,
+            reg_tokens=8,
+            dynamic_img_size=True,
+            pretrained=False,
+        )
+        model.load_state_dict(torch.load(weight_file, map_location="cpu"), strict=True)
+
+        def eval_transforms():
+            mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+            return transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean, std=std),
+            ])
+
+        model.to(device)
+        model = model.eval()
+        logger.info(f"UNI2 model loaded successfully and transform created")
+    ######################################################################
+    # 2026.10.22 add H-optimus-1 https://huggingface.co/bioptimus/H-optimus-1
+    # Bioptimus ViT-G/14 (vit_giant_patch14_reg4_dinov2), 1.1B params, 4 registers.
+    # Card: 224x224 tiles extracted at 0.5 µm/px, output (1, 1536).
+    # License: CC BY-NC-ND 4.0. Non-commercial research only. Weights are gated.
+    ######################################################################
+    elif method == 'H-optimus-1':
+        logger.info(f"Method: {method}")
+        # Keep the crop at 224 px. The HE is already scaled to 0.5 µm/px in
+        # this pipeline, so 224 px is the 112 µm field the model expects.
+        # Resizing a 14/16 px nucleus crop up to 224 would not match that.
+        # fixed_input_size is true (dynamic_img_size=False).
+        try:
+            import timm
+            from huggingface_hub import hf_hub_download
+        except ImportError:
+            error_msg = (
+                "timm package is required for H-optimus-1. "
+                "Please install it with: pip install timm"
+            )
+            logger.error(error_msg)
+            raise ImportError(error_msg)
+
+        if patch_size != 224:
+            raise ValueError(
+                f"H-optimus-1 expects a 224x224 tile at 0.5 µm/px "
+                f"(https://huggingface.co/bioptimus/H-optimus-1); "
+                f"got patch_size={patch_size}. Pass --patch_size 224."
+            )
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        local_dir = os.path.join(script_dir, "H-optimus-1", "assets", "ckpts")
+        os.makedirs(local_dir, exist_ok=True)
+        weight_file = ""
+        for name in ("pytorch_model.bin", "model.safetensors"):
+            candidate = os.path.join(local_dir, name)
+            if os.path.isfile(candidate):
+                weight_file = candidate
+                break
+        if not weight_file:
+            weight_file = hf_hub_download(
+                repo_id="bioptimus/H-optimus-1",
+                filename="pytorch_model.bin",
+                local_dir=local_dir,
+                force_download=False,
+            )
+        if os.path.getsize(weight_file) < 1_000_000:
+            raise RuntimeError(
+                f"H-optimus-1 checkpoint looks incomplete "
+                f"(size {os.path.getsize(weight_file)} bytes): {weight_file}. "
+                "bioptimus/H-optimus-1 is gated; accept the license and download "
+                "pytorch_model.bin into this path."
+            )
+
+        model = timm.create_model(
+            "vit_giant_patch14_reg4_dinov2",
+            pretrained=False,
+            img_size=224,
+            init_values=1e-5,
+            dynamic_img_size=False,
+            num_classes=0,
+        )
+        if weight_file.endswith(".safetensors"):
+            from safetensors.torch import load_file
+            state_dict = load_file(weight_file)
+        else:
+            state_dict = torch.load(weight_file, map_location="cpu")
+        model.load_state_dict(state_dict, strict=True)
+
+        def eval_transforms():
+            # Model-card normalization. Not ImageNet mean/std.
+            mean = (0.707223, 0.578729, 0.703617)
+            std = (0.211883, 0.230117, 0.177517)
+            return transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean, std=std),
+            ])
+
+        model.to(device)
+        model = model.eval()
+        logger.info("H-optimus-1 model loaded successfully and transform created")
+    ######################################################################
     else:
         raise ValueError(f"Unsupported method: {method}")
 

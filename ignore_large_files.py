@@ -36,10 +36,24 @@ def generated_paths(lines: list[str]) -> set[str]:
     return {line for line in lines[start:end] if line and not line.startswith("#")}
 
 
+def code_paths() -> set[str]:
+    """Every regular file under ``code/``, including symlink targets (UNI2, etc.)."""
+    found: set[str] = set()
+    code_root = ROOT / "code"
+    if not code_root.is_dir():
+        return found
+    for path in code_root.rglob("*"):
+        if not path.is_file():
+            continue
+        found.add(path.relative_to(ROOT).as_posix())
+    return found
+
+
 def main() -> None:
     lines = GITIGNORE.read_text(encoding="utf-8").splitlines()
     candidates = git_paths("ls-files", "--cached", "--others", "--exclude-standard")
     candidates.update(generated_paths(lines))
+    candidates.update(code_paths())
 
     oversized = sorted(
         path

@@ -16,6 +16,9 @@ remove.sh/
 code/CODEX_escc/NCRT_train_validate_cv.ipynb
 code/CODEX_escc/NCRT_train_validate_cv256_3.ipynb
 code/CODEX_escc/NCRT_train_validate_cv_label012.ipynb
+code/H-optimus-1/assets/ckpts/pytorch_model.bin
+code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
+code/UNI2/assets/ckpts/uni2-h/pytorch_model.bin
 code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all.ipynb
 code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all_260705.ipynb
 # END AUTO-IGNORED FILES
@@ -29,6 +32,8 @@ code/Xenium_lung/Lung_train_validate_cv_UNIlabel_all_260705.ipynb
 # Data & large artifacts (not tracked — use local paths or LFS)
 __pycache__/
 code/UNI/assets/ckpts/vit_large_patch16_224.dinov2.uni_mass100k/pytorch_model.bin
+code/UNI2/assets/ckpts/uni2-h/pytorch_model.bin
+code/H-optimus-1/assets/ckpts/pytorch_model.bin
 data/
 tools/
 promoter/
