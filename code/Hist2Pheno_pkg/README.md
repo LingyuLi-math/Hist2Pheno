@@ -4,7 +4,41 @@ Shared, dataset-neutral modeling, transformation, and plotting code for Hist2Phe
 Dataset directories such as `CODEX_hcc/` and `Xenium_lung/` remain responsible
 for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
+## 2026-20-25 Which embedder to run next
+
+`data/` currently keeps **UNI** results only. The next embedder to run is **UNI2-h** (`--method UNI2`), with `--patch_size 28` on slides already scaled to 0.5 µm/px. Write the `.pth` files to a new directory and retrain the MLP. The published pan-cancer checkpoint stays the UNI one.
+
+Hist2Pheno labels one nucleus at a time. The H&E is scaled to 0.5 µm/px, a square is cropped on the centroid, and one vector goes into the multi-head MLP (L2 / L12 / L1). Neighbor context is a later residual on those vectors (`SpatialContextFusion` in `base.py`). TLS / SRI / TNI are computed from the predicted labels and coordinates. The embedder’s job is the morphology of that cell. A crop that already mixes the surrounding cells makes two adjacent nuclei with different ground-truth labels look alike, and the L2 head (CD4 / CD8 / Treg, macrophage / DC, fibroblast / myofibroblast) is the head that suffers.
+
+What each `--method` actually saves, given `Image_feature_extraction.py`:
+
+| `--method` | Vector the `.pth` stores | Crop that matches this code | Field at 0.5 µm/px | Fit to a per-nucleus label |
+|------------|--------------------------|-----------------------------|--------------------|----------------------------|
+| `UNI` | class token, 1024-d | 16 px = one ViT-L/16 token | 8 µm | current results; native token equals the nucleus crop |
+| **`UNI2`** | class token, 1536-d | **28 px = 2×2 ViT-H/14 tokens** | **14 µm** | same one-vector contract; crop still covers one cell |
+| `H-optimus-1` | class token, 1536-d | 224 px required | 112 µm | one vector per centroid, but the tile contains many cells |
+| `HIPT` | patch tokens after dropping token 0, concatenated | 16 px → a single 384-d token | 8 µm | bottom ViT-256 stage only; the 4K hierarchy is unused |
+| `Virchow2` | every token after the first five, concatenated | 16 px is not a multiple of 14 | — | a bag of patch tokens, flattened into the MLP |
+
+**UNI2-h** is the one that keeps the UNI contract and upgrades the encoder.
+
+- The loader already stores one class token and flattens it. `input_dim` is read from that vector, so 1024 → 1536 needs a new training run and no change to matching, h5ad I/O, or the spatial residual. UNI2-h is the later MahmoodLab encoder (ViT-H/14, 1536-d) trained as the successor to UNI; the model card reports stronger H&E tile features than UNI. That is the signal this MLP reads.
+- Its token is 14 px, so the crop has to be a multiple of 14. `patch_size=28` is 14 µm: nucleus plus a rim of cytoplasm, pooled by the class token over four tokens. That is the smallest crop on which the class token does the pooling UNI2 was trained to do, and it stays on one cell. `patch_size=14` (7 µm, one token) also runs, and is the closer twin of the UNI 8 µm crop if the comparison must hold the field fixed. `patch_size=16` only triggers a warning: 16 is not an integer number of 14 px tokens, so that crop is not a UNI2 input.
+- Weights are gated (~2.6 GiB). Accept the license, then follow [`code/UNI2/assets/ckpts/uni2-h/README.md`](../UNI2/assets/ckpts/uni2-h/README.md).
+
+The other three answer a different question than “replace UNI on the cells already embedded.”
+
+- **H-optimus-1** is a ViT-G/14 trained on 224×224 tiles at 0.5 µm/px, and this script refuses any other `patch_size`. At that size the window is 112 µm, so centroids tens of microns apart share almost the same pixels. The embedding is a tissue tile. It is the right scale for a later context-window ablation, and the wrong scale for the first non-UNI cell run. The weights are **CC BY-NC-ND 4.0** (~4.3 GiB), which also constrains redistribution of anything derived from them.
+- **Virchow2** is a strong tile encoder, but this script drops the first five tokens and saves the rest. The h5ad loader concatenates them, so a 224 px tile becomes hundreds of 1280-d tokens in one MLP input. A 16 px nucleus crop is not a multiple of its 14 px token. Using it as a UNI replacement means changing the representation, not only the weights.
+- **HIPT** at `patch_size=16` keeps one 384-d token from `vit256_small_dino`. That model was trained on 256×256 tiles, and the second stage that makes HIPT hierarchical is not called. The vector is smaller and comes from an earlier pretraining recipe than UNI.
+
+Practical split from the UNI tree: new folder for UNI2 `.pth`, new h5ad, new MLP checkpoints. Leave the UNI embeddings in place so the published track and this run stay comparable.
+
 ## Changelog
+
+### 2026-10-25 — Next embedder is UNI2-h
+
+- Recorded why `--method UNI2` with `--patch_size 28` is the run to add while `data/` still holds only UNI. H-optimus-1’s required 224 px tile, Virchow2’s flattened token bag, and HIPT’s single 384-d token do not match the per-nucleus MLP.
 
 ### 2026-10-21 — HCC Nature mixed TIFFs in `external_validation`
 
