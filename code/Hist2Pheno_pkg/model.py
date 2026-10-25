@@ -1184,10 +1184,12 @@ def train_and_save_model(
                     + self.w_l4 * ce_l4
                 )
             # 2026.10.24, optional L2→L12→L1 terms / 保留三个独立 CE
+            adjacent_terms = {}
             if self.use_level12_head and result is not None and result.get("hierarchy_config"):
-                extra, _ = adjacent_loss(logits_l2, logits_l12, logits_l1_head,
+                extra, adjacent_terms = adjacent_loss(logits_l2, logits_l12, logits_l1_head,
                     target_l12, target_l1, result["hierarchy_maps"], result["hierarchy_config"])
                 total_loss = total_loss + extra
+                adjacent_terms = {k: v.detach() for k, v in adjacent_terms.items()}
             return (
                 total_loss,
                 ce_l2.detach(),
@@ -1196,6 +1198,7 @@ def train_and_save_model(
                 None if ce_l12 is None else ce_l12.detach(),
                 None if ce_l3 is None else ce_l3.detach(),
                 None if ce_l4 is None else ce_l4.detach(),
+                adjacent_terms,
             )
 
     # Create the parent directory safely (dirname() can be empty).
@@ -1426,6 +1429,15 @@ def train_and_save_model(
         loss_msg += (
             f" + {hce_w_l3:.3f}*CE(CNiche) + {hce_w_l4:.3f}*CE(TNiche)"
         )
+    if use_level12_head and result is not None and result.get("hierarchy_config"):
+        hier_cfg = result["hierarchy_config"]
+        hier_cfg = hier_cfg if isinstance(hier_cfg, dict) else vars(hier_cfg)
+        loss_msg += (
+            f" + {float(hier_cfg['l2_l12_nll']):.3f}*NLL(L2→L12)"
+            f" + {float(hier_cfg['l12_l1_nll']):.3f}*NLL(L12→L1)"
+            f" + {float(hier_cfg['l2_l12_js']):.3f}*JS(L12,L2→L12)"
+            f" + {float(hier_cfg['l12_l1_js']):.3f}*JS(L1,L12→L1)"
+        )
     print(f"Unified HCE: total_loss = {loss_msg}")
     print(
         "Loss options: "
@@ -1505,6 +1517,8 @@ def train_and_save_model(
     best_five_tier_auc_sum = float("nan")
     best_epoch = 0
     counter = 0
+    prev_l2_auc = float("nan")
+    prev_select_auc = float("nan")
 
     eval_loader = val_loader_eval if val_loader_eval is not None else val_loader
 
@@ -1521,6 +1535,7 @@ def train_and_save_model(
         total_ce_l12 = 0.0
         total_ce_l3 = 0.0
         total_ce_l4 = 0.0
+        adj_sums = {}
         num_batches = 0
 
         for batch in train_loader:
@@ -1549,7 +1564,7 @@ def train_and_save_model(
                         logits_l2, logits_l1_head, logits_l12, logits_l3, logits_l4 = (
                             model.forward_heads(x, neighbor_x=neighbor_x)
                         )
-                        loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, ce_l3, ce_l4 = criterion(
+                        loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, ce_l3, ce_l4, adj_terms = criterion(
                             logits_l2,
                             logits_l1_head,
                             y_l2,
@@ -1565,7 +1580,7 @@ def train_and_save_model(
                         logits_l2, logits_l1_head, logits_l12 = model.forward_heads(
                             x, neighbor_x=neighbor_x
                         )
-                        loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, _, _ = criterion(
+                        loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, _, _, adj_terms = criterion(
                             logits_l2, logits_l1_head, y_l2, y_l1,
                             logits_l12=logits_l12, target_l12=y_l12,
                         )
@@ -1573,7 +1588,7 @@ def train_and_save_model(
                         logits_l2, logits_l1_head = model.forward_heads(
                             x, neighbor_x=neighbor_x
                         )
-                        loss, ce_l2, ce_l1_std, ce_l1_agg, _, _, _ = criterion(
+                        loss, ce_l2, ce_l1_std, ce_l1_agg, _, _, _, adj_terms = criterion(
                             logits_l2, logits_l1_head, y_l2, y_l1
                         )
                 if not torch.isfinite(loss):
@@ -1590,7 +1605,7 @@ def train_and_save_model(
                     logits_l2, logits_l1_head, logits_l12, logits_l3, logits_l4 = (
                         model.forward_heads(x, neighbor_x=neighbor_x)
                     )
-                    loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, ce_l3, ce_l4 = criterion(
+                    loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, ce_l3, ce_l4, adj_terms = criterion(
                         logits_l2,
                         logits_l1_head,
                         y_l2,
@@ -1606,7 +1621,7 @@ def train_and_save_model(
                     logits_l2, logits_l1_head, logits_l12 = model.forward_heads(
                         x, neighbor_x=neighbor_x
                     )
-                    loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, _, _ = criterion(
+                    loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, _, _, adj_terms = criterion(
                         logits_l2, logits_l1_head, y_l2, y_l1,
                         logits_l12=logits_l12, target_l12=y_l12,
                     )
@@ -1614,7 +1629,7 @@ def train_and_save_model(
                     logits_l2, logits_l1_head = model.forward_heads(
                         x, neighbor_x=neighbor_x
                     )
-                    loss, ce_l2, ce_l1_std, ce_l1_agg, _, _, _ = criterion(
+                    loss, ce_l2, ce_l1_std, ce_l1_agg, _, _, _, adj_terms = criterion(
                         logits_l2, logits_l1_head, y_l2, y_l1
                     )
                 if not torch.isfinite(loss):
@@ -1635,6 +1650,8 @@ def train_and_save_model(
             if use_extra_heads:
                 total_ce_l3 += float(ce_l3.item())
                 total_ce_l4 += float(ce_l4.item())
+            for key, value in adj_terms.items():
+                adj_sums[key] = adj_sums.get(key, 0.0) + float(value)
             num_batches += 1
 
         if num_batches == 0:
@@ -1678,7 +1695,41 @@ def train_and_save_model(
                     f"CE(L4): {avg_ce_l4:.4f}",
                 ]
             )
-        print(f"  {', '.join(loss_parts)}")
+        print(f"  Raw: {', '.join(loss_parts)}")
+        hier_cfg = {}
+        if result is not None and result.get("hierarchy_config"):
+            raw_cfg = result["hierarchy_config"]
+            hier_cfg = raw_cfg if isinstance(raw_cfg, dict) else vars(raw_cfg)
+        adj_labels = (
+            ("l2_l12_nll", "NLL(L2→L12)"),
+            ("l12_l1_nll", "NLL(L12→L1)"),
+            ("l2_l12_js", "JS(L12,L2→L12)"),
+            ("l12_l1_js", "JS(L1,L12→L1)"),
+        )
+        adj_avg = {key: adj_sums[key] / max(num_batches, 1) for key in adj_sums}
+        if adj_avg:
+            raw_adj = [
+                f"{label}: {adj_avg[key]:.4f}×{float(hier_cfg.get(key, 0.0)):g}"
+                for key, label in adj_labels
+                if key in adj_avg
+            ]
+            print(f"  Adjacent raw: {', '.join(raw_adj)}")
+        weighted_bits = [
+            ("CE(L1)", criterion.w1 * avg_ce_l1_std),
+            ("CE(L2)", criterion.w2 * avg_ce_l2),
+            ("NLL(L1_agg)", criterion.w12 * avg_ce_l1_agg),
+        ]
+        if use_level12_head:
+            weighted_bits.append(("CE(L12)", criterion.w_l12head * avg_ce_l12))
+        if use_extra_heads:
+            weighted_bits.append(("CE(L3)", criterion.w_l3 * avg_ce_l3))
+            weighted_bits.append(("CE(L4)", criterion.w_l4 * avg_ce_l4))
+        for key, label in adj_labels:
+            if key in adj_avg:
+                weighted_bits.append((label, float(hier_cfg.get(key, 0.0)) * adj_avg[key]))
+        weighted_sum = float(sum(value for _, value in weighted_bits))
+        weighted_txt = ", ".join(f"{name}={value:.4f}" for name, value in weighted_bits)
+        print(f"  Weighted: {weighted_txt}  | sum={weighted_sum:.4f}")
 
         tier_aucs = _eval_head_macro_aucs_on_loader(
             model,
@@ -1691,39 +1742,53 @@ def train_and_save_model(
             num_level3_classes=num_level3_classes,
             num_level4_classes=num_level4_classes,
         )
+        l2_auc = float("nan")
+        shown_auc_sum = float("nan")
         if tier_aucs:
+            l2_auc = float(tier_aucs.get("l2_macro_auc", float("nan")))
+            l2_delta = (
+                f"  ΔL2={l2_auc - prev_l2_auc:+.4f}"
+                if np.isfinite(l2_auc) and np.isfinite(prev_l2_auc)
+                else ""
+            )
             if use_extra_heads:
                 print(
                     "  Val head macro-AUROC: "
                     f"L1={tier_aucs.get('l1_head_macro_auc', float('nan')):.4f}  "
                     f"L12={tier_aucs.get('l12_macro_auc', float('nan')):.4f}  "
-                    f"L2={tier_aucs.get('l2_macro_auc', float('nan')):.4f}  "
+                    f"L2={l2_auc:.4f}  "
                     f"L3={tier_aucs.get('l3_macro_auc', float('nan')):.4f}  "
                     f"L4={tier_aucs.get('l4_macro_auc', float('nan')):.4f}"
+                    f"{l2_delta}"
                 )
+                shown_auc_sum = float(tier_aucs.get("five_tier_auc_sum", float("nan")))
+                sum_label = "five-tier"
             elif use_level12_head:
                 print(
                     "  Val head macro-AUROC: "
                     f"L1={tier_aucs.get('l1_head_macro_auc', float('nan')):.4f}  "
                     f"L12={tier_aucs.get('l12_macro_auc', float('nan')):.4f}  "
-                    f"L2={tier_aucs.get('l2_macro_auc', float('nan')):.4f}"
+                    f"L2={l2_auc:.4f}"
+                    f"{l2_delta}"
                 )
+                shown_auc_sum = float(tier_aucs.get("three_tier_auc_sum", float("nan")))
+                sum_label = "three-tier"
             else:
                 print(
                     "  Val head macro-AUROC: "
                     f"L1={tier_aucs.get('l1_head_macro_auc', float('nan')):.4f}  "
-                    f"L2={tier_aucs.get('l2_macro_auc', float('nan')):.4f}"
+                    f"L2={l2_auc:.4f}"
+                    f"{l2_delta}"
                 )
-            if use_extra_heads:
-                print(
-                    f"  Val five-tier AUC sum: "
-                    f"{tier_aucs.get('five_tier_auc_sum', float('nan')):.4f}"
+                shown_auc_sum = l2_auc
+                sum_label = "L2"
+            if use_extra_heads or use_level12_head:
+                sum_delta = (
+                    f"  Δ={shown_auc_sum - prev_select_auc:+.4f}"
+                    if np.isfinite(shown_auc_sum) and np.isfinite(prev_select_auc)
+                    else ""
                 )
-            elif use_level12_head:
-                print(
-                    f"  Val three-tier AUC sum: "
-                    f"{tier_aucs.get('three_tier_auc_sum', float('nan')):.4f}"
-                )
+                print(f"  Val {sum_label} AUC sum: {shown_auc_sum:.4f}{sum_delta}")
 
         val_metrics = {
             "l2_macro_f1": val_macro_f1,
@@ -1739,7 +1804,8 @@ def train_and_save_model(
         )
         if not np.isfinite(val_selection_score):
             val_selection_score = -1.0
-        if val_selection_score > best_score:
+        saved = val_selection_score > best_score
+        if saved:
             best_score = val_selection_score
             best_epoch = epoch + 1
 
@@ -1754,9 +1820,16 @@ def train_and_save_model(
             counter = 0
         else:
             counter += 1
-            if counter >= patience:
-                print(f"\nEarly stopping triggered at epoch {epoch + 1}")
-                break
+        print(
+            f"  Checkpoint: {'saved' if saved else 'kept'}  "
+            f"best {val_selection_metric}={best_score:.4f} @ epoch {best_epoch}  "
+            f"no-gain {counter}/{patience}"
+        )
+        prev_l2_auc = l2_auc
+        prev_select_auc = shown_auc_sum
+        if not saved and counter >= patience:
+            print(f"\nEarly stopping triggered at epoch {epoch + 1}")
+            break
 
     print("\nTraining completed!")
     if val_selection_metric == "five_tier_auc_sum" and np.isfinite(best_five_tier_auc_sum):

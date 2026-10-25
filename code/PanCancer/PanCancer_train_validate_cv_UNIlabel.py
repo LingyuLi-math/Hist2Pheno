@@ -56,6 +56,9 @@ from base import (  # noqa: E402
     adata_X_to_dense,
     encode_labels_with_class_names,
     evaluate,
+    infer_pth_prefix_from_dir,
+    load_hist_embeddings,
+    match_embeddings,
     prepare_data_leave_one_group_out,
 )
 from checkpoint_artifact import copy_checkpoint, digest, file_digest, read_artifact
@@ -173,6 +176,117 @@ def setup_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
+def _uni2_embedding_dir(h5ad_path: Path, uns) -> Path:
+    """Sibling of the UNI directory recorded on the matched h5ad.
+
+    Lung stores ``{sample}_project_all_UNI``. The other cohorts store
+    ``project_all_UNI``. UNI2 patch_size=14 writes ``sc_pth_14_14``.
+    """
+    recorded = str(uns.get("embedding_dir", "") or "")
+    candidates: list[Path] = []
+    if recorded:
+        swapped = recorded
+        if "project_all_UNI2" not in swapped:
+            swapped = swapped.replace("project_all_UNI", "project_all_UNI2")
+        swapped = swapped.replace("sc_pth_16_16", "sc_pth_14_14")
+        candidates.append(Path(swapped))
+    parent = h5ad_path.parent
+    sample = parent.name
+    rel = Path("ImgEmbeddings_all") / "sc_pth_14_14"
+    candidates.append(parent / f"{sample}_project_all_UNI2" / rel)
+    candidates.append(parent / "project_all_UNI2" / rel)
+    seen = set()
+    for cand in candidates:
+        key = str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        if cand.is_dir() and any(cand.glob("*.pth")):
+            return cand
+    raise FileNotFoundError(
+        f"No UNI2 sc_pth_14_14 next to {h5ad_path}. Looked at: "
+        + ", ".join(str(c) for c in candidates)
+    )
+
+
+def _aligned_uni2_matrix(h5ad_path: Path, adata, cache_dir: Path) -> np.ndarray:
+    """H5ad-row-aligned UNI2 matrix. Unmatched rows are NaN. Cached on disk."""
+    import json
+
+    uni2_dir = _uni2_embedding_dir(h5ad_path, adata.uns)
+    stat = h5ad_path.stat()
+    uni2_stat = uni2_dir.stat()
+    stamp = {
+        "h5ad": str(h5ad_path.resolve()),
+        "h5ad_size": int(stat.st_size),
+        "h5ad_mtime_ns": int(stat.st_mtime_ns),
+        "n_obs": int(adata.n_obs),
+        "uni2_dir": str(uni2_dir.resolve()),
+        # Changes while an extract is still writing .pth files, so a mid-run cache is not reused.
+        "uni2_dir_mtime_ns": int(uni2_stat.st_mtime_ns),
+    }
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = digest(stamp["h5ad"])
+    npy_path = cache_dir / f"{key}.npy"
+    stamp_path = cache_dir / f"{key}.json"
+    if npy_path.is_file() and stamp_path.is_file():
+        try:
+            old = json.loads(stamp_path.read_text())
+        except json.JSONDecodeError:
+            old = {}
+        if old == stamp:
+            cached = np.load(npy_path, mmap_mode="r")
+            print(
+                f"  UNI2 cache {h5ad_path.parent.name}: {cached.shape}",
+                flush=True,
+            )
+            return cached
+    prefix = str(adata.uns.get("pth_prefix") or "") or infer_pth_prefix_from_dir(uni2_dir)
+    if not prefix:
+        raise RuntimeError(f"Cannot infer UNI2 .pth prefix in {uni2_dir}")
+    tolerance = float(adata.uns.get("match_tolerance", 1.0))
+    xy = _spatial_xy(adata)
+    cells = pd.DataFrame(
+        {
+            "centroid_x": xy[:, 0],
+            "centroid_y": xy[:, 1],
+            "celltype": "cell",
+        }
+    )
+    print(f"  UNI2 match {h5ad_path.parent.name} ← {uni2_dir}", flush=True)
+    embeddings = load_hist_embeddings(
+        uni2_dir,
+        celltype_df=cells,
+        coord_cols=("centroid_x", "centroid_y"),
+        tolerance=tolerance,
+        pth_prefix=prefix,
+    )
+    matched = match_embeddings(
+        cells,
+        embeddings,
+        tolerance=tolerance,
+        coord_cols=("centroid_x", "centroid_y"),
+    )
+    del embeddings
+    if not matched:
+        raise RuntimeError(f"UNI2 matched 0 cells for {h5ad_path}")
+    dim = int(np.asarray(matched[0]["embedding"]).reshape(-1).shape[0])
+    aligned = np.full((adata.n_obs, dim), np.nan, dtype=np.float32)
+    for item in matched:
+        aligned[int(item["idx"])] = np.asarray(item["embedding"], dtype=np.float32).reshape(-1)
+    del matched
+    tmp = cache_dir / f"{key}.tmp.npy"
+    np.save(tmp, aligned)
+    os.replace(tmp, npy_path)
+    stamp_path.write_text(json.dumps(stamp, indent=2))
+    n_hit = int(np.isfinite(aligned[:, 0]).sum())
+    print(
+        f"  UNI2 aligned {n_hit:,}/{adata.n_obs:,} rows, dim={dim}",
+        flush=True,
+    )
+    return aligned
+
+
 def _spatial_xy(adata) -> np.ndarray:
     if "spatial_HE" in adata.obsm:
         return np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
@@ -213,6 +327,8 @@ def load_section_arrays(
     max_cells: int | None = None,
     rng: np.random.Generator | None = None,
     cache_path: Path | None = None,
+    embedder: str = "uni",
+    uni2_cache_dir: Path | None = None,
 ) -> dict | None:
     import anndata as ad
 
@@ -260,11 +376,32 @@ def load_section_arrays(
                 _write_label_cache(
                     cache_path, keep_idx=idx, y=y, y_l1=y_l1, y_l12=y_l12, xy=xy, n_raw=n_raw, version_stamp=stamp
                 )
+        X_uni2 = None
+        if embedder == "uni2":
+            if uni2_cache_dir is None:
+                raise ValueError("uni2 embedder requires uni2_cache_dir")
+            X_uni2 = _aligned_uni2_matrix(h5ad_path, adata, uni2_cache_dir)
+            present = np.isfinite(X_uni2[idx, 0])
+            n_miss = int((~present).sum())
+            if n_miss:
+                print(
+                    f"  {h5ad_path.parent.name}: drop {n_miss:,} kept cells with no UNI2 .pth",
+                    flush=True,
+                )
+                idx, y, y_l1, y_l12, xy = (
+                    idx[present], y[present], y_l1[present], y_l12[present], xy[present],
+                )
+            if len(idx) == 0:
+                print(f"  skip {h5ad_path.parent.name}: 0 UNI2 cells", flush=True)
+                return None
         if max_cells is not None and len(idx) > int(max_cells):
             rng = rng or np.random.default_rng(42)
             pick = np.sort(rng.choice(len(idx), size=int(max_cells), replace=False))
             idx, y, y_l1, y_l12, xy = idx[pick], y[pick], y_l1[pick], y_l12[pick], xy[pick]
-        X = np.asarray(adata_X_to_dense(adata.X)[idx], dtype=np.float32)
+        if X_uni2 is not None:
+            X = np.array(X_uni2[idx], dtype=np.float32, copy=True)
+        else:
+            X = np.asarray(adata_X_to_dense(adata.X)[idx], dtype=np.float32)
         return {
             "X": X,
             "cell_ids":adata.obs_names.to_numpy()[idx],
@@ -314,6 +451,8 @@ def prepare_pooled_cv_data(
     cv_k: int = 5,
     group_splitter: str = "cross_dataset_section",
     fold_of: dict[str, int] | None = None,
+    embedder: str = "uni",
+    uni2_cache_dir: Path | None = None,
 ) -> dict:
     ok = index.loc[ok_mask(index)].copy()
     if ok.empty:
@@ -335,6 +474,8 @@ def prepare_pooled_cv_data(
             max_cells=max_cells_per_section,
             rng=rng,
             cache_path=cache_path,
+            embedder=embedder,
+            uni2_cache_dir=uni2_cache_dir,
         )
         if arr is None:
             continue
@@ -467,6 +608,7 @@ class PooledCtx:
     patient_map: Path | None = None
     mpp_map: Path | None = None
     inner_val_fraction: float = 0.2
+    embedder: str = "uni"
     g: dict = field(default_factory=dict)
 
     @property
@@ -552,6 +694,8 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         cv_k=ctx.cv_k,
         group_splitter=ctx.group_splitter,
         fold_of=fold_of,
+        embedder=ctx.embedder,
+        uni2_cache_dir=ctx.data_root / "uni2_aligned",
     )
     if is_cell_stratified_splitter(ctx.group_splitter):
         cell_plan = summarize_cell_stratified_folds(
@@ -795,6 +939,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--patient-map",type=Path,default=None)
     p.add_argument("--mpp-map",type=Path,default=None)
     p.add_argument("--inner-val-fraction",type=float,default=0.2)
+    p.add_argument(
+        "--embedder",
+        choices=("uni", "uni2"),
+        default="uni",
+        help="uni reads h5ad.X (1024-d). uni2 rematches project_all_UNI2/sc_pth_14_14 (1536-d) onto the same cells.",
+    )
     return p.parse_args(argv)
 
 
@@ -833,7 +983,7 @@ def main(argv: list[str] | None = None) -> int:
         class_weight_mode=args.class_weight_mode or ("none" if train_balance else "balanced"),
         hierarchy_options=vars(HierarchyConfig(**{k:getattr(args,k) for k in vars(HierarchyConfig())})) if args.hierarchy=="adjacent" else {},
         spatial_options=spatial_options, patient_map=args.patient_map, mpp_map=args.mpp_map,
-        inner_val_fraction=args.inner_val_fraction, hce_w12=args.legacy_l2_l1_weight,
+        inner_val_fraction=args.inner_val_fraction, embedder=args.embedder, hce_w12=args.legacy_l2_l1_weight,
         data_root=args.data_root.expanduser().resolve(),
         save_result=save_result,
         ablation_tag=ablation_tag,
@@ -859,6 +1009,7 @@ def main(argv: list[str] | None = None) -> int:
     print("Pan-cancer Hist2Pheno  (L2 / L12 / L1)", flush=True)
     print(f"  data_root:  {ctx.data_root}", flush=True)
     print(f"  datasets:   {ctx.datasets or COHORT_ORDER}", flush=True)
+    print(f"  embedder:   {ctx.embedder}", flush=True)
     print(f"  splitter:   {ctx.group_splitter}", flush=True)
     print(f"  results:    {ctx.result_dir}", flush=True)
     print(f"  tag:        {ctx.ablation_tag}", flush=True)

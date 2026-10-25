@@ -125,7 +125,37 @@ def _native_series(obs: pd.DataFrame, native_col: str) -> pd.Series:
     raise KeyError(f"no native column among {list(obs.columns)}")
 
 
-def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]) -> dict | None:
+def _stardist_uni2_dir(h5ad_path: Path) -> Path | None:
+    """All-nuclei UNI2 tokens, not the GT crop directory."""
+    parent = Path(h5ad_path).parent
+    sample = parent.name
+    rel = Path("ImgEmbeddings_all_stardist") / "sc_pth_14_14"
+    for cand in (parent / f"{sample}_project_all_UNI2" / rel, parent / "project_all_UNI2" / rel):
+        if cand.is_dir() and any(cand.glob("*.pth")):
+            return cand
+    return None
+
+
+def _feature_matrix(h5ad_path: Path, adata, row_idx, *, embedder: str, uni2_cache_dir: Path | None, uni2_dir: Path | None = None):
+    """Rows of ``row_idx``. UNI2 drops rows with no finite token and returns that mask."""
+    row_idx = np.asarray(row_idx, dtype=np.int64)
+    if embedder == "uni":
+        return np.asarray(adata_X_to_dense(adata.X)[row_idx], dtype=np.float32), np.ones(len(row_idx), dtype=bool)
+    if embedder != "uni2":
+        raise ValueError("embedder must be uni or uni2")
+    if uni2_cache_dir is None:
+        raise ValueError("uni2 embedder requires uni2_cache_dir")
+    from PanCancer_train_validate_cv_UNIlabel import _aligned_uni2_matrix
+
+    if uni2_dir is not None:
+        adata.uns["embedding_dir"] = str(uni2_dir)
+    aligned = _aligned_uni2_matrix(Path(h5ad_path), adata, Path(uni2_cache_dir))
+    present = np.isfinite(np.asarray(aligned[row_idx, 0]))
+    kept = row_idx[present]
+    return np.array(aligned[kept], dtype=np.float32, copy=True), present
+
+
+def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]], *, embedder: str = "uni", uni2_cache_dir: Path | None = None) -> dict | None:
     import anndata as ad
 
     adata = ad.read_h5ad(resolve_repo_path(h5ad_path))
@@ -139,7 +169,16 @@ def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]
     y_l1 = np.asarray([t[0] for t in triples], dtype=object)
     y_l12 = np.asarray([t[1] for t in triples], dtype=object)
     y_l2 = np.asarray([t[2] for t in triples], dtype=object)
-    X = np.asarray(adata_X_to_dense(adata.X)[idx], dtype=np.float32)
+    X, present = _feature_matrix(
+        h5ad_path, adata, idx, embedder=embedder, uni2_cache_dir=uni2_cache_dir
+    )
+    if not np.all(present):
+        n_miss = int((~present).sum())
+        print(f"  {h5ad_path.parent.name}: drop {n_miss:,} kept cells with no UNI2 .pth", flush=True)
+        idx = idx[present]
+        y_l1, y_l12, y_l2 = y_l1[present], y_l12[present], y_l2[present]
+    if len(idx) == 0:
+        return None
     xy = _spatial_xy(adata)[idx]
     names = adata.obs_names.to_numpy()[idx]
     return {
@@ -156,16 +195,22 @@ def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]
     }
 
 
-def load_stardist_all(path: Path) -> dict | None:
+def load_stardist_all(path: Path, *, embedder: str = "uni", uni2_cache_dir: Path | None = None, uni2_dir: Path | None = None) -> dict | None:
     import anndata as ad
 
     path = resolve_repo_path(path)
     if not path.is_file():
         return None
     adata = ad.read_h5ad(path)
-    X = np.asarray(adata_X_to_dense(adata.X), dtype=np.float32)
-    xy = _spatial_xy(adata)
-    return {"X": X, "xy": xy, "obs_names": adata.obs_names.to_numpy(), "n": int(adata.n_obs)}
+    row_idx = np.arange(int(adata.n_obs), dtype=np.int64)
+    X, present = _feature_matrix(
+        path, adata, row_idx, embedder=embedder, uni2_cache_dir=uni2_cache_dir, uni2_dir=uni2_dir
+    )
+    if len(X) == 0:
+        return None
+    xy = _spatial_xy(adata)[present]
+    names = adata.obs_names.to_numpy()[present]
+    return {"X": X, "xy": xy, "obs_names": names, "n": int(len(names))}
 
 
 def predict_block(model, scaler, X, xy, device, *, use_spatial: bool, spatial_k: int) -> dict:
@@ -318,21 +363,26 @@ def write_star_h5ad(path: Path, obs_names, xy, pred, classes) -> None:
     adata.write_h5ad(path)
 
 
-def process_section(rec, *, model, scaler, device, classes, palettes, pred_root: Path, use_spatial, spatial_k, skip_existing, skip_figures):
+def process_section(rec, *, model, scaler, device, classes, palettes, pred_root: Path, use_spatial, spatial_k, skip_existing, skip_figures, embedder="uni", uni2_cache_dir=None):
     dataset, sample, section_id = rec.dataset, rec.sample, rec.section_id
     matched_dir = pred_root / "matched" / dataset / sample
     panel_path = matched_dir / f"{sample}_panel_4x3.png"
     # 2026.10.24, bind predictions to input/checkpoint / 旧图不能代表新模型已预测
     stamp = digest(file_digest(resolve_repo_path(rec.h5ad)),
-        getattr(model,"checkpoint_weight_sha256","legacy"),classes,
+        getattr(model,"checkpoint_weight_sha256","legacy"),classes,embedder,
         vars(model.spatial_fusion.config) if getattr(model,"use_spatial_context",False) else None)
     marker = matched_dir/"prediction_run.json"
-    if skip_existing and panel_path.is_file() and marker.is_file() and json.loads(marker.read_text()).get("stamp")==stamp:
+    finished = marker.is_file() and json.loads(marker.read_text()).get("stamp") == stamp
+    h5ad = resolve_repo_path(rec.h5ad)
+    star_path = stardist_all_h5ad_for_matched(h5ad)
+    star_out = pred_root / "stardist_all" / str(dataset) / str(sample) / f"{sample}_all_stardist_pred.h5ad"
+    uni2_star_ready = _stardist_uni2_dir(star_path) if embedder == "uni2" else None
+    # A finished matched-cell run must not hide a later StarDist UNI2 extract.
+    need_star = uni2_star_ready is not None and not star_out.is_file()
+    if skip_existing and finished and (skip_figures or panel_path.is_file()) and not need_star:
         print(f"  skip existing {section_id}", flush=True)
         return None
-
-    h5ad = resolve_repo_path(rec.h5ad)
-    loaded = load_matched(h5ad, rec.native_col, classes)
+    loaded = load_matched(h5ad, rec.native_col, classes, embedder=embedder, uni2_cache_dir=uni2_cache_dir)
     if loaded is None:
         print(f"  skip {section_id}: 0 kept cells", flush=True)
         return None
@@ -347,13 +397,19 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
         got["pred"],
         classes,
     )
-    roc_dir = pred_root / "gt_matched_roc" / f"{dataset}__{sample}"
+    roc_dir = pred_root / "stardist_roc" / f"{dataset}__{sample}"
     write_auroc_csvs(roc_dir, classes, loaded["gt"], got["pred"], got["probs"], "memory")
 
     star_pred = None
     xy_star = None
-    star_path = stardist_all_h5ad_for_matched(h5ad)
-    star = load_stardist_all(star_path)
+    star = None
+    uni2_star = uni2_star_ready if embedder == "uni2" else None
+    if embedder == "uni2" and uni2_star is None:
+        print(f"  {section_id}: no StarDist UNI2 tokens; skip all-nuclei map", flush=True)
+    elif star_path.is_file() or embedder == "uni":
+        star = load_stardist_all(
+            star_path, embedder=embedder, uni2_cache_dir=uni2_cache_dir, uni2_dir=uni2_star
+        )
     if star is not None:
         star_got = predict_block(
             model, scaler, star["X"], star["xy"], device, use_spatial=use_spatial, spatial_k=spatial_k
@@ -411,14 +467,19 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     return row
 
 
-def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_root, use_spatial, spatial_k, skip_existing, skip_figures):
+def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_root, use_spatial, spatial_k, skip_existing, skip_figures, embedder="uni", uni2_cache_dir=None):
     sample = rec.sample
     out_dir = pred_root / "incomplete_lung" / sample
     panel_path = out_dir / f"{sample}_panel_4x3.png"
     if skip_existing and panel_path.is_file():
         print(f"  skip existing LungIncomplete::{sample}", flush=True)
         return None
-    star = load_stardist_all(Path(rec.stardist_all))
+    star_path = Path(rec.stardist_all)
+    uni2_star = _stardist_uni2_dir(star_path) if embedder == "uni2" else None
+    if embedder == "uni2" and uni2_star is None:
+        print(f"  LungIncomplete::{sample}: no StarDist UNI2 tokens", flush=True)
+        return None
+    star = load_stardist_all(star_path, embedder=embedder, uni2_cache_dir=uni2_cache_dir, uni2_dir=uni2_star)
     if star is None:
         return None
     got = predict_block(
@@ -501,7 +562,7 @@ def parse_args(argv=None):
         action="store_true",
         help="fit scaler only on the sections being predicted (for smoke; do not reuse as production)",
     )
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--embedder", choices=("uni", "uni2"), default="uni")
     p.add_argument("--deployment",action="store_true",help="Use one selected checkpoint for all sections; these are NOT OOF metrics")
     return p.parse_args(argv)
 
@@ -523,7 +584,7 @@ def main(argv=None) -> int:
     print("Pan-cancer predict / visualize", flush=True)
     print(f"  ckpt:   {ckpt}", flush=True)
     print(f"  out:    {pred_root}", flush=True)
-    print(f"  device: {device}  spatial={not args.no_spatial_context}", flush=True)
+    print(f"  device: {device}  spatial={not args.no_spatial_context}  embedder={args.embedder}", flush=True)
     print("=" * 60, flush=True)
 
     model = load_model_for_predict(
@@ -582,7 +643,7 @@ def main(argv=None) -> int:
         index = index.head(int(args.max_sections)).copy()
     print(f"  sections: {len(index)}", flush=True)
 
-    scaler_path = args.scaler_path or (args.data_root / "result_all_spatial" / "scaler.joblib")
+    uni2_cache_dir = args.data_root / "uni2_aligned"
     # Exact training transform; implicit global/scaler refitting is disabled.
     scaler = checkpoint_scaler(ckpt)
     meta = read_artifact(ckpt,required=True)["metadata"]
@@ -629,6 +690,8 @@ def main(argv=None) -> int:
                 spatial_k=args.spatial_k,
                 skip_existing=args.skip_existing,
                 skip_figures=args.skip_figures,
+                embedder=args.embedder,
+                uni2_cache_dir=uni2_cache_dir,
             )
             if row:
                 rows.append(row)
@@ -658,6 +721,8 @@ def main(argv=None) -> int:
                     spatial_k=args.spatial_k,
                     skip_existing=args.skip_existing,
                     skip_figures=args.skip_figures,
+                    embedder=args.embedder,
+                    uni2_cache_dir=uni2_cache_dir,
                 )
                 if row:
                     rows.append(row)

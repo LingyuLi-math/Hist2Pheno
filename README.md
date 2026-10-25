@@ -6,7 +6,7 @@
 
 **Predict cell phenotypes from H&E histology**, then map those predictions in space.
 
-Hist2Pheno takes per-nucleus H&E patch embeddings (UNI, UNI2-h, H-optimus-1, HIPT, Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS / SRI / TNI on CODEX; FRI / ARI / APNB on Xenium). The published pan-cancer track uses **UNI**.
+Hist2Pheno takes per-nucleus H&E patch embeddings (UNI, UNI2-h, H-optimus-1, HIPT, Virchow2), trains a multi-head MLP to multi-tier cell-type labels, validates on independent StarDist nuclei, and supports histology-derived niche indices (TLS / SRI / TNI on CODEX; FRI / ARI / APNB on Xenium). The published pan-cancer track uses **UNI**. The current joint pretrained weight is **UNI2 A3** (cross-section OOF L2 macro AUROC 0.8907; this fold-0 file on its 182 held-out sections is 0.8983).
 
 The **s1167 Pancreas (PDAC) and GIST TMA tracks** are complete end-to-end: match → UNI → h5ad → cross-dataset CV → StarDist inference → pooled ROC / clinical AUROC → TLS / SRI / TNI.
 
@@ -336,7 +336,7 @@ Optional **cell-stratified** CV (`--group-splitter cell_stratified`) mixes cells
 | train log | `data/PanCancer/train.log` (`demo.sh` step 3) | `data/PanCancer/train_cell_stratified.log` (step 3b) |
 | predict | `data/PanCancer/pred_all_spatial/` + `predict.log` (step 4; **section-CV** checkpoint) | not the default predict path — pass `--checkpoint` and `--pred-root` |
 
-Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/Pred_statistic_visual_pancancer_all.ipynb) pools per-section AUROC (`pan_organ=pancancer`).
+Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`4_Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb) pools per-section AUROC (`pan_organ=pancancer`). Its last two cells are the UNI2 A3 deployment pools below. UNI2 train and predict are [`1_demo_train.sh`](code/PanCancer/1_demo_train.sh) and [`3_demo_pred.sh`](code/PanCancer/3_demo_pred.sh). [`demo.sh`](code/PanCancer/demo.sh) remains the published UNI dispatcher.
 
 ```bash
 python -u code/PanCancer/prepare_pancancer_index.py
@@ -348,9 +348,47 @@ python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
 python -u code/PanCancer/PanCancer_predict_visualize.py --include-incomplete-lung --skip-existing
 ```
 
+### UNI2 results (2026-10-26)
+
+UNI2-h uses one class token at `patch_size=14` (1536-d, about 7 µm). Tokens are `project_all_UNI2/ImgEmbeddings_all/sc_pth_14_14` on the same pixels as the UNI crops: Xenium lung / BRCA / CRC are rescaled to 0.5 µm/px (`0.425` / `0.84` / `0.548`); CODEX HCC, PDAC, GIST, and GBM stay on native pixels (`scale_image=False`). Extractor: [`run_uni2_patch14.sh`](code/Hist2Pheno_pkg/run_uni2_patch14.sh). Run order and commands: [`code/PanCancer/README.md`](code/PanCancer/README.md).
+
+Cross-section 5-fold on 5,627,071 cells / 896 sections. The comparison number is the pooled OOF L2 macro AUROC ([`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](code/PanCancer/2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)):
+
+| Architecture | Spatial context | Pooled OOF L2 |
+|--------------|-----------------|---------------|
+| A0 legacy, L2→L1 weight 2 | off | 0.8590 |
+| A1 adjacent loss | off | 0.8580 |
+| A2 A1 + k=8 mean | on | 0.8884 |
+| A3 A2 + learned gate | on | **0.8907** |
+
+A3 is the pretrained weight. The saved file is fold 0 of that split:
+
+`data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt`
+
+`--deployment` scores all 896 sections with this one file (GT-matched cells; [`4_Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb)). Output: `data/PanCancer/pred_uni2_A3_bestmlp/`.
+
+| Pool | What it measures | Cells | L2 | L12 | L1 |
+|------|------------------|------:|---:|----:|---:|
+| All 896 sections | Includes sections this file trained on | 5,627,071 | 0.9164 | 0.8776 | 0.8727 |
+| Fold 0 | 182 sections held out of this file | 1,391,571 | **0.8983** | 0.8442 | 0.8415 |
+
+Use **0.8983** as this checkpoint's unseen-section L2. 0.8907 is the five-model OOF of the A3 recipe. 0.9164 counts sections the weight has already seen. This fold 0 is the UNI2 A3 split (CRC hold-out is P1CRC, BRCA hold-out is rep1). The UNI Internal validation table below is a different split (CRC hold-out there is P2CRC).
+
+Per-cohort notebooks apply the same checkpoint and separate that cohort's fold-0 sections. Matched-cell ROC is already on disk. All-nuclei StarDist maps wait on `ImgEmbeddings_all_stardist/sc_pth_14_14` (`SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh <lung|brca|crc|hcc|pdac|gist|gbm> stardist <gpu>`), then a rerun of the notebook predict cell.
+
+| Cohort | Notebook |
+|--------|----------|
+| Xenium lung | [`Lung_pred_uni2_pretrained.ipynb`](code/Xenium_lung/Lung_pred_uni2_pretrained.ipynb) |
+| Xenium BRCA | [`BRCA_pred_uni2_pretrained.ipynb`](code/Xenium_brca/BRCA_pred_uni2_pretrained.ipynb) |
+| Xenium CRC | [`CRC_pred_uni2_pretrained.ipynb`](code/Xenium_crc/CRC_pred_uni2_pretrained.ipynb) |
+| CODEX HCC | [`HCC_pred_uni2_pretrained.ipynb`](code/CODEX_hcc/HCC_pred_uni2_pretrained.ipynb) |
+| CODEX PDAC | [`PDAC_pred_uni2_pretrained.ipynb`](code/CODEX_pdac/PDAC_pred_uni2_pretrained.ipynb) |
+| CODEX GIST | [`GIST_pred_uni2_pretrained.ipynb`](code/CODEX_gist/GIST_pred_uni2_pretrained.ipynb) |
+| CODEX GBM | [`GBM_pred_uni2_pretrained.ipynb`](code/CODEX_gbm/GBM_pred_uni2_pretrained.ipynb) |
+
 ## Internal validation (fold 0 of the seven training cohorts)
 
-[`code/Internal_val/`](code/Internal_val/) applies the **section-CV** checkpoint to the **fold-0 hold-out** of Lung, BRCA, CRC, HCC, PDAC, GIST, and GBM. A section in fold 0 was not used to fit `best_mlp_gpu.pt`. Per-dataset `Data_process_visual_*.ipynb` notebooks are the other column (single-cohort models).
+[`code/Internal_val/`](code/Internal_val/) applies the published **UNI** section-CV checkpoint to the **fold-0 hold-out** of Lung, BRCA, CRC, HCC, PDAC, GIST, and GBM. A section in this UNI fold 0 was not used to fit `result_all_spatial/.../best_mlp_gpu.pt`. UNI2 fold 0 is a separate split; its L2 is 0.8983 in the section above. Per-dataset `Data_process_visual_*.ipynb` notebooks are the other column (single-cohort models).
 
 Predict is already on disk: `data/PanCancer/pred_all_spatial/` has all **182** fold-0 sections (`matched_pred.h5ad`, `panel_4x3.png`, StarDist ROC). `demo.sh predict` only fills gaps (`--skip-existing`). Do not overwrite `pred_all_spatial` with a cell-stratified run.
 
@@ -428,7 +466,7 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 | CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | `raw_metadata_updated.xlsx` sheet `Celltype` (split by `cohort`) | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST). Metadata: sheet `Clinical_info` |
 | CODEX GBM | `data/CODEX/GBM/WangLab/` | `3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx` sheet `Celltype` | [Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0); microscope HE + single-nucleus labels; Cases / Results under `data/CODEX/GBM/` |
 | CODEX ESCC | `data/CODEX/ESCC/` | in-house (`codex_meta_celltype_*.csv`); **not** in the pan-cancer ontology | NCRT remains the cohort path name |
-| Pan-cancer joint | `data/PanCancer/` | [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_pancancer` | Index / fold plans / section-CV + cell-stratified checkpoints / `pred_all_spatial/` (including fold-0 Internal_val panels); embeddings stay in cohort h5ads. See [`code/PanCancer/README.md`](code/PanCancer/README.md) |
+| Pan-cancer joint | `data/PanCancer/` | [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_pancancer` | Index / fold plans / section-CV + cell-stratified checkpoints / `pred_all_spatial/` (UNI) and `pred_uni2_A3_bestmlp/` (UNI2 A3). Embeddings stay in cohort h5ads. See [`code/PanCancer/README.md`](code/PanCancer/README.md) |
 | Internal validation | `data/PanCancer/pred_all_spatial/` | native GT on matched nuclei | Fold-0 4×3 panels + composition. See [`code/Internal_val/README.md`](code/Internal_val/README.md) |
 | External validation | `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/`, `data/Visium/HCC/nature_data/`, and `data/ST/BRCA/` | none (StarDist only) | HE + `{sample}_Float_prob0.01_nms_0.3.csv`. Predictions in `pred_pancancer_section/`. See [`code/External_val/README.md`](code/External_val/README.md) |
 | Unlabeled leftovers | `data/PanCancer/pred_all_spatial/incomplete_lung/` and `data/PanCancer/pred_unlabel/` | none (StarDist only) | Lung Incomplete / HCC rest / PDAC Incomplete_Cases. See [`Lung_Incomplete`](code/External_val/Lung_Incomplete/), [`HCC_unlabel`](code/External_val/HCC_unlabel/), [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) |

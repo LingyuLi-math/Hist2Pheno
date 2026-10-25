@@ -45,6 +45,7 @@ code/Hist2Pheno_pkg/dataset/figures_dataset_overview/
 code/Hist2Pheno_pkg/dataset/figures_fig2_fig3/
 code/Hist2Pheno_pkg/dataset/figures_pancancer_counts/
 code/Internal_val/figures_vuild107ma/
+# code/log/
 tools/
 code_git0725/
 *.h5ad

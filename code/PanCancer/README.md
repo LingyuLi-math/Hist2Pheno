@@ -94,31 +94,72 @@ python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
 Full pooling is memory-heavy (~5.5M cells × 1024-d float32 ≈ 22 GB embeddings). Use
 `--datasets BRCA GBM --max-cells-per-section 5000` to smoke-test.
 
-## Commands
+## 2026-10-26 UNI2 run order
 
-See [`demo.sh`](demo.sh). Env: `conda activate SeededNTM`.
+The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A3. A4 is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
+
+### 1. Train and internal cross-validation — [`1_demo_train.sh`](1_demo_train.sh)
 
 ```bash
 cd /home/lingyu/ssd2/Python/Hist2Pheno
-conda activate SeededNTM
-
-python -u code/PanCancer/prepare_pancancer_index.py
-
-# live console + append to data/PanCancer/train.log (wall-clock at the end)
-mkdir -p data/PanCancer
-{
-  echo "===== PanCancer train start $(date '+%F %T') ====="
-  /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
-    python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-      --use-spatial-context --spatial-k 8 --spatial-mode mean \
-      --steps prepare train he_validate \
-      --save-result result_all_spatial \
-      --ablation-tag D_emph_L2_spatial_pancancer
-  echo "===== PanCancer train end $(date '+%F %T') ====="
-} 2>&1 | tee -a data/PanCancer/train.log
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A0
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A1
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 ```
 
-Resume: fold checkpoints under `cross_dataset_cv/<tag>/hce_group_fold_*.pt` are reused unless you pass `--no-resume-from-checkpoints`.
+Each job is cross-section 5-fold. It writes `result_uni2_<arch>/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts. It is not an external test set.
+
+### 2. Choose the architecture — [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)
+
+Compare A0–A3 on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. This notebook does not call predict, and those cohorts are not a held-out test set.
+
+A3 is the best finished architecture (pooled OOF L2 0.8907). Its deployment weight is fold 0:
+
+`data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt`
+
+0.8907 is the five-fold pooled OOF of the A3 recipe. It is not the score of this one file on every section.
+
+### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
+
+```bash
+CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A3
+```
+
+This is `--deployment`: one checkpoint scores all 896 sections. Sections other than fold 0 were in its training set. Do not run `uni2 A0` or `uni2 A1` here; those commands are OOF rescoring of the weaker models. Output: `data/PanCancer/pred_uni2_A3_bestmlp/`. `--skip-existing` resumes. Figures are skipped; matched-cell ROC CSVs are written.
+
+### 4. Pool those predictions — [`4_Pred_statistic_visual_pancancer_all.ipynb`](4_Pred_statistic_visual_pancancer_all.ipynb)
+
+Run the first code cell, then the last two cells.
+
+| Pool | What it is | L2 macro AUROC |
+|------|------------|----------------|
+| All 896 sections | Includes sections this weight trained on | 0.9164 |
+| Fold 0, 182 sections, 1,391,571 cells | Sections this weight did not train on | 0.8983 |
+
+Use 0.8983 as this checkpoint's unseen-section number. The front of this notebook is the older published UNI cross-section vs cross-celltype comparison, not this step.
+
+## Other commands in the same scripts
+
+[`1_demo_train.sh`](1_demo_train.sh) also trains the published UNI pipelines. [`3_demo_pred.sh`](3_demo_pred.sh) also predicts from those UNI checkpoints. Running either file with no arguments prints usage and does not start work. `CUDA_DEVICE` defaults to 2.
+
+```bash
+bash code/PanCancer/1_demo_train.sh index
+bash code/PanCancer/1_demo_train.sh section smoke
+bash code/PanCancer/1_demo_train.sh section train
+bash code/PanCancer/1_demo_train.sh celltype smoke
+bash code/PanCancer/1_demo_train.sh celltype train
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 smoke
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A4
+
+bash code/PanCancer/3_demo_pred.sh section predict
+bash code/PanCancer/3_demo_pred.sh section repredict
+bash code/PanCancer/3_demo_pred.sh section crc
+bash code/PanCancer/3_demo_pred.sh celltype predict
+bash code/PanCancer/3_demo_pred.sh celltype repredict
+```
+
+Published section/celltype logs append to `data/PanCancer/train.log` and `train_cell_stratified.log`. UNI2 logs replace `code/log/pancancer_section_uni2_<arch>.log`. k=16 and k=32 attention are not commands. Fold checkpoints under `cross_dataset_cv/<tag>/hce_group_fold_*.pt` are reused unless you pass `--no-resume-from-checkpoints`.
 
 ## 2026.10.01 — Predict every section + 4×3 panels + pooled ROC
 
@@ -131,7 +172,7 @@ CLI: `PanCancer_predict_visualize.py` (spatial on by default; `--no-spatial-cont
 | 1 | Load each CV matched h5ad, including CRC P1CRC, P2CRC, and P5CRC, remap to pan-cancer L1/L12/L2, predict three heads |
 | 2 | If `{sample}_all_features_stardist.h5ad` exists, predict all StarDist nuclei (row 4; Lung Incomplete_Cases via `--include-incomplete-lung`) |
 | 3 | Write a **4×3** figure per section (rows: GT, Hist2Pheno matched pred, ROC, StarDist-all; cols: L1, L12, L2; per-column legends) |
-| 4 | Notebook `Pred_statistic_visual_pancancer_all.ipynb` pools per-section AUROC CSVs (HCC-style pooled ROC) |
+| 4 | Notebook `4_Pred_statistic_visual_pancancer_all.ipynb` pools per-section AUROC CSVs (HCC-style pooled ROC) |
 
 Scaler is fit once (`result_all_spatial/scaler.joblib`, default 400k cells, round-robin across the 7 cohorts) and reused. Smoke uses a separate `_smoke_scaler.joblib` so it does not become the production scaler. Pass `--scaler-max-cells 0` to fit on every matched cell.
 

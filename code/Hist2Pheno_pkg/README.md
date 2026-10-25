@@ -6,7 +6,7 @@ for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
 ## 2026-20-25 Which embedder to run next
 
-`data/` currently keeps **UNI** results only. The next embedder to run is **UNI2-h** (`--method UNI2`), with `--patch_size 28` on slides already scaled to 0.5 µm/px. Write the `.pth` files to a new directory and retrain the MLP. The published pan-cancer checkpoint stays the UNI one.
+`data/` currently keeps **UNI** results only. The paired UNI2 run is `--method UNI2` with `--patch_size 14` (one class token, 7 µm at 0.5 µm/px), the same one-token crop UNI uses at 16 px / 8 µm. Commands for the seven training cohorts are in the next section. `--patch_size 28` (14 µm, four tokens, still one class token) is the larger single-cell crop if a later run should include cytoplasm. Write `.pth` files to a new directory and retrain the MLP. The published pan-cancer checkpoint stays the UNI one.
 
 Hist2Pheno labels one nucleus at a time. The H&E is scaled to 0.5 µm/px, a square is cropped on the centroid, and one vector goes into the multi-head MLP (L2 / L12 / L1). Neighbor context is a later residual on those vectors (`SpatialContextFusion` in `base.py`). TLS / SRI / TNI are computed from the predicted labels and coordinates. The embedder’s job is the morphology of that cell. A crop that already mixes the surrounding cells makes two adjacent nuclei with different ground-truth labels look alike, and the L2 head (CD4 / CD8 / Treg, macrophage / DC, fibroblast / myofibroblast) is the head that suffers.
 
@@ -34,11 +34,395 @@ The other three answer a different question than “replace UNI on the cells alr
 
 Practical split from the UNI tree: new folder for UNI2 `.pth`, new h5ad, new MLP checkpoints. Leave the UNI embeddings in place so the published track and this run stay comparable.
 
+## UNI2 `patch_size=14` on the seven training cohorts
+
+Same slides, same coordinate CSVs, and the same `scale` / `scale_image` as the UNI extractors. The only changes are `--method UNI2`, `--patch_size 14`, and the output directory. Each `.pth` is one 1536-d class token.
+
+Outputs sit beside the UNI tree and do not replace it:
+
+| Cohort | UNI directory this mirrors | UNI2 directory |
+|--------|----------------------------|----------------|
+| Xenium lung, 25 Complete | `{sample}_project_all_UNI/ImgEmbeddings_all/sc_pth_16_16` | `{sample}_project_all_UNI2/.../sc_pth_14_14` |
+| Xenium BRCA, rep1 / rep2 | `Cases/{sample}/project_all_UNI/.../sc_pth_16_16` | `project_all_UNI2/.../sc_pth_14_14` |
+| Xenium CRC, P1 / P2 / P5 | same pattern | same pattern |
+| CODEX HCC, 36 annotated | `HE/{HE_KEY}/project_all_UNI/.../sc_pth_16_16` | `project_all_UNI2/.../sc_pth_14_14` |
+| CODEX PDAC, 278 annotated | `s1167/{ACQ}/project_all_UNI/.../sc_pth_16_16` | `project_all_UNI2/.../sc_pth_14_14` |
+| CODEX GIST, 550 annotated | same pattern | same pattern |
+| CODEX GBM, Initial / Recurrent | `Cases/{sample}/project_all_UNI/.../sc_pth_16_16` | `project_all_UNI2/.../sc_pth_14_14` |
+
+`gt` is the training coordinate file. `stardist` is the same crop on every segmented nucleus, which the UNI track extracts next. Lung Incomplete, PDAC Incomplete, and CODEX ESCC are not in this script. Accept the UNI2-h license first ([`code/UNI2/assets/ckpts/uni2-h/README.md`](../UNI2/assets/ckpts/uni2-h/README.md)). The third argument is the physical GPU index. The script activates the **SeededNTM** conda env, then sets `CUDA_VISIBLE_DEVICES` to that index, so the extractor sees it as `cuda:0`. A sample whose `sc_pth_14_14/` already contains `.pth` files is skipped, so a stopped run can be started again.
+
+The runnable file is [`run_uni2_patch14.sh`](run_uni2_patch14.sh). The same two blocks are comments at the top of that file. Run from the repo root, one cohort at a time. `CUDA_DEVICE` is the physical GPU index.
+
+`gt` writes `ImgEmbeddings_all/sc_pth_14_14` from the matched training coordinates:
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+CUDA_DEVICE=0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh lung gt "${CUDA_DEVICE}"
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh brca gt "${CUDA_DEVICE}"
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh crc gt "${CUDA_DEVICE}"
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh hcc gt "${CUDA_DEVICE}"
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh pdac gt "${CUDA_DEVICE}"
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gist gt "${CUDA_DEVICE}"
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gbm gt "${CUDA_DEVICE}"
+```
+
+`stardist` writes `ImgEmbeddings_all_stardist/sc_pth_14_14`, one token per segmented nucleus. `SAVE_PATCH_IMAGES=0` skips the PNG crops. Those crops are large on the all-nuclei sets; CRC P1 and P5 already skip them when the variable is unset, matching the UNI run. `SAVE_PATCH_IMAGES=1` keeps them. One sample: `SAMPLE=VUHD113` (lung), `SAMPLE=rep1` (BRCA), `SAMPLE=P2CRC` (CRC), `SAMPLE=P174511_Initial` (GBM), `ACQ_ID=...` (PDAC / GIST), `HE_KEY=...` (HCC).
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+CUDA_DEVICE=0
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh lung stardist "${CUDA_DEVICE}"
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh brca stardist "${CUDA_DEVICE}"
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh crc stardist "${CUDA_DEVICE}"
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh hcc stardist "${CUDA_DEVICE}"
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh pdac stardist "${CUDA_DEVICE}"
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gist stardist "${CUDA_DEVICE}"
+SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gbm stardist "${CUDA_DEVICE}"
+```
+
+BRCA all-nuclei prediction with the pan-cancer UNI2 A3 checkpoint needs the `brca stardist` line. The GT tokens in `ImgEmbeddings_all/sc_pth_14_14` are a different coordinate set and are not a substitute. After that extract, `code/Xenium_brca/BRCA_pred_uni2_pretrained.ipynb` scores every StarDist nucleus.
+
+```bash
+#!/usr/bin/env bash
+# UNI2-h, patch_size=14, one class token per nucleus.
+# Mirrors the UNI extractors. Writes project_all_UNI2 / sc_pth_14_14.
+# Does not read or delete project_all_UNI.
+#
+# Run from the repo root. The last argument is the physical GPU. SeededNTM is activated inside.
+# A cohort whose sc_pth_14_14/ already has .pth files is skipped.
+#
+# gt — matched training coordinates → ImgEmbeddings_all/sc_pth_14_14
+# CUDA_DEVICE is the physical GPU index. The script maps it to cuda:0.
+#   cd /home/lingyu/ssd2/Python/Hist2Pheno
+#   CUDA_DEVICE=0
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh lung gt "${CUDA_DEVICE}"
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh brca gt "${CUDA_DEVICE}"
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh crc gt "${CUDA_DEVICE}"
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh hcc gt "${CUDA_DEVICE}"
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh pdac gt "${CUDA_DEVICE}"
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gist gt "${CUDA_DEVICE}"
+#   bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gbm gt "${CUDA_DEVICE}"
+#
+# stardist — every segmented nucleus → ImgEmbeddings_all_stardist/sc_pth_14_14
+# SAVE_PATCH_IMAGES=0 skips the PNG crops.
+#   cd /home/lingyu/ssd2/Python/Hist2Pheno
+#   CUDA_DEVICE=0
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh lung stardist "${CUDA_DEVICE}"
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh brca stardist "${CUDA_DEVICE}"
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh crc stardist "${CUDA_DEVICE}"
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh hcc stardist "${CUDA_DEVICE}"
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh pdac stardist "${CUDA_DEVICE}"
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gist stardist "${CUDA_DEVICE}"
+#   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gbm stardist "${CUDA_DEVICE}"
+
+set -euo pipefail
+
+if [[ $# -ne 3 ]]; then
+  echo "Usage: $0 <lung|brca|crc|hcc|pdac|gist|gbm> <gt|stardist> <gpu>" >&2
+  echo "  gpu is the physical index, e.g. 0 or 1. The script activates SeededNTM." >&2
+  exit 1
+fi
+COHORT="$1"
+COORD="$2"
+GPU="$3"
+if [[ ! "${COORD}" =~ ^(gt|stardist)$ ]]; then
+  echo "ERROR: coord must be gt or stardist, got ${COORD}" >&2
+  exit 1
+fi
+if [[ ! "${GPU}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: gpu must be a physical index such as 0 or 1, got ${GPU}" >&2
+  exit 1
+fi
+export CUDA_VISIBLE_DEVICES="${GPU}"
+
+CONDA_BASE="${CONDA_BASE:-/opt/anaconda3}"
+if [[ ! -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
+  echo "ERROR: conda.sh not found: ${CONDA_BASE}/etc/profile.d/conda.sh" >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+# SeededNTM's activate.d script reads unset binutils vars. nounset must be off here.
+set +u
+conda activate SeededNTM
+set -u
+hash -r
+PYTHON="$(command -v python)"
+if [[ ! -x "${PYTHON}" ]]; then
+  echo "ERROR: python not found after conda activate SeededNTM" >&2
+  exit 1
+fi
+
+REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
+
+PATCH_SIZE=14
+METHOD=UNI2
+SKIP_IF_DONE="${SKIP_IF_DONE:-1}"
+cd "${REPO}"
+echo "conda env: SeededNTM"
+echo "python:    ${PYTHON}"
+echo "GPU:       CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} (visible inside Python as cuda:0)"
+
+OK=0
+SKIP=0
+FAIL=0
+
+run_one() {
+  local dataset="$1" position="$2" he="$3" scale_image="$4" scale="$5" out_root="$6" save_png="$7"
+  local pth_dir="${out_root}/sc_pth_${PATCH_SIZE}_${PATCH_SIZE}"
+  if [[ ! -f "${he}" ]]; then
+    echo "SKIP missing HE: ${he}"
+    SKIP=$((SKIP + 1))
+    return 0
+  fi
+  if [[ ! -f "${position}" ]]; then
+    echo "SKIP missing position: ${position}"
+    SKIP=$((SKIP + 1))
+    return 0
+  fi
+  if [[ "${SKIP_IF_DONE}" == "1" && -d "${pth_dir}" ]]; then
+    local n
+    n="$(find "${pth_dir}" -maxdepth 1 -name '*.pth' 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "${n}" -gt 0 ]]; then
+      echo "SKIP done (${n} .pth): ${pth_dir#${REPO}/}"
+      SKIP=$((SKIP + 1))
+      return 0
+    fi
+  fi
+  mkdir -p "${out_root}"
+  local -a args=(
+    code/Image_feature_extraction.py
+    --dataset "${dataset}"
+    --position_path "${position}"
+    --rawimage_path "${he}"
+    --scale_image "${scale_image}"
+    --method "${METHOD}"
+    --patch_size "${PATCH_SIZE}"
+    --output_img "${out_root}/sc_pth_${PATCH_SIZE}_${PATCH_SIZE}_image"
+    --output_pth "${pth_dir}"
+    --logging "${out_root}/"
+  )
+  if [[ "${scale_image}" == "True" ]]; then
+    args+=(--scale "${scale}")
+  fi
+  if [[ "${save_png}" != "1" ]]; then
+    args+=(--no_save_patch_images)
+  else
+    mkdir -p "${out_root}/sc_pth_${PATCH_SIZE}_${PATCH_SIZE}_image"
+  fi
+  echo "RUN ${dataset}"
+  echo "  HE:       ${he#${REPO}/}"
+  echo "  position: ${position#${REPO}/}"
+  echo "  output:   ${pth_dir#${REPO}/}"
+  if "${PYTHON}" "${args[@]}"; then
+    OK=$((OK + 1))
+  else
+    echo "FAILED: ${dataset}" >&2
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+case "${COHORT}" in
+  lung)
+    DATA="${REPO}/data/Xemium/weiqin/SpatialPF-NGenetics/Spatial-PF-Processed/Data"
+    CASES="${DATA}/Complete_Cases"
+    SCALE=0.425
+    shopt -s nullglob
+    for case_dir in "${CASES}"/*/; do
+      sample="$(basename "${case_dir}")"
+      if [[ -n "${SAMPLE:-}" && "${sample}" != "${SAMPLE}" ]]; then
+        continue
+      fi
+      he_tifs=("${case_dir}"/*-HE.tif)
+      if (( ${#he_tifs[@]} == 0 )); then
+        echo "SKIP ${sample}: no *-HE.tif"
+        SKIP=$((SKIP + 1))
+        continue
+      fi
+      if [[ "${COORD}" == "gt" ]]; then
+        pos="${case_dir}/${sample}_cells_partitioned_by_annotation_sample_match_with_pixel.csv"
+        sub="ImgEmbeddings_all"
+      else
+        pos="${case_dir}/${sample}_Float_prob0.01_nms_0.3.csv"
+        sub="ImgEmbeddings_all_stardist"
+      fi
+      run_one "${sample}" "${pos}" "${he_tifs[0]}" True "${SCALE}" \
+        "${case_dir}/${sample}_project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+    done
+    ;;
+  brca)
+    BRCA="${REPO}/data/Xemium/BRCA"
+    SCALE="${SCALE:-0.84}"
+    for sample in ${SAMPLE:-rep1 rep2}; do
+      case "${sample}" in
+        rep1) prefix="Xenium_FFPE_Human_Breast_Cancer_Rep1" ;;
+        rep2) prefix="Xenium_FFPE_Human_Breast_Cancer_Rep2" ;;
+        *) echo "ERROR: SAMPLE must be rep1 or rep2" >&2; exit 1 ;;
+      esac
+      he="${BRCA}/human_breast_Xenium_${sample}/${prefix}_he_image.tif"
+      if [[ "${COORD}" == "gt" ]]; then
+        pos="${BRCA}/Cases/${sample}/${sample}_cells_with_pixel.csv"
+        sub="ImgEmbeddings_all"
+      else
+        key="${prefix}_he_image"
+        pos="${BRCA}/StarDist_Segment/${key}/${key}_Float_prob0.01_nms_0.3.csv"
+        sub="ImgEmbeddings_all_stardist"
+      fi
+      run_one "sc_${sample}" "${pos}" "${he}" True "${SCALE}" \
+        "${BRCA}/Cases/${sample}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+    done
+    ;;
+  crc)
+    CRC="${REPO}/data/Xemium/CRC"
+    SCALE="${SCALE:-0.548}"
+    for sample in ${SAMPLE:-P1CRC P2CRC P5CRC}; do
+      case "${sample}" in
+        P1CRC|P2CRC|P5CRC) ;;
+        *) echo "ERROR: SAMPLE must be P1CRC, P2CRC, or P5CRC" >&2; exit 1 ;;
+      esac
+      folder="${sample/CRC/_CRC}"
+      prefix="Xenium_V1_Human_Colon_Cancer_${folder}_Add_on_FFPE"
+      he="${CRC}/HE_images/${prefix}_he_image.ome.tif"
+      if [[ "${COORD}" == "gt" ]]; then
+        pos="${CRC}/Cases/${sample}/${sample}_cells_with_pixel.csv"
+        sub="ImgEmbeddings_all"
+      else
+        key="${prefix}_he_image.ome"
+        pos="${CRC}/StarDist_Segment/${key}/${key}_Float_prob0.01_nms_0.3.csv"
+        sub="ImgEmbeddings_all_stardist"
+      fi
+      save="${SAVE_PATCH_IMAGES:-}"
+      if [[ -z "${save}" ]]; then
+        if [[ "${sample}" == "P2CRC" ]]; then save=1; else save=0; fi
+      fi
+      run_one "sc_${sample}" "${pos}" "${he}" True "${SCALE}" \
+        "${CRC}/Cases/${sample}/project_all_UNI2/${sub}" "${save}"
+    done
+    ;;
+  hcc)
+    S4769="${REPO}/data/CODEX/HCC/Michael_data_transfer/s4769"
+    STARDIST_ROOT="${STARDIST_ROOT:-${REPO}/data/CODEX/HCC/StarDist_Segment}"
+    export REPO
+    mapfile -t ROWS < <("${PYTHON}" - <<'PY'
+import sys
+from pathlib import Path
+repo = Path("/home/lingyu/ssd2/Python/Hist2Pheno")
+sys.path.insert(0, str(repo / "code" / "CODEX_hcc"))
+from match_codex_cells_with_pixel import list_aligned_annotated_regions
+df = list_aligned_annotated_regions()
+for _, row in df.iterrows():
+    print(f"{row['CODEX_ACQUISITION_ID']}\t{row['MATCHED_HE']}")
+PY
+)
+    if (( ${#ROWS[@]} == 0 )); then
+      echo "ERROR: no annotated HCC regions" >&2
+      exit 1
+    fi
+    for row in "${ROWS[@]}"; do
+      acq="${row%%$'\t'*}"
+      he_key="${row#*$'\t'}"
+      if [[ -n "${ACQ_ID:-}" && "${acq}" != "${ACQ_ID}" ]]; then continue; fi
+      if [[ -n "${HE_KEY:-}" && "${he_key}" != "${HE_KEY}" ]]; then continue; fi
+      he="${S4769}/HE/${he_key}/figures/${he_key}.tif"
+      if [[ "${COORD}" == "gt" ]]; then
+        pos="${S4769}/${acq}/${acq}.cell_data.csv"
+        dataset="sc_${acq}"
+        sub="ImgEmbeddings_all"
+      else
+        pos="${STARDIST_ROOT}/${he_key}/${he_key}_Float_prob0.01_nms_0.3.csv"
+        dataset="sc_${he_key}"
+        sub="ImgEmbeddings_all_stardist"
+      fi
+      run_one "${dataset}" "${pos}" "${he}" False "" \
+        "${S4769}/HE/${he_key}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+    done
+    ;;
+  pdac|gist)
+    S1167="${REPO}/data/CODEX/HCC/Michael_data_transfer/s1167"
+    if [[ "${COHORT}" == "pdac" ]]; then
+      CODE_DIR="${REPO}/code/CODEX_pdac"
+      STARDIST_ROOT="${STARDIST_ROOT:-${REPO}/data/CODEX/HCC/StarDist_Segment_pdac/pdac_result}"
+    else
+      CODE_DIR="${REPO}/code/CODEX_gist"
+      STARDIST_ROOT="${STARDIST_ROOT:-${REPO}/data/CODEX/HCC/StarDist_Segment_gist/gist_result}"
+    fi
+    mapfile -t ACQS < <("${PYTHON}" - <<PY
+import sys
+from pathlib import Path
+sys.path.insert(0, "${CODE_DIR}")
+from match_codex_cells_with_pixel import list_aligned_annotated_regions
+df = list_aligned_annotated_regions()
+for aid in df["ACQUISITION_ID"].astype(str).str.strip():
+    print(aid)
+PY
+)
+    if (( ${#ACQS[@]} == 0 )); then
+      echo "ERROR: no annotated ${COHORT} cores" >&2
+      exit 1
+    fi
+    for acq in "${ACQS[@]}"; do
+      if [[ -n "${ACQ_ID:-}" && "${acq}" != "${ACQ_ID}" ]]; then continue; fi
+      he="${S1167}/${acq}/figures/${acq}.tif"
+      if [[ "${COORD}" == "gt" ]]; then
+        pos="${S1167}/${acq}/${acq}.cell_data.csv"
+        sub="ImgEmbeddings_all"
+      else
+        pos="${STARDIST_ROOT}/${acq}/${acq}_Float_prob0.01_nms_0.3.csv"
+        sub="ImgEmbeddings_all_stardist"
+      fi
+      run_one "sc_${acq}" "${pos}" "${he}" False "" \
+        "${S1167}/${acq}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+    done
+    ;;
+  gbm)
+    GBM="${REPO}/data/CODEX/GBM"
+    STARDIST_ROOT="${STARDIST_ROOT:-${GBM}/WangLab/StarDist_Segment}"
+    for sample in ${SAMPLE:-P174511_Initial P179161_Recurrent}; do
+      case "${sample}" in
+        P174511_Initial) key="174511-2-3"; he="${GBM}/WangLab/4_Images/Microscope_Image/174511-2-3.tif" ;;
+        P179161_Recurrent) key="179161-4-3"; he="${GBM}/WangLab/4_Images/Microscope_Image/179161-4-3.tif" ;;
+        *) echo "ERROR: SAMPLE must be P174511_Initial or P179161_Recurrent" >&2; exit 1 ;;
+      esac
+      if [[ "${COORD}" == "gt" ]]; then
+        pos="${GBM}/Cases/${sample}/${sample}_cells_with_pixel.csv"
+        sub="ImgEmbeddings_all"
+      else
+        pos="${STARDIST_ROOT}/${key}/${key}_Float_prob0.01_nms_0.3.csv"
+        sub="ImgEmbeddings_all_stardist"
+      fi
+      run_one "sc_${sample}" "${pos}" "${he}" False "" \
+        "${GBM}/Cases/${sample}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+    done
+    ;;
+  *)
+    echo "ERROR: unknown cohort ${COHORT}" >&2
+    exit 1
+    ;;
+esac
+
+echo
+echo "=== UNI2 patch_size=14 ${COHORT} ${COORD} gpu=${GPU}: ok=${OK} skip=${SKIP} fail=${FAIL} ==="
+if (( FAIL > 0 )); then
+  exit 1
+fi
+```
+
+These commands only extract embeddings. The trainers still read `project_all_UNI/.../sc_pth_16_16` and a 1024-d vector, so this run does not replace the published UNI checkpoint.
+
 ## Changelog
+
+### 2026-10-26 — UNI2 gt and StarDist commands listed in the extractor
+
+- `run_uni2_patch14.sh` now comments both run lists at the top: `gt` for the seven training cohorts (`ImgEmbeddings_all/sc_pth_14_14`) and `stardist` for every segmented nucleus (`ImgEmbeddings_all_stardist/sc_pth_14_14`). StarDist lines set `SAVE_PATCH_IMAGES=0`.
+- The same lists are in the UNI2 section above. GT tokens are not a substitute for StarDist centroids. BRCA all-nuclei maps in `code/Xenium_brca/BRCA_pred_uni2_pretrained.ipynb` wait on `brca stardist`.
 
 ### 2026-10-25 — Next embedder is UNI2-h
 
-- Recorded why `--method UNI2` with `--patch_size 28` is the run to add while `data/` still holds only UNI. H-optimus-1’s required 224 px tile, Virchow2’s flattened token bag, and HIPT’s single 384-d token do not match the per-nucleus MLP.
+- Recorded why UNI2-h is the encoder to add while `data/` still holds only UNI. H-optimus-1’s required 224 px tile, Virchow2’s flattened token bag, and HIPT’s single 384-d token do not match the per-nucleus MLP.
+- Added `run_uni2_patch14.sh` in this README for the seven training cohorts: same slides and coordinates as UNI, `--method UNI2`, `--patch_size 14`, output under `project_all_UNI2/.../sc_pth_14_14`.
+- The third argument is the physical GPU. The script activates the SeededNTM conda env and sets `CUDA_VISIBLE_DEVICES` to that index.
 
 ### 2026-10-21 — HCC Nature mixed TIFFs in `external_validation`
 

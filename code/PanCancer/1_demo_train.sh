@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+## Train scripts split out of demo.sh on 2026.10.26.
+## One argument runs one job. No argument prints usage and does not train.
+##
+##   bash code/PanCancer/1_demo_train.sh index
+##   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
+##   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
+##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4}
+##   CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
+##
+## Published UNI section/celltype commands pin:
+##   --embedder uni --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0
+## UNI2 ablations are cross-section, inner-val 0.2, class-weight balanced.
+## k=16 and k=32 attention are not commands: attention gathers (batch, k, 1536)
+## every step, and those widths were too slow. A4 is k=8 attention only.
+## Do not start several uni2 prepares at once. The first one builds
+## data/PanCancer/uni2_aligned/; the rest should wait until that cache exists.
+## Predict commands are in 3_demo_pred.sh.
+
+########################################################
+# 2026.10.26 UNI: cross-section CV
+########################################################
+# bash code/PanCancer/1_demo_train.sh index
+# bash code/PanCancer/1_demo_train.sh section smoke
+# bash code/PanCancer/1_demo_train.sh section train
+# bash code/PanCancer/1_demo_train.sh celltype smoke
+# bash code/PanCancer/1_demo_train.sh celltype train
+########################################################
+# 2026.10.26 UNI2 ablation: cross-section CV
+########################################################
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 smoke
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A0
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A1
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A4
+
+
+set -euo pipefail
+
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+OUT="$REPO/data/PanCancer"
+CUDA_DEVICE="${CUDA_DEVICE:-2}"
+CONDA_ENV="${CONDA_ENV:-SeededNTM}"
+cd "$REPO"
+unset CUDA_VISIBLE_DEVICES || true
+
+usage() {
+  cat <<EOF
+Usage:
+  bash code/PanCancer/1_demo_train.sh index
+  bash code/PanCancer/1_demo_train.sh section  {smoke|train}
+  bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
+  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4}
+
+GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
+Logs: data/PanCancer/train*.log and code/log/pancancer_section_uni2_<arch>.log
+Predict: bash code/PanCancer/3_demo_pred.sh
+EOF
+}
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+run_py() {
+  local log=$1
+  local mode=$2
+  shift 2
+  mkdir -p "$(dirname "$log")"
+  {
+    echo "===== start $(date '+%F %T') gpu=${CUDA_DEVICE} ====="
+    /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
+      conda run --no-capture-output -n "$CONDA_ENV" python -u "$@"
+    echo "===== end $(date '+%F %T') ====="
+  } 2>&1 | if [[ "$mode" == append ]]; then tee -a "$log"; else tee "$log"; fi
+}
+
+prepare_uni2_cache() {
+  mkdir -p "$REPO/code/log" "$OUT/scaled_cache" "$OUT/context_cache"
+  export HIST2PHENO_ARRAY_CACHE="$OUT/scaled_cache"
+  export HIST2PHENO_CONTEXT_CACHE="$OUT/context_cache"
+}
+
+ADJ=(
+  --hierarchy adjacent --legacy-l2-l1-weight 1
+  --l2-l12-nll 0.5 --l12-l1-nll 0.5 --l2-l12-js 0.1 --l12-l1-js 0.1
+)
+
+cmd_index() {
+  conda run --no-capture-output -n "$CONDA_ENV" python -u \
+    code/PanCancer/prepare_pancancer_index.py
+}
+
+cmd_section_smoke() {
+  conda run --no-capture-output -n "$CONDA_ENV" python -u \
+    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+      --cuda-device "$CUDA_DEVICE" \
+      --embedder uni \
+      --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0 \
+      --group-splitter cross_dataset_section \
+      --datasets BRCA GBM --max-cells-per-section 5000 \
+      --max-epochs 2 --patience 2 \
+      --use-spatial-context --spatial-k 8 --spatial-mode mean \
+      --steps prepare train he_validate \
+      --save-result result_smoke \
+      --ablation-tag smoke_brca_gbm
+}
+
+cmd_section_train() {
+  run_py "$OUT/train.log" append \
+    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+      --cuda-device "$CUDA_DEVICE" \
+      --embedder uni \
+      --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0 \
+      --group-splitter cross_dataset_section \
+      --use-spatial-context --spatial-k 8 --spatial-mode mean \
+      --steps prepare train he_validate \
+      --save-result result_all_spatial \
+      --ablation-tag D_emph_L2_spatial_pancancer
+}
+
+cmd_celltype_smoke() {
+  conda run --no-capture-output -n "$CONDA_ENV" python -u \
+    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+      --cuda-device "$CUDA_DEVICE" \
+      --embedder uni \
+      --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0 \
+      --group-splitter cell_stratified \
+      --datasets BRCA GBM --max-cells-per-section 5000 \
+      --max-epochs 2 --patience 2 \
+      --use-spatial-context --spatial-k 8 --spatial-mode mean \
+      --steps prepare train he_validate \
+      --save-result result_smoke_cellstrat \
+      --ablation-tag smoke_brca_gbm_cellstrat
+}
+
+cmd_celltype_train() {
+  run_py "$OUT/train_cell_stratified.log" append \
+    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
+      --cuda-device "$CUDA_DEVICE" \
+      --embedder uni \
+      --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0 \
+      --group-splitter cell_stratified \
+      --use-spatial-context --spatial-k 8 --spatial-mode mean \
+      --steps prepare train he_validate \
+      --save-result result_cell_stratified_spatial \
+      --ablation-tag D_emph_L2_spatial_pancancer_cellstrat
+}
+
+cmd_uni2() {
+  local arch=$1
+  prepare_uni2_cache
+  local log="$REPO/code/log/pancancer_section_uni2_${arch}.log"
+  local -a args=(
+    code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py
+    --cuda-device "$CUDA_DEVICE"
+    --embedder uni2
+    --group-splitter cross_dataset_section
+    --inner-val-fraction 0.2
+    --class-weight-mode balanced
+    --steps prepare train he_validate
+  )
+  case "$arch" in
+    smoke_A2)
+      args+=(
+        --datasets BRCA GBM --max-cells-per-section 5000
+        --cv-k 2 --max-epochs 2 --patience 2
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_smoke_A2
+        --ablation-tag smoke_A2
+      )
+      ;;
+    A0_legacy_nospatial)
+      args+=(
+        --hierarchy legacy --legacy-l2-l1-weight 2
+        --save-result result_uni2_A0_legacy_nospatial
+        --ablation-tag A0_legacy_nospatial
+      )
+      ;;
+    A1_adjacent_nospatial)
+      args+=(
+        "${ADJ[@]}"
+        --save-result result_uni2_A1_adjacent_nospatial
+        --ablation-tag A1_adjacent_nospatial
+      )
+      ;;
+    A2_adjacent_spatial_k8mean)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_A2_adjacent_spatial_k8mean
+        --ablation-tag A2_adjacent_spatial_k8mean
+      )
+      ;;
+    A3_adjacent_spatial_k8mean_gate)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean --spatial-gate
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_A3_adjacent_spatial_k8mean_gate
+        --ablation-tag A3_adjacent_spatial_k8mean_gate
+      )
+      ;;
+    A4_adjacent_spatial_k8attention)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode attention
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_A4_adjacent_spatial_k8attention
+        --ablation-tag A4_adjacent_spatial_k8attention
+      )
+      ;;
+    *)
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A4"
+      ;;
+  esac
+  echo "log $log"
+  run_py "$log" replace "${args[@]}"
+}
+
+case "${1:-}" in
+  -h|--help|help|usage|"") usage ;;
+  index|prepare) cmd_index ;;
+  section|cross-section|cross_section)
+    case "${2:-}" in
+      smoke) cmd_section_smoke ;;
+      train) cmd_section_train ;;
+      *) die "section steps: smoke | train" ;;
+    esac
+    ;;
+  celltype|cell-stratified|cell_stratified|cross-celltype|cross_celltype)
+    case "${2:-}" in
+      smoke) cmd_celltype_smoke ;;
+      train) cmd_celltype_train ;;
+      *) die "celltype steps: smoke | train" ;;
+    esac
+    ;;
+  uni2)
+    case "${2:-}" in
+      smoke) cmd_uni2 smoke_A2 ;;
+      A0) cmd_uni2 A0_legacy_nospatial ;;
+      A1) cmd_uni2 A1_adjacent_nospatial ;;
+      A2) cmd_uni2 A2_adjacent_spatial_k8mean ;;
+      A3) cmd_uni2 A3_adjacent_spatial_k8mean_gate ;;
+      A4) cmd_uni2 A4_adjacent_spatial_k8attention ;;
+      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4" ;;
+    esac
+    ;;
+  *) die "unknown command '$1' (index | section | celltype | uni2)" ;;
+esac

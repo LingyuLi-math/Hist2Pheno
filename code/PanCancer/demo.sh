@@ -23,7 +23,16 @@
 ## Full pool ≈ 5.51M cells × 1024-d float32 (~22 GB). Smoke before full train.
 ## Resume: train reuses hce_group_fold_*.pt and only fits missing folds.
 ## A fold killed mid-run is treated as DONE (best-so-far .pt). Delete that file to retrain it.
+## 2026.10.25 The updated trainer no longer treats a partial .pt as finished. Reuse now
+## requires the completion marker, checksum, and data/split/code signature in the
+## companion .artifact.pt. A killed fold is retrained from the start.
 ## Exit 137 = Linux OOM killer. Override GPU with CUDA_DEVICE=1 (default 2).
+##
+## 2026.10.25 Trainer defaults changed (adjacent hierarchy, legacy L2→L1 weight 1,
+## inner-val 0.2). The section/celltype commands below pin the published UNI protocol:
+## --embedder uni --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0.
+## 2026.10.26 Train commands moved to 1_demo_train.sh. Predict commands moved to 3_demo_pred.sh.
+## This dispatcher still runs the published UNI section/celltype pipeline.
 
 
 ##################################
@@ -147,6 +156,8 @@ cmd_status() {
 cmd_section_smoke() {
   py code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
     --cuda-device "$CUDA_DEVICE" \
+    --embedder uni \
+    --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0 \
     --group-splitter cross_dataset_section \
     --datasets BRCA GBM \
     --max-cells-per-section 5000 \
@@ -165,6 +176,8 @@ cmd_section_train() {
       conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
           --cuda-device "$CUDA_DEVICE" \
+          --embedder uni \
+          --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0 \
           --group-splitter cross_dataset_section \
           --use-spatial-context --spatial-k 8 --spatial-mode mean \
           --steps prepare train he_validate \
@@ -199,6 +212,8 @@ cmd_section_predict() {
 cmd_celltype_smoke() {
   py code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
     --cuda-device "$CUDA_DEVICE" \
+    --embedder uni \
+    --hierarchy legacy --legacy-l2-l1-weight 2 \
     --group-splitter cell_stratified --inner-val-fraction 0 \
     --datasets BRCA GBM \
     --max-cells-per-section 5000 \
@@ -219,6 +234,8 @@ cmd_celltype_train() {
       conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
           --cuda-device "$CUDA_DEVICE" \
+          --embedder uni \
+          --hierarchy legacy --legacy-l2-l1-weight 2 \
           --group-splitter cell_stratified --inner-val-fraction 0 \
           --use-spatial-context --spatial-k 8 --spatial-mode mean \
           --steps prepare train he_validate \
@@ -281,38 +298,7 @@ dispatch() {
 
 dispatch "${1:-}" "${2:-}"
 
-## ---------------------------------------------------------------------------
-## Optional extras (copy a block; not wired to the dispatcher)
-##
-## force retrain section (ignore fold ckpts):
-# conda run --no-capture-output -n SeededNTM python -u \
-#   code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-#     --cuda-device "${CUDA_DEVICE:-2}" --no-resume-from-checkpoints \
-#     --group-splitter cross_dataset_section \
-#     --use-spatial-context --spatial-k 8 --spatial-mode mean \
-#     --steps prepare train he_validate \
-#     --save-result result_all_spatial \
-#     --ablation-tag D_emph_L2_spatial_pancancer
-##
-## sklearn GroupKFold (own folder; does not overwrite either protocol above):
-# conda run --no-capture-output -n SeededNTM python -u \
-#   code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-#     --cuda-device "${CUDA_DEVICE:-2}" --group-splitter group_kfold \
-#     --use-spatial-context --spatial-k 8 --spatial-mode mean \
-#     --steps prepare train he_validate \
-#     --save-result result_group_kfold_spatial \
-#     --ablation-tag D_emph_L2_spatial_pancancer_groupkfold
-##
-## retrain one celltype fold (example fold 3), keep the others:
-# rm -f data/PanCancer/result_cell_stratified_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer_cellstrat/hce_group_fold_3.pt
-# bash code/PanCancer/demo.sh celltype train
-##
-## section predict CRC only (writes P5CRC; P1/P2 skip-existing):
-# conda run --no-capture-output -n SeededNTM python -u \
-#   code/PanCancer/PanCancer_predict_visualize.py \
-#     --cuda-device "${CUDA_DEVICE:-2}" \
-#     --checkpoint data/PanCancer/result_all_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt \
-#     --pred-root data/PanCancer/pred_all_spatial --datasets CRC --skip-existing
-##
-## pooled ROC: code/PanCancer/Pred_statistic_visual_pancancer_all.ipynb
-##   early cells = pred_all_spatial/; later cells = pred_cell_stratified_spatial/
+## 2026.10.26 The commented UNI2 train/predict blocks that used to follow this
+## dispatcher now live in 1_demo_train.sh and 3_demo_pred.sh. Run one named command.
+##   bash code/PanCancer/1_demo_train.sh uni2 A3
+##   bash code/PanCancer/3_demo_pred.sh uni2 A3

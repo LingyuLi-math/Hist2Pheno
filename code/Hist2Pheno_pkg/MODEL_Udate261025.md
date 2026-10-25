@@ -183,7 +183,7 @@ python code/Hist2Pheno_pkg/oof_evaluation.py \
 
 输出每队列和每类别的支持数、macro-F1、AUROC、AUPRC。没有正例或负例的类别AUC为NaN。bootstrap仅实现患者cluster的macro-F1置信区间，利用患者混淆矩阵，不重复推理；没有真实patient_id时拒绝生成“患者CI”。没有实现患者bootstrap AUROC/完整自动超参搜索，最终独立test仍应另外保留。
 
-历史notebooks及其图像输出保留，不代表新版结果。新OOF统计入口为 `Pred_statistic_visual_pancancer_updated.ipynb`。旧notebook里的硬编码路径、全局scaler和in-sample图，应先对照本报告迁移，不能把旧保存输出当新版验证。
+历史图像输出保留在 `code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb`，那是已发表的 UNI cross-section 与 cross-celltype 比较，不代表新版结果。UNI2 A0–A3 在 `code/PanCancer/2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`，读取各架构的 `oof_predictions.npz`。旧路径、全局 scaler 和 in-sample 图应先对照本报告迁移，不能把旧保存输出当新版验证。
 
 ## 5. 时间、内存与潜在性能提升
 
