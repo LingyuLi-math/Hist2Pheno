@@ -690,18 +690,17 @@ def _load_model(cuda_device: str, allow_cpu: bool):
     device = _device(allow_cpu)
     if not CKPT.is_file():
         raise FileNotFoundError(CKPT)
-    if not SCALER.is_file():
-        raise FileNotFoundError(SCALER)
     model = load_model_for_predict(
         str(_REPO),
         "PanCancer",
         "project_all_UNI",
         checkpoint_path=str(CKPT),
         device=device,
-        hidden_dims=(768, 384, 192),
+        hidden_dims=None,
         parent_dir=True,
     )
-    scaler = joblib.load(SCALER)
+    from checkpoint_artifact import checkpoint_scaler
+    scaler = checkpoint_scaler(CKPT)
     return model, scaler, device
 
 
@@ -733,6 +732,7 @@ def cmd_predict(
         print("nothing to predict")
         return
     model, scaler, device = _load_model(cuda_device, allow_cpu)
+    classes=model.checkpoint_metadata.get("head_classes",classes)
     print(f"predict {name}  n={len(todo)}  device={device}", flush=True)
     for sample in todo:
         feat = _feat_h5ad(cohort, sample)

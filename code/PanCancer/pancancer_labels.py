@@ -13,6 +13,7 @@ from Hist2Pheno_pkg.pancancer_labels import (  # noqa: E402
     DEFAULT_ONTOLOGY_SHEET,
     DEFAULT_ONTOLOGY_XLSX,
     hierarchy_l2_to_l1,
+    hierarchy_maps,
     load_pancancer_ontology,
     map_native_series,
     native_to_pancancer,

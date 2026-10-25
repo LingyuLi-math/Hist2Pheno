@@ -42,6 +42,8 @@ for _p in (_PKG_DIR, _HERE):
         sys.path.insert(0, str(_p))
 
 from base import adata_X_to_dense, build_spatial_neighbor_index, encode_labels_with_class_names  # noqa: E402
+from checkpoint_artifact import read_artifact, checkpoint_scaler, digest, file_digest
+from spatial_context import inference_runtime
 from model import load_model_for_predict  # noqa: E402
 from plot import mlp_collect_five_head_softmax_probs  # noqa: E402
 from uni_label_cv_helpers import (  # noqa: E402
@@ -167,10 +169,23 @@ def load_stardist_all(path: Path) -> dict | None:
 
 
 def predict_block(model, scaler, X, xy, device, *, use_spatial: bool, spatial_k: int) -> dict:
-    Xs = scaler.transform(X)
+    if getattr(model,"use_spatial_context",False) and model.spatial_fusion.config.coordinates_um:
+        mpp=getattr(model,"inference_mpp",None)
+        if mpp is None and os.environ.get("HIST2PHENO_INFERENCE_MPP"):
+            mpp=float(os.environ["HIST2PHENO_INFERENCE_MPP"])
+        if mpp is None:
+            if getattr(model,"checkpoint_metadata",{}).get("section_mpp"):
+                raise ValueError("New native-pixel section needs HIST2PHENO_INFERENCE_MPP or a calibrated inference_mpp")
+            mpp=1.  # training explicitly declared that input coordinates are already µm
+        if not np.isfinite(mpp) or mpp<=0:raise ValueError("Invalid inference µm/px")
+        model.inference_mpp=mpp
+    Xs = np.asarray(scaler.transform(X),dtype=np.float32)
     nbr = None
-    if use_spatial:
-        nbr = build_spatial_neighbor_index(xy, k_neighbors=spatial_k)
+    if use_spatial and getattr(model,"use_spatial_context",False):
+        rt = inference_runtime(X,xy*getattr(model,"inference_mpp",1.),scaler,model.spatial_fusion.config,model.spatial_fusion.mode)
+        nbr = {"runtime":rt}
+    elif getattr(model,"use_spatial_context",False):
+        raise ValueError("Spatial checkpoints cannot silently disable context; use a non-spatial ablation checkpoint")
     probs = mlp_collect_five_head_softmax_probs(model, Xs, device, neighbor_index=nbr)
     out_p, out_y = {}, {}
     for head, pk in PROB_KEY.items():
@@ -307,7 +322,12 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     dataset, sample, section_id = rec.dataset, rec.sample, rec.section_id
     matched_dir = pred_root / "matched" / dataset / sample
     panel_path = matched_dir / f"{sample}_panel_4x3.png"
-    if skip_existing and panel_path.is_file():
+    # 2026.10.24, bind predictions to input/checkpoint / 旧图不能代表新模型已预测
+    stamp = digest(file_digest(resolve_repo_path(rec.h5ad)),
+        getattr(model,"checkpoint_weight_sha256","legacy"),classes,
+        vars(model.spatial_fusion.config) if getattr(model,"use_spatial_context",False) else None)
+    marker = matched_dir/"prediction_run.json"
+    if skip_existing and panel_path.is_file() and marker.is_file() and json.loads(marker.read_text()).get("stamp")==stamp:
         print(f"  skip existing {section_id}", flush=True)
         return None
 
@@ -327,7 +347,7 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
         got["pred"],
         classes,
     )
-    roc_dir = pred_root / "stardist_roc" / f"{dataset}__{sample}"
+    roc_dir = pred_root / "gt_matched_roc" / f"{dataset}__{sample}"
     write_auroc_csvs(roc_dir, classes, loaded["gt"], got["pred"], got["probs"], "memory")
 
     star_pred = None
@@ -366,6 +386,7 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
         )
     row = {
         "section_id": section_id,
+        "evaluation_scope":getattr(model,"evaluation_scope","unspecified"),
         "dataset": dataset,
         "sample": sample,
         "n_matched": int(len(loaded["xy"])),
@@ -383,6 +404,8 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
         f"stardist_all={row['n_stardist_all']:,}",
         flush=True,
     )
+    marker.write_text(json.dumps({"stamp":stamp,"checkpoint_sha256":getattr(model,"checkpoint_weight_sha256",None),
+        "metric_source":"GT-centered matched cells; not StarDist-center ROC"},indent=2))
     del loaded, got
     gc.collect()
     return row
@@ -479,6 +502,7 @@ def parse_args(argv=None):
         help="fit scaler only on the sections being predicted (for smoke; do not reuse as production)",
     )
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--deployment",action="store_true",help="Use one selected checkpoint for all sections; these are NOT OOF metrics")
     return p.parse_args(argv)
 
 
@@ -508,7 +532,7 @@ def main(argv=None) -> int:
         "project_all_UNI",
         checkpoint_path=str(ckpt),
         device=device,
-        hidden_dims=DEFAULT_HIDDEN,
+        hidden_dims=None,
         parent_dir=True,
     )
     print(
@@ -528,7 +552,7 @@ def main(argv=None) -> int:
     if args.datasets:
         index = index[index["dataset"].isin(args.datasets)].copy()
     if args.fold is not None:
-        plan_path = Path(args.data_root) / "fold_plan.csv"
+        plan_path = ckpt.parents[2] / "fold_plan.csv"
         if not plan_path.is_file():
             raise FileNotFoundError(plan_path)
         plan = pd.read_csv(plan_path)
@@ -559,12 +583,40 @@ def main(argv=None) -> int:
     print(f"  sections: {len(index)}", flush=True)
 
     scaler_path = args.scaler_path or (args.data_root / "result_all_spatial" / "scaler.joblib")
-    scaler_index = index if args.scaler_from_work_index else full_index
-    scaler = fit_or_load_scaler(scaler_index, scaler_path, args.scaler_max_cells, args.seed)
+    # Exact training transform; implicit global/scaler refitting is disabled.
+    scaler = checkpoint_scaler(ckpt)
+    meta = read_artifact(ckpt,required=True)["metadata"]
+    if meta.get("head_classes") and all(meta["head_classes"].values()):
+        classes = meta["head_classes"]
+        palettes = palette_for(classes)
+    if args.fold is not None and meta.get("fold") != int(args.fold) and args.deployment:
+        raise ValueError("Requested held-out fold does not match selected checkpoint metadata")
+    fold_lookup = {}
+    if not args.deployment and meta.get("fold_mode")=="cell_stratified":
+        raise ValueError("Per-cell OOF is in oof_predictions.npz; section-wide cell-stratified predictions require --deployment and are not OOF")
+    if not args.deployment:
+        plan = pd.read_csv(ckpt.parents[2]/"fold_plan.csv")
+        fold_lookup = dict(zip(plan.section_id.astype(str),plan.fold.astype(int)))
+        if not set(index.section_id.astype(str)).issubset(fold_lookup):
+            raise ValueError("OOF prediction needs every section in fold_plan; use --deployment for new sections")
+        pred_root = pred_root/"oof"
+        pred_root.mkdir(parents=True,exist_ok=True)
 
     rows = []
+    failures = []
     for rec in index.itertuples(index=False):
         try:
+            if not args.deployment:
+                fold_ckpt = ckpt.parent/f"hce_group_fold_{fold_lookup[str(rec.section_id)]}.pt"
+                model = load_model_for_predict(str(_REPO_ROOT),"PanCancer","project_all_UNI",checkpoint_path=str(fold_ckpt),device=device,hidden_dims=None,parent_dir=True)
+                scaler = checkpoint_scaler(fold_ckpt)
+                fold_meta = read_artifact(fold_ckpt,required=True)["metadata"]
+                if fold_meta.get("fold") != fold_lookup[str(rec.section_id)]: raise ValueError("Fold artifact mismatch")
+                if str(rec.section_id) not in fold_meta.get("held_out_sections",[]): raise ValueError("Section not held out by this artifact")
+            if getattr(model,"use_spatial_context",False) and model.spatial_fusion.config.coordinates_um:
+                mpp = model.checkpoint_metadata.get("section_mpp",{}).get(str(rec.section_id))
+                model.inference_mpp = 1. if mpp is None else mpp
+            model.evaluation_scope="deployment_not_oof" if args.deployment else "outer_fold_oof"
             row = process_section(
                 rec,
                 model=model,
@@ -583,10 +635,14 @@ def main(argv=None) -> int:
         except Exception as exc:
             import traceback
 
+            failures.append(str(getattr(rec,"section_id",rec)))
             print(f"  FAIL {getattr(rec, 'section_id', rec)}: {exc}", flush=True)
             traceback.print_exc()
 
     if args.include_incomplete_lung:
+        # New unlabeled sections use the explicit deployment artifact, never the last OOF fold.
+        model=load_model_for_predict(str(_REPO_ROOT),"PanCancer","project_all_UNI",checkpoint_path=str(ckpt),device=device,hidden_dims=None,parent_dir=True)
+        scaler=checkpoint_scaler(ckpt)
         for rec in discover_lung_incomplete():
             rec = argparse.Namespace(**rec)
             try:
@@ -608,6 +664,7 @@ def main(argv=None) -> int:
             except Exception as exc:
                 import traceback
 
+                failures.append(str(rec.section_id))
                 print(f"  FAIL {rec.section_id}: {exc}", flush=True)
                 traceback.print_exc()
 
@@ -626,8 +683,8 @@ def main(argv=None) -> int:
                 f"  {ds:16s}  n={len(sub):4d}  mean L2 AUROC={sub['macro_auc_L2_cells'].mean():.3f}",
                 flush=True,
             )
-    print("Done.", flush=True)
-    return 0
+    print(f"Done; failures={len(failures)}", flush=True)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

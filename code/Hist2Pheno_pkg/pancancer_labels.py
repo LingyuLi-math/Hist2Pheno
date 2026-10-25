@@ -111,3 +111,15 @@ def remap_obs_frame(
     out["final_sublineage"] = [t[1] for t in triples]
     out["final_CT"] = [t[2] for t in triples]
     return out
+
+
+########################################################
+# 2026.10.24, full adjacent ontology / 相邻层级映射与类别顺序绑定
+########################################################
+def hierarchy_maps(classes=None):
+    classes = classes or ontology_class_names()
+    onto = load_pancancer_ontology()
+    p12 = dict(zip(onto.L2.astype(str), onto.L12.astype(str)))
+    p1 = dict(zip(onto.L12.astype(str), onto.L1.astype(str)))
+    return {"l2_to_l12":[classes["L12"].index(p12[c]) for c in classes["L2"]],
+            "l12_to_l1":[classes["L1"].index(p1[c]) for c in classes["L12"]]}

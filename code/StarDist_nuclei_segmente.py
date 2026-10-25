@@ -95,17 +95,18 @@ class FineST_StarDist_nuclei:
 
 
     def LoadData(self, ST_Data, Img_Data, min_counts, roi_path=None):
+        # 2026.10.24, fix nested ST optional input / 修复可选 ST 数据缩进
         if ST_Data is not None:
-        if roi_path is not None:
-            sp_adata = ST_Data
-        else:
-            sp_adata = anndata.read_h5ad(ST_Data)
-        sp_adata.obs_names_make_unique()
-        sp_adata.var_names_make_unique()
-        self.sp_adata = sp_adata
+            if roi_path is not None:
+                sp_adata = ST_Data
+            else:
+                sp_adata = anndata.read_h5ad(ST_Data)
+            sp_adata.obs_names_make_unique()
+            sp_adata.var_names_make_unique()
+            self.sp_adata = sp_adata
         else:
             self.sp_adata = None
-        
+
         if roi_path is not None:
             img = sq.im.ImageContainer(Img_Data)
         else:
@@ -192,52 +193,52 @@ class FineST_StarDist_nuclei:
         )
         
         if self.sp_adata is not None:
-        features_kwargs = {
-            "segmentation": {
-                "label_layer": "segmented_stardist_default",
-                "props": ["label", "centroid"],
-                "channels": [1, 2],
+            features_kwargs = {
+                "segmentation": {
+                    "label_layer": "segmented_stardist_default",
+                    "props": ["label", "centroid"],
+                    "channels": [1, 2],
+                }
             }
-        }
         
-        sq.im.calculate_image_features(
-            self.sp_adata,
-            self.image,
-            layer="image",
-            key_added="image_features",
-            features_kwargs=features_kwargs,
-            features="segmentation",
-            mask_circle=True,
-        )
+            sq.im.calculate_image_features(
+                self.sp_adata,
+                self.image,
+                layer="image",
+                key_added="image_features",
+                features_kwargs=features_kwargs,
+                features="segmentation",
+                mask_circle=True,
+            )
         
-        df_cells = self.sp_adata.obsm['image_features'].copy().astype(object)
-        for row in df_cells.iterrows():
-            if row[1]['segmentation_label']>self.max_cell_number:
+            df_cells = self.sp_adata.obsm['image_features'].copy().astype(object)
+            for row in df_cells.iterrows():
+                if row[1]['segmentation_label']>self.max_cell_number:
                     df_cells.at[row[0],'segmentation_label'] = self.max_cell_number
-                df_cells.at[row[0],'segmentation_centroid'] = row[1]['segmentation_centroid'][:self.max_cell_number]
+                    df_cells.at[row[0],'segmentation_centroid'] = row[1]['segmentation_centroid'][:self.max_cell_number]
 
-        self.sp_adata.obsm['image_features'] = df_cells       
-        self.sp_adata.obs["cell_count"] = self.sp_adata.obsm["image_features"]["segmentation_label"].astype(int)
+            self.sp_adata.obsm['image_features'] = df_cells
+            self.sp_adata.obs["cell_count"] = self.sp_adata.obsm["image_features"]["segmentation_label"].astype(int)
         
             # visualization
-        fig, axes = plt.subplots(1,3,figsize=(20,6),dpi=300)
-        self.image.show("image", ax=axes[0])
-        _ = axes[0].set_title("H&E")
-        self.image.show("segmented_stardist_default", cmap="jet", interpolation="none", ax=axes[1])
-        _ = axes[1].set_title("Nuclei Segmentation")
-        sc.pl.spatial(self.sp_adata, color=["cell_count"], img_key=None, frameon=False, ax=axes[2],title='')
-        _ = axes[2].set_title("Cell Count")
-        plt.savefig(os.path.join(self.out_dir, 'nuclei_segmentation.png'))
-        plt.close()
+            fig, axes = plt.subplots(1,3,figsize=(20,6),dpi=300)
+            self.image.show("image", ax=axes[0])
+            _ = axes[0].set_title("H&E")
+            self.image.show("segmented_stardist_default", cmap="jet", interpolation="none", ax=axes[1])
+            _ = axes[1].set_title("Nuclei Segmentation")
+            sc.pl.spatial(self.sp_adata, color=["cell_count"], img_key=None, frameon=False, ax=axes[2],title='')
+            _ = axes[2].set_title("Cell Count")
+            plt.savefig(os.path.join(self.out_dir, 'nuclei_segmentation.png'))
+            plt.close()
         
-        self.sp_adata.uns['cell_locations'] = self.DissectSegRes(self.sp_adata.obsm['image_features'])
-        self.sp_adata.obsm['image_features']['segmentation_label'] = (
-            self.sp_adata.obsm['image_features']['segmentation_label'].astype(int)
-        )
-        self.sp_adata.obsm['image_features']['segmentation_centroid'] = (
-            self.sp_adata.obsm['image_features']['segmentation_centroid'].astype(str)
-        )  
-        self.sp_adata.write_h5ad(os.path.join(self.out_dir, 'sp_adata_ns.h5ad'))
+            self.sp_adata.uns['cell_locations'] = self.DissectSegRes(self.sp_adata.obsm['image_features'])
+            self.sp_adata.obsm['image_features']['segmentation_label'] = (
+                self.sp_adata.obsm['image_features']['segmentation_label'].astype(int)
+            )
+            self.sp_adata.obsm['image_features']['segmentation_centroid'] = (
+                self.sp_adata.obsm['image_features']['segmentation_centroid'].astype(str)
+            )
+            self.sp_adata.write_h5ad(os.path.join(self.out_dir, 'sp_adata_ns.h5ad'))
 
             coord_cell = self.sp_adata.uns['cell_locations'].dropna()
             coord_cell.columns = ['pxl_row_in_fullres', 'pxl_col_in_fullres', 'spot_index', 'cell_index', 'cell_nums']

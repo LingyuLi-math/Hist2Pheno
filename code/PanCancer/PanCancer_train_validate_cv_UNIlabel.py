@@ -31,6 +31,7 @@ import random
 import shutil
 import sys
 import warnings
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -57,6 +58,9 @@ from base import (  # noqa: E402
     evaluate,
     prepare_data_leave_one_group_out,
 )
+from checkpoint_artifact import copy_checkpoint, digest, file_digest, read_artifact
+from spatial_context import SpatialConfig
+from hierarchy_loss import HierarchyConfig
 from model import run_group_kfold_cv_with_oof_report  # noqa: E402
 from uni_label_cv_helpers import (  # noqa: E402
     plot_he_validate_level2_minimal,
@@ -78,6 +82,7 @@ from pancancer_cv import (  # noqa: E402
 )
 from pancancer_labels import (  # noqa: E402
     hierarchy_l2_to_l1,
+    hierarchy_maps,
     map_native_series,
     ontology_class_names,
 )
@@ -184,17 +189,21 @@ def _native_series(obs: pd.DataFrame, native_col: str) -> pd.Series:
     raise KeyError(f"no native column {native_col!r} in {list(obs.columns)}")
 
 
-def _write_label_cache(cache_path: Path, *, keep_idx, y, y_l1, y_l12, xy, n_raw: int) -> None:
+def _write_label_cache(cache_path: Path, *, keep_idx, y, y_l1, y_l12, xy, n_raw: int, version_stamp="") -> None:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
+    import tempfile
+    fd,tmp=tempfile.mkstemp(prefix=cache_path.name,suffix=".npz",dir=cache_path.parent);os.close(fd)
     np.savez_compressed(
-        cache_path,
+        tmp,
         keep_idx=np.asarray(keep_idx, dtype=np.int64),
         y=np.asarray(y, dtype=object),
         y_l1=np.asarray(y_l1, dtype=object),
         y_l12=np.asarray(y_l12, dtype=object),
         xy=np.asarray(xy, dtype=np.float64),
         n_raw=np.int64(n_raw),
+        version_stamp=np.asarray(version_stamp),
     )
+    os.replace(tmp,cache_path)
 
 
 def load_section_arrays(
@@ -210,8 +219,21 @@ def load_section_arrays(
     adata = ad.read_h5ad(h5ad_path)
     try:
         n_raw = int(adata.n_obs)
+        # 2026.10.24, invalidation includes features/obs order/ontology / 防止陈旧标签
+        import pancancer_labels as _labels
+        ontology_file = _PKG_DIR / "dataset" / "PanCancerCellType.xlsx"
+        stamp = digest(file_digest(h5ad_path), file_digest(ontology_file),
+            file_digest(_PKG_DIR / "dataset" / "build_pancancer_celltype_v1.py"), native_col)
         cached = None
+        cache_valid = False
         if cache_path is not None and cache_path.is_file():
+            try:
+                with np.load(cache_path, allow_pickle=True) as check:
+                    cache_valid = "version_stamp" in check and str(check["version_stamp"]) == stamp
+            except (OSError, ValueError, EOFError, zipfile.BadZipFile):
+                cache_valid=False
+
+        if cache_valid:
             cached = np.load(cache_path, allow_pickle=True)
             idx = np.asarray(cached["keep_idx"], dtype=np.int64)
             y = np.asarray(cached["y"], dtype=object)
@@ -236,7 +258,7 @@ def load_section_arrays(
             xy = _spatial_xy(adata)[idx]
             if cache_path is not None:
                 _write_label_cache(
-                    cache_path, keep_idx=idx, y=y, y_l1=y_l1, y_l12=y_l12, xy=xy, n_raw=n_raw
+                    cache_path, keep_idx=idx, y=y, y_l1=y_l1, y_l12=y_l12, xy=xy, n_raw=n_raw, version_stamp=stamp
                 )
         if max_cells is not None and len(idx) > int(max_cells):
             rng = rng or np.random.default_rng(42)
@@ -245,6 +267,7 @@ def load_section_arrays(
         X = np.asarray(adata_X_to_dense(adata.X)[idx], dtype=np.float32)
         return {
             "X": X,
+            "cell_ids":adata.obs_names.to_numpy()[idx],
             "y": y,
             "y_l1": y_l1,
             "y_l12": y_l12,
@@ -252,6 +275,7 @@ def load_section_arrays(
             "n": int(len(y)),
         }
     finally:
+        if "cached" in locals() and cached is not None:cached.close()
         del adata
         gc.collect()
 
@@ -299,6 +323,7 @@ def prepare_pooled_cv_data(
     rng = np.random.default_rng(seed)
     X_parts, y_parts, y1_parts, y12_parts, xy_parts, g_parts = [], [], [], [], [], []
     sample_names = []
+    cell_id_parts = []
     datasets = []
     n_obs = {}
     gi = 0
@@ -317,6 +342,7 @@ def prepare_pooled_cv_data(
         datasets.append(rec.dataset)
         n_obs[rec.section_id] = arr["n"]
         X_parts.append(arr["X"])
+        cell_id_parts.append(arr["cell_ids"])
         y_parts.append(arr["y"])
         y1_parts.append(arr["y_l1"])
         y12_parts.append(arr["y_l12"])
@@ -354,6 +380,7 @@ def prepare_pooled_cv_data(
     )
     del X, y, y1, y12, groups, xy
     gc.collect()
+    cv["cell_id_f"] = np.concatenate(cell_id_parts)[cv["mask"]]
     cv = _reencode_fixed(cv, classes)
     g2s = {i: s for i, s in enumerate(sample_names)}
     cv["sample_names"] = sample_names
@@ -434,6 +461,12 @@ class PooledCtx:
     train_group_frac: float = 0.8
     train_balance_sampler: bool = False
     train_balance_sampler_mode: str = "hierarchical_l1_l12_l2"
+    class_weight_mode: str = "balanced"
+    hierarchy_options: dict = field(default_factory=lambda: vars(HierarchyConfig()))
+    spatial_options: dict = field(default_factory=dict)
+    patient_map: Path | None = None
+    mpp_map: Path | None = None
+    inner_val_fraction: float = 0.2
     g: dict = field(default_factory=dict)
 
     @property
@@ -476,11 +509,12 @@ def step_index(ctx: PooledCtx) -> None:
 def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     classes = ontology_class_names()
     ctx.data_root.mkdir(parents=True, exist_ok=True)
+    ctx.result_dir.mkdir(parents=True, exist_ok=True)
     (ctx.data_root / "ontology_heads.json").write_text(
         json.dumps({"L1": classes["L1"], "L12": classes["L12"], "L2": classes["L2"]}, indent=2)
     )
     index = load_or_build_index(ctx, index_csv)
-    plan_path = ctx.data_root / "fold_plan.csv"
+    plan_path = ctx.result_dir / "fold_plan.csv"
     existing = load_existing_folds(plan_path)
     plan = fold_plan_frame(
         index,
@@ -488,6 +522,18 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         seed=ctx.seed,
         existing=existing or None,
     )
+    # 2026.10.24, optional patient-grouped outer folds / 患者级隔离需真实元数据
+    patient_lookup = None
+    if ctx.patient_map is not None:
+        from sklearn.model_selection import GroupKFold
+        patients = pd.read_csv(ctx.patient_map, dtype=str)
+        if not {"section_id","patient_id"}.issubset(patients) or patients.section_id.duplicated().any() or patients.patient_id.isna().any():
+            raise ValueError("patient map needs unique section_id and nonempty patient_id")
+        patient_lookup = dict(zip(patients.section_id, patients.patient_id))
+        plan["patient_id"] = plan.section_id.map(patient_lookup)
+        if plan.patient_id.isna().any(): raise ValueError("patient map missing indexed sections")
+        for fold,(_,va) in enumerate(GroupKFold(ctx.cv_k).split(plan, groups=plan.patient_id)):
+            plan.loc[plan.index[va],"fold"] = fold
     plan.to_csv(plan_path, index=False)
     fold_of = {
         str(s): int(f)
@@ -519,8 +565,28 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         l2 = cell_plan[cell_plan["level"] == "L2"]
         wide = l2.pivot_table(index="fold", columns="class", values="n", fill_value=0)
         print(wide.astype(int), flush=True)
-    scaler = StandardScaler()
-    scaler.fit(cv["X_f"])
+    cv["hierarchy_maps"] = hierarchy_maps(classes)
+    cv["hierarchy_config"] = ctx.hierarchy_options
+    cv["spatial_config"] = ctx.spatial_options or vars(SpatialConfig(k=ctx.spatial_k))
+    cv["inner_val_fraction"] = ctx.inner_val_fraction
+    cv["seed"] = ctx.seed
+    if is_cell_stratified_splitter(ctx.group_splitter) and ctx.inner_val_fraction:
+        raise ValueError("cell_stratified is a development ablation: pass --inner-val-fraction 0 explicitly")
+    if patient_lookup is not None:
+        cv["patient_f"] = np.asarray([patient_lookup[cv["group_to_sample"][int(g)]] for g in cv["groups_f"]])
+    if ctx.mpp_map is not None:
+        table = pd.read_csv(ctx.mpp_map)
+        if not {"section_id","mpp_um"}.issubset(table) or table.section_id.duplicated().any():
+            raise ValueError("mpp map needs unique section_id,mpp_um")
+        lookup = dict(zip(table.section_id, table.mpp_um))
+        scale = np.asarray([lookup[cv["group_to_sample"][int(g)]] for g in cv["groups_f"]],float)
+        if not np.isfinite(scale).all() or (scale<=0).any():raise ValueError("Invalid per-section mpp")
+        cv["section_mpp"] = {str(k):float(v) for k,v in lookup.items()}
+        cv["X_coords_f"] *= scale[:,None]
+        cv["spatial_config"]["coordinates_um"] = True
+        cv["spatial_config"]["mpp"] = None
+    # No global scaler fit: exact fold scaler is loaded from the selected artifact.
+    scaler = None
     ctx.g.update(
         {
             "cv_data": cv,
@@ -577,13 +643,39 @@ def step_train(ctx: PooledCtx) -> None:
         random_state=ctx.seed,
         val_selection_metric=ctx.val_selection_metric,
         cv_selection_metric=ctx.cv_selection_metric,
+        class_weight_mode=ctx.class_weight_mode,
         use_spatial_context=ctx.use_spatial_context,
         spatial_k=ctx.spatial_k,
         spatial_mode=ctx.spatial_mode,
         group_splitter=ctx.group_splitter,
     )
     dest = ctx.ckpt_dir / "best_mlp_gpu.pt"
-    shutil.copy2(lp["best_fold"]["checkpoint"], dest)
+    copy_checkpoint(lp["best_fold"]["checkpoint"], dest)
+    # 2026.10.24, preserve all three OOF heads and exact row identity / 真正 OOF
+    summary = lp["group_summary"]
+    row_ids=summary["oof_row_indices"]
+    if not np.array_equal(np.sort(row_ids),np.arange(len(cv["X_f"]))):
+        raise RuntimeError("Incomplete or repeated OOF coverage; inspect skipped folds")
+    if cv.get("fold_mode") != "cell_stratified":
+        actual={}
+        for fold in summary["folds"]:
+            metadata=read_artifact(fold["checkpoint"],required=True)["metadata"]
+            for section in metadata["held_out_sections"]:
+                if section in actual: raise RuntimeError("Repeated section holdout is not unique k-fold OOF")
+                actual[section]=int(fold["fold"])
+        plan=pd.read_csv(ctx.result_dir/"fold_plan.csv")
+        plan["fold"]=plan.section_id.map(actual)
+        if plan.fold.isna().any():raise RuntimeError("Missing actual section fold in artifact")
+        plan.to_csv(ctx.result_dir/"fold_plan.csv",index=False)
+        cv["fold_id_f"]=np.asarray([actual[cv["group_to_sample"][int(g)]] for g in cv["groups_f"]],dtype=int)
+    arrays = {"row_indices":row_ids}
+    for head, data in summary["oof_heads"].items():
+        arrays[head+"_labels"] = data["labels"]
+        arrays[head+"_probs"] = data["probs"]
+    np.savez_compressed(ctx.result_dir/"oof_predictions.npz", **arrays)
+    pd.DataFrame({"row_index":np.arange(len(cv["groups_f"])),
+        "section_id":[cv["group_to_sample"][int(g)] for g in cv["groups_f"]],
+        "fold":cv["fold_id_f"],"cell_id":cv["cell_id_f"],"patient_id":cv.get("patient_f",None)}).to_csv(ctx.result_dir/"oof_rows.csv",index=False)
     print(f"  Best fold={lp['best_fold']['fold']}  {dest}", flush=True)
     ctx.g.update(lp)
     ctx.g["LP"] = lp
@@ -685,6 +777,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="hierarchical_l1_l12_l2",
         help="global_l2 | hierarchical_l1_l2 | hierarchical_l1_l12_l2 (default).",
     )
+    # 2026.10.24, independent ablation switches / 每一项均可独立关闭
+    p.add_argument("--class-weight-mode",choices=("none","balanced","class_balanced"),default=None)
+    p.add_argument("--hierarchy", choices=("adjacent","legacy"), default="adjacent")
+    for name, default in vars(HierarchyConfig()).items():
+        p.add_argument("--"+name.replace("_","-"),type=float,default=default)
+    p.add_argument("--legacy-l2-l1-weight",type=float,default=1.0)
+    p.add_argument("--spatial-radii-um",type=float,nargs="*",default=[])
+    p.add_argument("--spatial-mpp",type=float,default=None)
+    p.add_argument("--spatial-coordinates-um",action="store_true")
+    p.add_argument("--spatial-weighting",choices=("uniform","gaussian"),default="uniform")
+    p.add_argument("--spatial-sigma-um",type=float,default=16.)
+    p.add_argument("--spatial-gate",action="store_true")
+    p.add_argument("--spatial-geometry",action="store_true")
+    p.add_argument("--context-cache-dir",type=Path,default=Path("/tmp/hist2pheno_context"))
+    p.add_argument("--context-chunk-size",type=int,default=1024)
+    p.add_argument("--patient-map",type=Path,default=None)
+    p.add_argument("--mpp-map",type=Path,default=None)
+    p.add_argument("--inner-val-fraction",type=float,default=0.2)
     return p.parse_args(argv)
 
 
@@ -709,7 +819,21 @@ def main(argv: list[str] | None = None) -> int:
         train_balance = True
     else:
         train_balance = is_cell_stratified_splitter(args.group_splitter)
+    if args.spatial_mode == "attention" and (len(args.spatial_radii_um)>1 or args.spatial_geometry):
+        raise ValueError("Attention supports one scale without geometry; use mean for multiscale/geometry")
+    if args.group_splitter == "shuffle":
+        raise ValueError("PanCancer OOF CLI requires unique folds; use cross_dataset_section or group_kfold")
+    if args.patient_map is not None and args.group_splitter != "cross_dataset_section":
+        raise ValueError("Patient-map requires the default cross_dataset_section preassigned splitter")
+    spatial_options = vars(SpatialConfig(k=args.spatial_k, radii_um=tuple(args.spatial_radii_um),
+        mpp=args.spatial_mpp, coordinates_um=args.spatial_coordinates_um or args.mpp_map is not None,
+        weighting=args.spatial_weighting, sigma_um=args.spatial_sigma_um,
+        gate=args.spatial_gate,geometry=args.spatial_geometry,cache_dir=str(args.context_cache_dir),chunk_size=args.context_chunk_size))
     ctx = PooledCtx(
+        class_weight_mode=args.class_weight_mode or ("none" if train_balance else "balanced"),
+        hierarchy_options=vars(HierarchyConfig(**{k:getattr(args,k) for k in vars(HierarchyConfig())})) if args.hierarchy=="adjacent" else {},
+        spatial_options=spatial_options, patient_map=args.patient_map, mpp_map=args.mpp_map,
+        inner_val_fraction=args.inner_val_fraction, hce_w12=args.legacy_l2_l1_weight,
         data_root=args.data_root.expanduser().resolve(),
         save_result=save_result,
         ablation_tag=ablation_tag,

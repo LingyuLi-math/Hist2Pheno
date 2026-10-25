@@ -958,6 +958,10 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
         checkpoint_path=star_ckpt,
         device=ctx.device,
     )
+    # 2026.10.24, exact checkpoint scaler / 绑定训练标准化器
+    if hasattr(model_star, "checkpoint_scaler"):
+        scaler = model_star.checkpoint_scaler
+        ctx.g["scaler"] = scaler
     g["model_star"] = model_star
 
     all_acc, all_macro_f1, all_weighted_f1, all_preds, all_labels = (
@@ -978,7 +982,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
             pan_organ=PAN_ORGAN,
             spatial_title_pred_l2=f"{ctx.therapy_data} StarDist pred level2",
             spatial_title_true_l2=f"{ctx.therapy_data} ground truth level2",
-        )
+         neighbor_index={"xy": g["X_coords_star"]} if getattr(model_star,"use_spatial_context",False) else None)
     )
     g.update(
         {
@@ -1009,7 +1013,7 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
     if hasattr(model_star, "level12_head"):
         star_heads = stardist_head_preds(
             model_star, scaler, g["X_star"], ctx.device, predict_all_label_heads
-        )
+        , neighbor_index={"xy": g["X_coords_star"]} if getattr(model_star,"use_spatial_context",False) else None)
         plot_stardist_spatial_extra(
             plot_tier_spatial_distribution,
             plot_celltype_spatial_distribution,
@@ -1026,12 +1030,12 @@ def step_stardist(ctx: RunContext, checkpoint_path: str | None = None) -> None:
     print("[StarDist] ROC curves", flush=True)
     bundle = load_matched_features_bundle(g["matched_features_stardist_path"])
     x_star_scaled = scaler.transform(bundle["X"])
-    probs_l2 = mlp_collect_softmax_probs(model_star, x_star_scaled, ctx.device)
+    probs_l2 = mlp_collect_softmax_probs(model_star, x_star_scaled, ctx.device, neighbor_index={"xy": g["X_coords_star"]} if getattr(model_star,"use_spatial_context",False) else None)
     probs_heads = None
     if hasattr(model_star, "level12_head"):
         probs_heads = mlp_collect_five_head_softmax_probs(
             model_star, x_star_scaled, ctx.device
-        )
+        , neighbor_index={"xy": g["X_coords_star"]} if getattr(model_star,"use_spatial_context",False) else None)
     if "y" in bundle:
         y_roc = encode_labels_with_class_names(bundle["y"], class_names_star)
         m = min(len(probs_l2), len(y_roc))
@@ -1151,7 +1155,7 @@ def _stardist_neighbor_index(ctx: PooledRunContext, model, X_coords) -> np.ndarr
     """Per-sample kNN on StarDist spatial coords when the model uses spatial context."""
     if not ctx.use_spatial_context or not getattr(model, "use_spatial_context", False):
         return None
-    return build_spatial_neighbor_index(np.asarray(X_coords), k_neighbors=ctx.spatial_k)
+    return {"xy":np.asarray(X_coords)}
 
 
 def step_pooled_prepare(ctx: PooledRunContext) -> None:
@@ -1233,7 +1237,8 @@ def step_pooled_train(ctx: PooledRunContext) -> None:
     dest = ctx.ckpt_dir / "best_mlp_gpu.pt"
     import shutil
 
-    shutil.copy2(best_ckpt, dest)
+    from checkpoint_artifact import copy_checkpoint
+    copy_checkpoint(best_ckpt, dest)
     print(f"  Best fold={lp['best_fold']['fold']}  checkpoint={dest}", flush=True)
 
     ctx.g.update(lp)
@@ -1354,6 +1359,10 @@ def step_pooled_stardist_one_sample(
         device=ctx.device,
         hidden_dims=ctx.hidden_dims,
     )
+    # 2026.10.24, exact checkpoint scaler / 绑定训练标准化器
+    if hasattr(model_star, "checkpoint_scaler"):
+        scaler = model_star.checkpoint_scaler
+        ctx.g["scaler"] = scaler
     class_names = g["class_names"]
     scaler = g["scaler"]
     cv_data = g["cv_data"]
@@ -1656,6 +1665,10 @@ def step_pooled_stardist_all_one_sample(
         device=ctx.device,
         hidden_dims=ctx.hidden_dims,
     )
+    # 2026.10.24, exact checkpoint scaler / 绑定训练标准化器
+    if hasattr(model_star, "checkpoint_scaler"):
+        scaler = model_star.checkpoint_scaler
+        ctx.g["scaler"] = scaler
     scaler = g["scaler"]
     x_scaled = scaler.transform(star["X_all"])
     neighbor_index = _stardist_neighbor_index(ctx, model_star, star["X_coords_all"])

@@ -758,6 +758,9 @@ def ensure_lp_extra_insample_preds(
         return
     if neighbor_index is None and g.get("spatial_neighbor_index") is not None:
         neighbor_index = g.get("spatial_neighbor_index")
+    scaler=getattr(model,"checkpoint_scaler",scaler)
+    if neighbor_index is None and getattr(model,"use_spatial_context",False):
+        neighbor_index={"xy":cv_data["X_coords_f"],"groups":cv_data.get("groups_f")}
     X_ins = scaler.transform(cv_data["X_f"])
     head_preds = predict_all_label_heads(
         model, X_ins, device, neighbor_index=neighbor_index
@@ -1317,8 +1320,11 @@ def build_stardist_matched_tier_metrics(
         and device is not None
         and predict_all_label_heads is not None
     ):
+        from base import load_matched_features_bundle
         head_preds = stardist_head_preds(
-            model_star, scaler, X_star, device, predict_all_label_heads
+            model_star, scaler, X_star, device, predict_all_label_heads,
+            neighbor_index={"xy": load_matched_features_bundle(matched_features_path)["X_coords"]}
+                if getattr(model_star,"use_spatial_context",False) else None,
         )
 
     l1_head_tri = _stardist_l1_head_triplet(
@@ -1448,7 +1454,7 @@ def build_stardist_matched_tier_aucs(
                 flush=True,
             )
             return tier_aucs
-        probs_l2 = mlp_collect_softmax_probs(model_star, scaler.transform(x_arr), device)
+        probs_l2 = mlp_collect_softmax_probs(model_star, scaler.transform(x_arr), device, neighbor_index={"xy":loaded["X_coords"]} if getattr(model_star,"use_spatial_context",False) else None)
 
     probs_l2 = np.asarray(probs_l2, dtype=np.float64)
     m = len(probs_l2)
@@ -1487,7 +1493,7 @@ def build_stardist_matched_tier_aucs(
 
     if head_probs is None and model_star is not None and scaler is not None and x_arr is not None and device is not None:
         x_scaled = scaler.transform(x_arr)[:m]
-        head_probs = mlp_collect_five_head_softmax_probs(model_star, x_scaled, device)
+        head_probs = mlp_collect_five_head_softmax_probs(model_star, x_scaled, device, neighbor_index={"xy":loaded["X_coords"]} if getattr(model_star,"use_spatial_context",False) else None)
 
     if head_probs and "l1" in head_probs and "y_level1" in loaded:
         y_l1 = _encode_level1_labels(loaded["y_level1"][:m], class_names_level1)
@@ -1641,7 +1647,7 @@ def build_stardist_level2_auroc_table(
             raise ValueError(
                 "Need probs_l2 or model_star + scaler + X_star/device for AUROC table."
             )
-        probs_l2 = mlp_collect_softmax_probs(model_star, scaler.transform(x_arr), device)
+        probs_l2 = mlp_collect_softmax_probs(model_star, scaler.transform(x_arr), device, neighbor_index={"xy":loaded["X_coords"]} if getattr(model_star,"use_spatial_context",False) else None)
     probs_l2 = np.asarray(probs_l2, dtype=np.float64)
 
     m = min(len(preds), len(y_enc), len(probs_l2))

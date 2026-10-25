@@ -54,10 +54,12 @@
 
 set -euo pipefail
 
-REPO=/home/lingyu/ssd2/Python/Hist2Pheno
+# Original: REPO=/home/lingyu/ssd2/Python/Hist2Pheno
+# 2026.10.24, portable repository/Python override / 保留原用法并支持 farm
+REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 OUT="$REPO/data/PanCancer"
 CUDA_DEVICE="${CUDA_DEVICE:-2}"
-CONDA_ENV=SeededNTM
+CONDA_ENV="${CONDA_ENV:-SeededNTM}"
 
 TAG_SECTION=D_emph_L2_spatial_pancancer
 TAG_CELL=D_emph_L2_spatial_pancancer_cellstrat
@@ -98,7 +100,11 @@ need_ckpt() {
 }
 
 py() {
-  conda run --no-capture-output -n "$CONDA_ENV" python -u "$@"
+  if [[ "${HIST2PHENO_USE_CONDA_RUN:-0}" == 1 ]]; then
+    conda run --no-capture-output -n "$CONDA_ENV" python -u "$@"
+  else
+    "${PYTHON:-python}" -u "$@"
+  fi
 }
 
 cd "$REPO"
@@ -193,7 +199,7 @@ cmd_section_predict() {
 cmd_celltype_smoke() {
   py code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
     --cuda-device "$CUDA_DEVICE" \
-    --group-splitter cell_stratified \
+    --group-splitter cell_stratified --inner-val-fraction 0 \
     --datasets BRCA GBM \
     --max-cells-per-section 5000 \
     --max-epochs 2 --patience 2 \
@@ -213,7 +219,7 @@ cmd_celltype_train() {
       conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
           --cuda-device "$CUDA_DEVICE" \
-          --group-splitter cell_stratified \
+          --group-splitter cell_stratified --inner-val-fraction 0 \
           --use-spatial-context --spatial-k 8 --spatial-mode mean \
           --steps prepare train he_validate \
           --save-result result_cell_stratified_spatial \
@@ -234,7 +240,7 @@ cmd_celltype_predict() {
       conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_predict_visualize.py \
           --cuda-device "$CUDA_DEVICE" \
-          --checkpoint "$CKPT_CELL" \
+          --checkpoint "$CKPT_CELL" --deployment \
           --pred-root "$OUT/pred_cell_stratified_spatial" \
           --scaler-path "$OUT/result_cell_stratified_spatial/scaler.joblib" \
           --include-incomplete-lung "${skip[@]}"

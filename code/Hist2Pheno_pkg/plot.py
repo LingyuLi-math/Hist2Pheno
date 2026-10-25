@@ -2959,10 +2959,10 @@ def mlp_collect_softmax_probs(
     import numpy as np
     import torch
 
-    from base import gather_neighbor_embeddings
+    from spatial_context import prediction_context, prediction_batch
 
     if use_cuda_autocast is None:
-        use_cuda_autocast = torch.cuda.is_available()
+        use_cuda_autocast = torch.device(device).type == "cuda"
 
     use_spatial = bool(getattr(model, "use_spatial_context", False)) and neighbor_index is not None
 
@@ -2970,11 +2970,7 @@ def mlp_collect_softmax_probs(
     Xs = np.asarray(X_scaled_np, dtype=np.float32)
     n = Xs.shape[0]
     chunks = []
-    X_full_t = nbr_idx_t = None
-    if use_spatial:
-        dev = device if isinstance(device, torch.device) else torch.device(device)
-        nbr_idx_t = torch.as_tensor(np.asarray(neighbor_index), dtype=torch.long, device=dev)
-        X_full_t = torch.as_tensor(Xs, dtype=torch.float32, device=dev)
+    context = prediction_context(model,Xs,neighbor_index) if getattr(model,"use_spatial_context",False) else None
 
     with torch.no_grad():
         for start in range(0, n, batch_size):
@@ -2983,7 +2979,7 @@ def mlp_collect_softmax_probs(
             neighbor_x = None
             if use_spatial:
                 global_idx = torch.arange(start, end, dtype=torch.long, device=device)
-                neighbor_x = gather_neighbor_embeddings(X_full_t, nbr_idx_t, global_idx, device=device)
+                neighbor_x = prediction_batch(context,global_idx,device)
             if use_cuda_autocast:
                 with torch.amp.autocast("cuda"):
                     logits = model(xb, neighbor_x=neighbor_x)
@@ -3017,10 +3013,10 @@ def mlp_collect_five_head_softmax_probs(
     import numpy as np
     import torch
 
-    from base import gather_neighbor_embeddings
+    from spatial_context import prediction_context, prediction_batch
 
     if use_cuda_autocast is None:
-        use_cuda_autocast = torch.cuda.is_available()
+        use_cuda_autocast = torch.device(device).type == "cuda"
 
     use_spatial = bool(getattr(model, "use_spatial_context", False)) and neighbor_index is not None
 
@@ -3039,11 +3035,7 @@ def mlp_collect_five_head_softmax_probs(
     else:
         head_names = ("l2",)
     chunks = {k: [] for k in head_names}
-    X_full_t = nbr_idx_t = None
-    if use_spatial:
-        dev = device if isinstance(device, torch.device) else torch.device(device)
-        nbr_idx_t = torch.as_tensor(np.asarray(neighbor_index), dtype=torch.long, device=dev)
-        X_full_t = torch.as_tensor(Xs, dtype=torch.float32, device=dev)
+    context = prediction_context(model,Xs,neighbor_index) if getattr(model,"use_spatial_context",False) else None
 
     with torch.no_grad():
         for start in range(0, n, batch_size):
@@ -3052,9 +3044,7 @@ def mlp_collect_five_head_softmax_probs(
             neighbor_x = None
             if use_spatial:
                 global_idx = torch.arange(start, end, dtype=torch.long, device=device)
-                neighbor_x = gather_neighbor_embeddings(
-                    X_full_t, nbr_idx_t, global_idx, device=device
-                )
+                neighbor_x = prediction_batch(context,global_idx,device)
             if use_cuda_autocast:
                 with torch.amp.autocast("cuda"):
                     if has_level12:

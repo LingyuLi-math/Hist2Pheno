@@ -9,6 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+# 2026.10.24, validated artifacts + adjacent hierarchy / 标准化与层级协议
+from checkpoint_artifact import (atomic_save, digest, read_artifact, restore_scaler,
+                                 save_artifact, reusable, file_digest, copy_checkpoint)
+from spatial_context import config_of, prepare_runtime, runtime_batch
+from hierarchy_loss import adjacent_loss
 
 from base import (
     DualHeadImprovedMLPClassifier,
@@ -32,6 +37,8 @@ def _checkpoint_is_spatial(state_dict):
 def _spatial_ctx_from_result(result):
     if not result.get("use_spatial_context"):
         return None
+    if result.get("_streaming_spatial") is not None:
+        return result["_streaming_spatial"]
     cached = result.get("_spatial_ctx")
     if cached is not None and cached.get("X_all") is not None:
         return cached
@@ -68,18 +75,36 @@ def _ensure_spatial_ctx_device(spatial_ctx, device):
     return spatial_ctx
 
 
-def _scale_split_float32(X_f, tr_idx, va_idx):
+def _scale_split_float32(X_f, tr_idx, va_idx, *, build_all=False):
     """Train-only StandardScaler; float32 train/val/all (no extra full-matrix float64)."""
     from sklearn.preprocessing import StandardScaler
 
     scaler = StandardScaler()
     tr_idx = np.asarray(tr_idx, dtype=np.int64)
     va_idx = np.asarray(va_idx, dtype=np.int64)
-    X_tr = np.ascontiguousarray(scaler.fit_transform(X_f[tr_idx]), dtype=np.float32)
-    X_va = np.ascontiguousarray(scaler.transform(X_f[va_idx]), dtype=np.float32)
-    X_all = np.empty(X_f.shape, dtype=np.float32)
-    X_all[tr_idx] = X_tr
-    X_all[va_idx] = X_va
+    # 2026.10.24, block transforms and file-backed large splits / 大矩阵分块落盘
+    threshold = float(os.environ.get("HIST2PHENO_MEMMAP_THRESHOLD_MB","256"))*1024**2
+    large = X_f.nbytes >= threshold
+    if large:
+        import tempfile
+        folder=os.environ.get("HIST2PHENO_ARRAY_CACHE",os.environ.get("NCRT_TMPDIR","/tmp"))
+        os.makedirs(folder,exist_ok=True)
+        for start in range(0,len(tr_idx),8192):scaler.partial_fit(X_f[tr_idx[start:start+8192]])
+        def transform(rows):
+            fd,path=tempfile.mkstemp(prefix="hist2pheno_scaled_",suffix=".npy",dir=folder);os.close(fd)
+            out=np.lib.format.open_memmap(path,mode="w+",dtype=np.float32,shape=(len(rows),X_f.shape[1]))
+            for start in range(0,len(rows),8192):out[start:start+8192]=scaler.transform(X_f[rows[start:start+8192]])
+            return out
+        X_tr,X_va=transform(tr_idx),transform(va_idx)
+    else:
+        X_tr=np.ascontiguousarray(scaler.fit_transform(X_f[tr_idx]),dtype=np.float32)
+        X_va=np.ascontiguousarray(scaler.transform(X_f[va_idx]),dtype=np.float32)
+    # 2026.10.24, no unused full matrix / 非空间和流式路径不复制全矩阵
+    X_all = None
+    if build_all:
+        X_all = np.empty(X_f.shape, dtype=np.float32)
+        X_all[tr_idx] = X_tr
+        X_all[va_idx] = X_va
     return scaler, X_tr, X_va, X_all
 ########################################################
 
@@ -176,6 +201,8 @@ def _unpack_spatial_batch(batch, head_mode="dual"):
 def _neighbor_x_from_batch(spatial_ctx, global_idx, device):
     if spatial_ctx is None or global_idx is None:
         return None
+    if "mode" in spatial_ctx:
+        return runtime_batch(spatial_ctx, global_idx, device)
     _ensure_spatial_ctx_device(spatial_ctx, device)
     global_idx = global_idx.to(device, non_blocking=True)
     return gather_neighbor_embeddings(
@@ -241,6 +268,7 @@ def build_mlp_classifier(
     use_spatial_context=False,
     spatial_mode="mean",
     spatial_k=8,
+    spatial_config=None,
 ):
     """
     Create the MLP on ``device``.
@@ -257,6 +285,7 @@ def build_mlp_classifier(
         use_spatial_context=use_spatial_context,
         spatial_mode=spatial_mode,
         spatial_k=spatial_k,
+        spatial_config=spatial_config,
     )
     if use_three_head and use_five_head:
         raise ValueError("use_three_head and use_five_head are mutually exclusive")
@@ -317,6 +346,16 @@ def build_mlp_classifier(
 
 def _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx):
     """Copy optional level12 / level3 / level4 encodings into a per-fold result dict."""
+    # 2026.10.24, preserve protocol and exact row identity / 固定数据与行身份
+    result_fold["train_global_indices"] = np.asarray(tr_idx)
+    result_fold["val_global_indices"] = np.asarray(va_idx)
+    if "_data_fingerprint" not in cv_data:
+        cv_data["_data_fingerprint"] = digest(cv_data.get("sample_names",[]), *[np.asarray(cv_data[k]) for k in
+            ("X_f", "y_encoded_f", "y_level1_encoded_f", "y_level12_encoded_f", "X_coords_f", "groups_f", "cell_id_f") if k in cv_data])
+    result_fold["data_fingerprint"] = cv_data["_data_fingerprint"]
+    result_fold["_cv_source"] = cv_data
+    for k in ("hierarchy_config", "hierarchy_maps", "spatial_config"):
+        if k in cv_data: result_fold[k] = cv_data[k]
     for short in ("level12", "level3", "level4"):
         key_full = f"y_{short}_encoded_f"
         if key_full not in cv_data:
@@ -373,7 +412,12 @@ def _subsample_rows_for_auc(y_true, y_score, max_cells, seed=42):
     if max_cells is None or n <= int(max_cells):
         return y_true, y_score
     rng = np.random.default_rng(int(seed))
-    take = rng.choice(n, size=int(max_cells), replace=False)
+    cap=int(max_cells)
+    classes=np.unique(y_true)
+    if cap < len(classes): raise ValueError("AUROC cap smaller than class count")
+    mandatory=np.asarray([rng.choice(np.flatnonzero(y_true==c)) for c in classes])
+    rest=np.setdiff1d(np.arange(n),mandatory,assume_unique=True)
+    take=np.concatenate([mandatory,rng.choice(rest,size=cap-len(mandatory),replace=False)])
     return y_true[take], y_score[take]
 
 
@@ -524,8 +568,8 @@ def _eval_head_macro_aucs_on_loader(
                 logits_l2 = model(x, neighbor_x=neighbor_x)
                 _append_prob_bucket(prob_buckets, "l2", yt_l2, logits_l2, device)
             n_seen += int(len(yt_l2))
-            if cap is not None and n_seen >= cap:
-                break
+            # 2026.10.24, evaluate all cohorts, not the first 300k rows / 避免前缀偏差
+            # Metric subsampling is applied after complete forward inference.
 
     tier_nc = {"l2": num_classes, "l1_head": num_level1_classes}
     if three_or_five:
@@ -719,12 +763,18 @@ def _eval_fold_tier_metrics(
     )
     if three_or_five:
         out["three_tier_auc_sum"] = _three_tier_auc_sum_from_head_aucs(out)
+    if return_oof:
+        out["_oof_heads"] = {k: {"labels": np.concatenate(v[0]),
+            "probs": np.concatenate(v[1], axis=0).astype(np.float32)} for k,v in prob_buckets.items()}
     if return_oof and "l2" in prob_buckets and buckets["l2"][0]:
         out["_oof_labels_l2"] = np.concatenate(buckets["l2"][0]).astype(np.int64)
         out["_oof_preds_l2"] = np.concatenate(buckets["l2"][1]).astype(np.int64)
         out["_oof_probs_l2"] = np.concatenate(prob_buckets["l2"][1], axis=0).astype(
             np.float32
         )
+    for key,value in list(out.items()):
+        if key.startswith("l1_") and not key.startswith("l1_head_"):
+            out[key.replace("l1_","l1_from_l2_agg_",1)] = value
     print("  OOF/val metrics done.", flush=True)
     return out
 
@@ -782,9 +832,11 @@ def _load_fold_model_for_eval(
         class_names=class_names,
     )
     num_l1 = int(np.max(result_fold["y_level1_encoded_f"])) + 1
-    sd_fold = torch.load(save_path, map_location=device)
+    sd_fold = torch.load(save_path, map_location=device, weights_only=True)
+    artifact = read_artifact(save_path)
     model, _ = build_mlp_classifier_for_state_dict(
         sd_fold,
+        spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
         input_dim=input_dim,
         num_classes=num_classes,
         num_level1_classes=num_l1,
@@ -833,6 +885,7 @@ def build_mlp_classifier_for_state_dict(
     device,
     hidden_dims,
     dropout=0.2,
+    spatial_config=None,
 ):
     """Instantiate dual-, three-, or five-head MLP matching ``state_dict``."""
     use_five = _checkpoint_is_five_head(state_dict)
@@ -844,11 +897,13 @@ def build_mlp_classifier_for_state_dict(
         device=device,
         hidden_dims=list(hidden_dims),
         dropout=dropout,
-        num_level1_classes=num_level1_classes,
+        num_level1_classes=int(state_dict["level1_head.weight"].shape[0]),
         use_dual_head=not (use_three or use_five),
         use_three_head=use_three,
         use_five_head=use_five,
         use_spatial_context=use_spatial,
+        spatial_mode="attention" if "spatial_fusion.attn_q.weight" in state_dict else "mean",
+        spatial_config=spatial_config,
     )
     if use_three:
         kw["num_level12_classes"] = int(state_dict["level12_head.weight"].shape[0])
@@ -947,7 +1002,7 @@ def sync_best_mlp_from_logo_fold(
     dest_dir = os.path.dirname(dest)
     if dest_dir:
         os.makedirs(dest_dir, exist_ok=True)
-    shutil.copy2(src, dest)
+    copy_checkpoint(src, dest)
     print(f"sync_best_mlp_from_logo_fold: wrote {dest!r} ← {src!r}")
     return dest
 
@@ -1128,6 +1183,11 @@ def train_and_save_model(
                     + self.w_l3 * ce_l3
                     + self.w_l4 * ce_l4
                 )
+            # 2026.10.24, optional L2→L12→L1 terms / 保留三个独立 CE
+            if self.use_level12_head and result is not None and result.get("hierarchy_config"):
+                extra, _ = adjacent_loss(logits_l2, logits_l12, logits_l1_head,
+                    target_l12, target_l1, result["hierarchy_maps"], result["hierarchy_config"])
+                total_loss = total_loss + extra
             return (
                 total_loss,
                 ce_l2.detach(),
@@ -1154,14 +1214,15 @@ def train_and_save_model(
         class_names=class_names,
     )
     # Use full filtered label space so val folds never see out-of-range L1 indices.
-    num_level1_classes = int(np.max(y_level1_encoded_f)) + 1
+    source = result.get("_cv_source",{}) if result else {}
+    num_level1_classes = max(int(np.max(y_level1_encoded_f))+1,len(source.get("class_names_level1",[])))
     num_level12_classes = num_level3_classes = num_level4_classes = None
     use_level12_head = bool(use_level12_head or use_extra_heads)
     head_mode = "five" if use_extra_heads else "three" if use_level12_head else "dual"
     if use_level12_head:
         if y_level12_encoded_f is None:
             raise ValueError("L12 head requires y_level12_encoded_f")
-        num_level12_classes = int(np.max(y_level12_encoded_f)) + 1
+        num_level12_classes = max(int(np.max(y_level12_encoded_f))+1,len(source.get("class_names_level12",[])))
     if use_extra_heads:
         if y_level3_encoded_f is None or y_level4_encoded_f is None:
             raise ValueError(
@@ -1201,10 +1262,13 @@ def train_and_save_model(
         use_spatial_context=use_spatial_context,
         spatial_mode=spatial_mode,
         spatial_k=spatial_k,
+        spatial_config=result.get("spatial_config") if result else None,
     )
 
     spatial_ctx = None
-    if use_spatial_context:
+    if use_spatial_context and result is not None and result.get("_streaming_spatial") is not None:
+        spatial_ctx = result["_streaming_spatial"]
+    elif use_spatial_context:
         if spatial_neighbor_index is None or X_all_scaled is None:
             raise ValueError(
                 "use_spatial_context=True requires spatial_neighbor_index and X_all_scaled"
@@ -1305,7 +1369,7 @@ def train_and_save_model(
 
     # Build level2 -> level1 mapping from the filtered dataset.
     child_to_parent, n_l2_l1_conflict = _child_to_parent_majority(
-        y_encoded_f, y_level1_encoded_f, num_classes
+        y_train_encoded, y_train_level1_encoded, num_classes
     )
     if child_to_parent_fill is not None:
         fill = np.asarray(child_to_parent_fill, dtype=np.int64)
@@ -1573,6 +1637,8 @@ def train_and_save_model(
                 total_ce_l4 += float(ce_l4.item())
             num_batches += 1
 
+        if num_batches == 0:
+            raise RuntimeError("No finite optimizer update in this epoch; do not save an untrained model")
         # Validation: F1 passes only needed for F1-based selection metrics.
         need_f1_val = val_selection_metric in ("four_term_sum", "l2_macro_priority")
         if need_f1_val:
@@ -1684,7 +1750,7 @@ def train_and_save_model(
             best_l1_weighted_f1 = val_l1_weighted_f1
             best_l1_acc = val_l1_acc
             best_five_tier_auc_sum = float(tier_aucs.get("five_tier_auc_sum", float("nan")))
-            torch.save(model.state_dict(), save_bestmodel_path)
+            atomic_save(model.state_dict(), save_bestmodel_path)
             counter = 0
         else:
             counter += 1
@@ -1703,6 +1769,8 @@ def train_and_save_model(
             f"Best validation ({val_selection_metric}): {best_score:.4f} at epoch {best_epoch}"
         )
 
+    if best_epoch == 0:
+        raise RuntimeError("No evaluable validation checkpoint; use a metric supported by this validation set")
     return best_weighted_f1, best_macro_f1, best_epoch
 
 
@@ -1769,6 +1837,34 @@ def train_and_save_model_from_split(
     use_extra_heads = result_has_extra_head_labels(result)
     use_level12_head = result_has_level12_head_labels(result)
 
+    # 2026.10.24, artifact compatibility check / 只复用已完成且协议相同的 fold
+    artifact_scaler = result.get("fold_scaler", result.get("scaler"))
+    if artifact_scaler is None:
+        raise ValueError("Training requires the exact train-fitted scaler in result['fold_scaler']")
+    protocol = digest((result["data_fingerprint"] if result.get("data_fingerprint") else digest(result["X_train_scaled"], result["X_test_scaled"])),
+        result.get("train_global_indices", np.arange(len(result["y_train_encoded"]))),
+        result.get("val_global_indices", np.arange(len(result["y_test_encoded"]))),
+        result["y_train_encoded"], result["y_test_encoded"],
+        {"hce":[hce_w1,hce_w2,hce_w12,hce_w_l12head,hce_w_l3,hce_w_l4],
+         "implementation":digest(*[file_digest(Path(__file__).parent/name) for name in ("model.py","base.py","hierarchy_loss.py","spatial_context.py")]),
+         "epochs":max_epochs,"patience":patience,"hidden":list(hidden_dims),"dropout":dropout,
+         "lr":lr,"weight_decay":weight_decay,"val_selection":val_selection_metric,
+         "class_weight":class_weight_mode,"beta":class_balanced_beta,"focal":l2_focal_gamma,
+         "smoothing":[l1_label_smoothing,l2_label_smoothing],
+         "spatial":result.get("spatial_config"),"spatial_mode":result.get("spatial_mode"),
+         "spatial_k":result.get("spatial_k"),"hierarchy":result.get("hierarchy_config"),"hierarchy_maps":result.get("hierarchy_maps"),
+         "classes":list(map(str,class_names)) if class_names is not None else None,
+         "seed":result.get("_cv_source",{}).get("seed",42),
+         "batch_size":loaders["train_loader"].batch_size,
+         "sampler":type(loaders["train_loader"].sampler).__name__,
+         "sampler_weights":digest(loaders["train_loader"].sampler.weights.numpy()) if hasattr(loaders["train_loader"].sampler,"weights") else None})
+    if result.get("use_spatial_context"):
+        cv = result.get("_cv_source")
+        if cv is not None:
+            cfg = result.get("spatial_config", {"k":result.get("spatial_k",8)})
+            result["spatial_config"] = vars(config_of(cfg))
+            result["_streaming_spatial"] = prepare_runtime(cv,result,cfg)
+    checkpoint_exists = bool(checkpoint_exists and reusable(save_bestmodel_path, protocol))
     if checkpoint_exists:
         if not os.path.isfile(save_bestmodel_path):
             raise FileNotFoundError(
@@ -1782,9 +1878,10 @@ def train_and_save_model_from_split(
             class_names=class_names,
         )
         num_l1 = int(np.max(result["y_level1_encoded_f"])) + 1
-        state_dict = torch.load(save_bestmodel_path, map_location=device)
+        state_dict = torch.load(save_bestmodel_path, map_location=device, weights_only=True)
         model, _ = build_mlp_classifier_for_state_dict(
             state_dict,
+            spatial_config=result.get("spatial_config"),
             input_dim=input_dim,
             num_classes=num_classes,
             num_level1_classes=num_l1,
@@ -1824,7 +1921,7 @@ def train_and_save_model_from_split(
     if result.get("child_to_parent") is not None:
         train_kw["child_to_parent_fill"] = result["child_to_parent"]
 
-    return train_and_save_model(
+    outcome = train_and_save_model(
         device=device,
         X_train_scaled=result["X_train_scaled"],
         y_train_encoded=result["y_train_encoded"],
@@ -1856,6 +1953,24 @@ def train_and_save_model_from_split(
         l2_focal_gamma=l2_focal_gamma,
         result=result,
     )
+
+    meta = {"spatial_config":result.get("spatial_config"), "spatial_mode":result.get("spatial_mode"),
+            "class_names":list(map(str,class_names)) if class_names is not None else None,
+            "hierarchy_config":result.get("hierarchy_config"),
+            "hierarchy_maps":{k:np.asarray(v).tolist() for k,v in result.get("hierarchy_maps",{}).items()},
+            "train_rows":torch.as_tensor(np.asarray(result.get("train_global_indices",[]),dtype=np.int64)),
+            "val_rows":torch.as_tensor(np.asarray(result.get("val_global_indices",[]),dtype=np.int64)),
+            "data_fingerprint":result.get("data_fingerprint"),"best_epoch":int(outcome[2]),
+            "fold":result.get("outer_fold"),
+            "fold_mode":result.get("_cv_source",{}).get("fold_mode"),
+            "outer_val_rows":torch.as_tensor(np.asarray(result.get("outer_val_rows",result.get("val_global_indices",[])),dtype=np.int64)),
+            "held_out_sections":sorted({str(result["_cv_source"].get("group_to_sample",{}).get(int(g),g)) for g in np.asarray(result["_cv_source"]["groups_f"])[np.asarray(result.get("outer_val_rows",result.get("val_global_indices",[])),dtype=int)]}) if result.get("_cv_source") and "groups_f" in result["_cv_source"] else [],
+            "section_mpp":result.get("_cv_source",{}).get("section_mpp",{}),
+            "head_classes":{k:list(map(str,result.get("_cv_source",{}).get(v,[]))) for k,v in
+                (("L2","class_names"),("L1","class_names_level1"),("L12","class_names_level12"))}}
+
+    save_artifact(save_bestmodel_path, artifact_scaler, meta, protocol)
+    return outcome
 
 
 def train_hce_leave_one_group_out_cv(
@@ -1982,6 +2097,9 @@ def train_hce_leave_one_group_out_cv(
         }
         _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx)
 
+        result_fold["fold_scaler"] = scaler
+        result_fold["outer_fold"] = fold_idx
+        if "outer_va" in locals(): result_fold["outer_val_rows"] = outer_va
         loaders = loader_train_test(result_fold, **loader_kwargs)
         save_path = os.path.normpath(os.path.abspath(save_bestmodel_path_pattern.format(fold_idx)))
         parent = os.path.dirname(save_path)
@@ -2183,9 +2301,8 @@ def train_hce_group_kfold_cv(
 
     neighbor_index_full = None
     if use_spatial_context:
-        neighbor_index_full = _build_spatial_neighbor_index_for_cv_data(
-            cv_data, k_neighbors=spatial_k
-        )
+        neighbor_index_full = np.zeros((len(cv_data["X_f"]), 1), dtype=np.int64)
+        # 2026.10.24, real per-section graphs are built once by prepare_runtime.
         group_note = "per-sample kNN" if "groups_f" in cv_data else "global kNN"
         print(
             f"Spatial context: k={spatial_k}, mode={spatial_mode!r}, {group_note}, "
@@ -2268,6 +2385,8 @@ def train_hce_group_kfold_cv(
     oof_preds_parts = []
     oof_labels_parts = []
     oof_probs_parts = []
+    oof_heads_parts = []
+    oof_rows_parts = []
 
     for fold_idx, (tr_idx, va_idx) in enumerate(split_iter):
         held = np.unique(groups_f[va_idx])
@@ -2291,6 +2410,18 @@ def train_hce_group_kfold_cv(
             )
             continue
 
+        outer_tr, outer_va = np.asarray(tr_idx), np.asarray(va_idx)
+        fraction = float(cv_data.get("inner_val_fraction",0.))
+        if fraction:
+            if not 0 < fraction < 1: raise ValueError("inner_val_fraction must be in (0,1)")
+            if section_overlap.size: raise ValueError("Nested grouped validation cannot use cell-mixed outer splits")
+            from sklearn.model_selection import GroupShuffleSplit
+            grouping = cv_data.get("patient_f",groups_f)
+            if len(np.unique(grouping[outer_tr])) < 2:
+                raise ValueError("Nested validation needs >=2 train patients/sections; lower cv_k or supply more data")
+            it,iv = next(GroupShuffleSplit(n_splits=1,test_size=fraction,
+                random_state=int(random_state)+fold_idx).split(outer_tr,groups=grouping[outer_tr]))
+            tr_idx,va_idx = outer_tr[it],outer_tr[iv]
         scaler, X_tr, X_va, X_all_scaled = _scale_split_float32(X_f, tr_idx, va_idx)
 
         result_fold = {
@@ -2326,6 +2457,9 @@ def train_hce_group_kfold_cv(
             )
         _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx)
 
+        result_fold["fold_scaler"] = scaler
+        result_fold["outer_fold"] = fold_idx
+        if "outer_va" in locals(): result_fold["outer_val_rows"] = outer_va
         loaders = loader_train_test(result_fold, **loader_kwargs)
         save_path = os.path.normpath(os.path.abspath(save_bestmodel_path_pattern.format(fold_idx)))
         parent = os.path.dirname(save_path)
@@ -2388,9 +2522,20 @@ def train_hce_group_kfold_cv(
         model, num_classes = _load_fold_model_for_eval(
             save_path, device, result_fold, class_names, hidden_dims, dropout
         )
+        # 2026.10.24, outer fold is evaluated only after inner epoch selection / 外层不参与早停
+        eval_loaders = loaders
+        if fraction:
+            outer_result = dict(result_fold)
+            outer_result.update(X_test_scaled=np.asarray(scaler.transform(X_f[outer_va]),dtype=np.float32),
+                y_test_encoded=y_enc[outer_va],y_test_level1_encoded=y_l1_enc[outer_va],
+                y_test=y_f[outer_va],y_test_level1=y_level1_f[outer_va],val_global_indices=outer_va)
+            for short in ("level12","level3","level4"):
+                key=f"y_{short}_encoded_f"
+                if key in cv_data:outer_result[f"y_test_{short}_encoded"]=cv_data[key][outer_va]
+            eval_loaders=loader_train_test(outer_result,**loader_kwargs)
         tier_m = _eval_fold_tier_metrics(
             model,
-            loaders["val_loader"],
+            eval_loaders["val_loader"],
             device,
             num_classes,
             y_enc_full,
@@ -2398,6 +2543,8 @@ def train_hce_group_kfold_cv(
             spatial_ctx=_spatial_ctx_from_result(result_fold),
             return_oof=True,
         )
+        oof_heads_parts.append(tier_m.pop("_oof_heads"))
+        oof_rows_parts.append(np.asarray(outer_va))
         val_labels, val_preds, val_probs, tier_m = _split_oof_from_tier_metrics(tier_m)
         if val_labels is None or val_preds is None or val_probs is None:
             raise RuntimeError("_eval_fold_tier_metrics failed to produce OOF outputs.")
@@ -2410,8 +2557,10 @@ def train_hce_group_kfold_cv(
                 "fold": fold_idx,
                 "held_groups": held_repr,
                 "n_train": int(len(tr_idx)),
-                "n_val": int(len(va_idx)),
-                "n_train_groups": int(n_groups - len(held)),
+                "n_val": int(len(outer_va)),
+                "n_inner_val":int(len(va_idx)) if fraction else 0,
+                "outer_fold":fold_idx,
+                "n_train_groups": int(len(np.unique(groups_f[tr_idx]))),
                 "n_val_groups": int(len(held)),
                 "l2_weighted_f1": float(w_f1),
                 "l2_macro_f1": float(macro_f1),
@@ -2420,6 +2569,10 @@ def train_hce_group_kfold_cv(
                 **{k: v for k, v in tier_m.items() if not isinstance(v, np.ndarray)},
             }
         )
+        for mapped in (X_tr,X_va):
+            if isinstance(mapped,np.memmap):
+                try:os.unlink(mapped.filename)
+                except FileNotFoundError:pass
         result_fold.pop("_spatial_ctx", None)
         result_fold.pop("X_all_scaled", None)
         result_fold.pop("spatial_neighbor_index", None)
@@ -2449,8 +2602,8 @@ def train_hce_group_kfold_cv(
         "cv_mode": "group_kfold",
         "n_splits": int(n_splits),
         "train_group_frac": float(train_group_frac),
-        "n_train_groups_per_fold": int(n_train_groups),
-        "n_val_groups_per_fold": int(n_groups - n_train_groups),
+        "n_train_groups_per_fold": [r["n_train_groups"] for r in fold_rows],
+        "n_val_groups_per_fold": [r["n_val_groups"] for r in fold_rows],
     }
     _append_tier_means_to_cv_summary(summary, fold_rows)
 
@@ -2458,12 +2611,15 @@ def train_hce_group_kfold_cv(
         summary["oof_val_preds"] = np.concatenate(oof_preds_parts)
         summary["oof_val_labels"] = np.concatenate(oof_labels_parts)
         summary["oof_val_probs"] = np.concatenate(oof_probs_parts, axis=0)
+        summary["oof_row_indices"] = np.concatenate(oof_rows_parts)
+        summary["oof_heads"] = {k: {t:np.concatenate([p[k][t] for p in oof_heads_parts])
+            for t in ("labels","probs")} for k in oof_heads_parts[0]}
 
     print("\n" + "=" * 60)
     print(
-        f"GroupShuffleSplit summary (n_splits={n_splits}, "
+        f"Group CV summary (splitter={group_splitter}, n_splits={n_splits}, "
         f"train_group_frac={train_group_frac}, "
-        f"~{n_train_groups} train / {n_groups - n_train_groups} val datasets per fold)"
+        f"actual train/val group counts are recorded per fold)"
     )
     print(
         f"  L2 weighted-F1: {summary['l2_weighted_f1_mean']:.4f} ± {summary['l2_weighted_f1_std']:.4f}\n"
@@ -2622,9 +2778,8 @@ def train_hce_stratified_kfold_cv(
         )
     neighbor_index_full = None
     if use_spatial_context:
-        neighbor_index_full = _build_spatial_neighbor_index_for_cv_data(
-            cv_data, k_neighbors=spatial_k
-        )
+        neighbor_index_full = np.zeros((len(cv_data["X_f"]), 1), dtype=np.int64)
+        # 2026.10.24, real per-section graphs are built once by prepare_runtime.
         group_note = "per-sample kNN" if "groups_f" in cv_data else "global kNN"
         print(
             f"Spatial context: k={spatial_k}, mode={spatial_mode!r}, {group_note}, "
@@ -2703,6 +2858,9 @@ def train_hce_stratified_kfold_cv(
             )
         _append_logo_fold_extra_tiers(result_fold, cv_data, tr_idx, va_idx)
 
+        result_fold["fold_scaler"] = scaler
+        result_fold["outer_fold"] = fold_idx
+        if "outer_va" in locals(): result_fold["outer_val_rows"] = outer_va
         loaders = loader_train_test(result_fold, **loader_kwargs)
         save_path = os.path.normpath(os.path.abspath(save_bestmodel_path_pattern.format(fold_idx)))
         parent = os.path.dirname(save_path)
@@ -2918,9 +3076,11 @@ def run_stratified_kfold_cv_and_load_best_model(
     input_dim = int(cv_data["X_f"].shape[1])
     num_classes = len(class_names)
     ckpt_path = best_fold["checkpoint"]
-    state_dict = torch.load(ckpt_path, map_location=device)
+    state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
+    artifact = read_artifact(ckpt_path)
     model, use_five = build_mlp_classifier_for_state_dict(
         state_dict,
+        spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
         input_dim=input_dim,
         num_classes=num_classes,
         num_level1_classes=int(np.max(cv_data["y_level1_encoded_f"])) + 1,
@@ -2929,6 +3089,9 @@ def run_stratified_kfold_cv_and_load_best_model(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
+    if artifact:
+        model.checkpoint_scaler=restore_scaler(artifact["scaler"])
+        model.checkpoint_metadata=artifact["metadata"]
     model.eval()
 
     spatial_neighbor_index = None
@@ -2938,6 +3101,7 @@ def run_stratified_kfold_cv_and_load_best_model(
     return {
         "logo_summary": kfold_summary,  # keep key name for downstream compatibility
         "model": model,
+        "scaler": restore_scaler(artifact["scaler"]) if artifact else None,
         "best_fold": best_fold,
         "best_weighted_f1": float(best_fold["l2_weighted_f1"]),
         "best_macro_f1": float(best_fold["l2_macro_f1"]),
@@ -3036,6 +3200,7 @@ def run_stratified_kfold_cv_with_insample_report(
         spatial_k=spatial_k,
         spatial_mode=spatial_mode,
     )
+    scaler = ctx["scaler"]
     ins = report_logo_cv_means_and_insample_eval(
         device,
         cv_data,
@@ -3155,9 +3320,11 @@ def run_group_kfold_cv_and_load_best_model(
     input_dim = int(cv_data["X_f"].shape[1])
     num_classes = len(class_names)
     ckpt_path = best_fold["checkpoint"]
-    state_dict = torch.load(ckpt_path, map_location=device)
+    state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
+    artifact = read_artifact(ckpt_path)
     model, use_five = build_mlp_classifier_for_state_dict(
         state_dict,
+        spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
         input_dim=input_dim,
         num_classes=num_classes,
         num_level1_classes=int(np.max(cv_data["y_level1_encoded_f"])) + 1,
@@ -3166,18 +3333,20 @@ def run_group_kfold_cv_and_load_best_model(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
+    if artifact:
+        model.checkpoint_scaler=restore_scaler(artifact["scaler"])
+        model.checkpoint_metadata=artifact["metadata"]
     model.eval()
 
     spatial_neighbor_index = None
     if use_spatial_context:
-        spatial_neighbor_index = _build_spatial_neighbor_index_for_cv_data(
-            cv_data, k_neighbors=spatial_k
-        )
+        spatial_neighbor_index = None
 
     return {
         "logo_summary": group_summary,
         "group_summary": group_summary,
         "model": model,
+        "scaler": restore_scaler(artifact["scaler"]) if artifact else None,
         "best_fold": best_fold,
         "best_weighted_f1": float(best_fold["l2_weighted_f1"]),
         "best_macro_f1": float(best_fold["l2_macro_f1"]),
@@ -3280,17 +3449,12 @@ def run_group_kfold_cv_with_oof_report(
         "val_labels_level1": None,
         "val_preds_level1": None,
     }
-    if oof["val_labels"] is not None:
-        child_to_parent = np.full(len(class_names), -1, dtype=np.int64)
-        for l2, l1 in zip(cv_data["y_encoded_f"], cv_data["y_level1_encoded_f"]):
-            if child_to_parent[int(l2)] == -1:
-                child_to_parent[int(l2)] = int(l1)
-        oof["val_labels_level1"] = np.array(
-            [child_to_parent[int(y)] for y in oof["val_labels"]], dtype=np.int64
-        )
-        oof["val_preds_level1"] = np.array(
-            [child_to_parent[int(p)] for p in oof["val_preds"]], dtype=np.int64
-        )
+    # 2026.10.24, use true OOF head labels/probabilities / 统一 L1 指标口径
+    if gs.get("oof_heads") and "l1_head" in gs["oof_heads"]:
+        h = gs["oof_heads"]["l1_head"]
+        oof["val_labels_level1"] = h["labels"]
+        oof["val_preds_level1"] = h["probs"].argmax(1)
+        oof["val_probs_level1"] = h["probs"]
     merged = {**ctx, **oof}
     return merged
 
@@ -3362,7 +3526,7 @@ def maybe_refit_pooled_deployment_if_few_sections(
         return False
 
     loro_dest = dest.with_name("best_mlp_gpu_loro.pt")
-    shutil.copy2(dest, loro_dest)
+    copy_checkpoint(dest, loro_dest)
     print(
         f"  [Pooled deploy] n_sections={n_groups} < cv_k={requested_cv_k} "
         f"or LORO (train sections/fold={n_train_groups}); "
@@ -3404,10 +3568,10 @@ def refit_pooled_model_all_samples(
         n_splits=1, test_size=0.15, random_state=int(ctx.seed)
     )
     tr_idx, va_idx = next(splitter.split(np.zeros((n, 1)), y_enc))
-    X_all = scaler.transform(cv_data["X_f"])
+    scaler, X_tr, X_va, X_all = _scale_split_float32(cv_data["X_f"],tr_idx,va_idx)
     result_fold = {
-        "X_train_scaled": X_all[tr_idx],
-        "X_test_scaled": X_all[va_idx],
+        "X_train_scaled": X_tr,
+        "X_test_scaled": X_va,
         "y_train_encoded": y_enc[tr_idx],
         "y_test_encoded": y_enc[va_idx],
         "y_train_level1_encoded": cv_data["y_level1_encoded_f"][tr_idx],
@@ -3444,6 +3608,7 @@ def refit_pooled_model_all_samples(
             "num_workers_cuda": 0,
             "batch_size_cuda": int(getattr(ctx, "train_batch_size", 4096)),
         }
+    result_fold["fold_scaler"] = scaler
     loaders = loader_train_test(result_fold, **loader_kwargs)
     n_sections = len(getattr(ctx, "samples", []) or [])
     print(
@@ -3480,6 +3645,7 @@ def refit_pooled_model_all_samples(
         ctx.hidden_dims,
         float(getattr(ctx, "dropout", 0.2)),
     )
+    g["scaler"] = scaler
     g["model"] = model
     g["BEST_MLP_CHECKPOINT"] = save_path
     g["pooled_refit_all_samples"] = True
@@ -3602,9 +3768,11 @@ def run_logo_cv_and_load_best_model(
     input_dim = int(cv_data["X_f"].shape[1])
     num_classes = len(class_names)
     ckpt_path = best_fold["checkpoint"]
-    state_dict = torch.load(ckpt_path, map_location=device)
+    state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
+    artifact = read_artifact(ckpt_path)
     model, use_five = build_mlp_classifier_for_state_dict(
         state_dict,
+        spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
         input_dim=input_dim,
         num_classes=num_classes,
         num_level1_classes=int(np.max(cv_data["y_level1_encoded_f"])) + 1,
@@ -3613,11 +3781,15 @@ def run_logo_cv_and_load_best_model(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
+    if artifact:
+        model.checkpoint_scaler=restore_scaler(artifact["scaler"])
+        model.checkpoint_metadata=artifact["metadata"]
     model.eval()
 
     return {
         "logo_summary": logo_summary,
         "model": model,
+        "scaler": restore_scaler(artifact["scaler"]) if artifact else None,
         "best_fold": best_fold,
         "best_weighted_f1": float(best_fold["l2_weighted_f1"]),
         "best_macro_f1": float(best_fold["l2_macro_f1"]),
@@ -3673,15 +3845,16 @@ def report_logo_cv_means_and_insample_eval(
     )
     #######################################################################################
     ## 2026.05.12 LLY check val_preds, val_labels
+    scaler=getattr(model,"checkpoint_scaler",scaler)
     X_all_s = scaler.transform(cv_data["X_f"])
     pin = torch.cuda.is_available()
-    use_spatial = bool(getattr(model, "use_spatial_context", False)) and neighbor_index is not None
+    use_spatial = bool(getattr(model, "use_spatial_context", False))
     spatial_ctx = None
     if use_spatial:
-        spatial_ctx = {
-            "X_all": torch.as_tensor(X_all_s, dtype=torch.float32),
-            "neighbor_index": torch.as_tensor(neighbor_index, dtype=torch.long),
-        }
+        from spatial_context import inference_runtime
+        spatial_ctx=inference_runtime(cv_data["X_f"],cv_data["X_coords_f"],scaler,
+            model.spatial_fusion.config,model.spatial_fusion.mode,groups=cv_data.get("groups_f"))
+        neighbor_index={"runtime":spatial_ctx}
         all_ds = TensorDataset(
             torch.as_tensor(X_all_s, dtype=torch.float32),
             torch.as_tensor(cv_data["y_encoded_f"], dtype=torch.long),
@@ -3886,6 +4059,7 @@ def run_logo_cv_with_insample_report(
         class_balanced_beta=class_balanced_beta,
         l2_focal_gamma=l2_focal_gamma,
     )
+    scaler = ctx["scaler"]
     ins = report_logo_cv_means_and_insample_eval(
         device,
         cv_data,
@@ -3935,7 +4109,8 @@ def mode_validation(
         raise ValueError("y_encoded_f and y_level1_encoded_f are required.")
 
     checkpoint_path = get_best_checkpoint_path(path, therapy_data, therapy_model=therapy_model)
-    state_dict = torch.load(checkpoint_path, map_location=device)
+    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    artifact = read_artifact(checkpoint_path)
 
     num_l1 = int(np.max(y_level1_encoded_f)) + 1
     if "level1_head.weight" in state_dict:
@@ -4123,57 +4298,10 @@ def predict_all_label_heads(model, X, device, batch_size=4096, neighbor_index=No
     When the model was trained with ``use_spatial_context=True``, pass ``neighbor_index``
     (``(N, K)`` from ``build_spatial_neighbor_index``) so neighbor embeddings are fused at inference.
     """
-    from torch.utils.data import DataLoader, TensorDataset
-
-    model.eval()
-    X_t = torch.as_tensor(X, dtype=torch.float32)
-    n = X_t.shape[0]
-    use_spatial = bool(getattr(model, "use_spatial_context", False)) and neighbor_index is not None
-    nbr_idx_t = (
-        torch.as_tensor(neighbor_index, dtype=torch.long) if use_spatial else None
-    )
-    ds = TensorDataset(X_t)
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=False)
-    chunks = {k: [] for k in ("l2", "l1", "l12", "l3", "l4")}
-    has_level12 = hasattr(model, "level12_head")
-    five_head = hasattr(model, "level3_head")
-    row_offset = 0
-
-    with torch.no_grad():
-        for (x,) in loader:
-            x = x.to(device, non_blocking=True)
-            neighbor_x = None
-            if use_spatial:
-                b = x.shape[0]
-                global_idx = torch.arange(row_offset, row_offset + b, dtype=torch.long, device=device)
-                neighbor_x = gather_neighbor_embeddings(
-                    X_t.to(device), nbr_idx_t.to(device), global_idx, device=device
-                )
-                row_offset += b
-            if has_level12:
-                logits = model.forward_heads(x, neighbor_x=neighbor_x)
-                names = (
-                    ("l2", "l1", "l12", "l3", "l4")
-                    if five_head
-                    else ("l2", "l1", "l12")
-                )
-                for name, lg in zip(names, logits):
-                    chunks[name].append(torch.argmax(lg, dim=1).cpu().numpy())
-            else:
-                logits_l2, logits_l1 = forward_heads_l2_l1(model, x, neighbor_x=neighbor_x)
-                chunks["l2"].append(torch.argmax(logits_l2, dim=1).cpu().numpy())
-                chunks["l1"].append(torch.argmax(logits_l1, dim=1).cpu().numpy())
-
-    out = {
-        "preds_l2": np.concatenate(chunks["l2"]),
-        "preds_l1": np.concatenate(chunks["l1"]),
-    }
-    if has_level12:
-        out["preds_l12"] = np.concatenate(chunks["l12"])
-    if five_head:
-        out["preds_l3"] = np.concatenate(chunks["l3"])
-        out["preds_l4"] = np.concatenate(chunks["l4"])
-    return out
+    from plot import mlp_collect_five_head_softmax_probs
+    probs = mlp_collect_five_head_softmax_probs(model, X, device,
+        batch_size=batch_size, neighbor_index=neighbor_index)
+    return {"preds_"+k:v.argmax(1) for k,v in probs.items()}
 
 
 def load_model_for_predict(
@@ -4236,7 +4364,8 @@ def load_model_for_predict(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    state_dict = torch.load(checkpoint_path, map_location=device)
+    state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    artifact = read_artifact(checkpoint_path)
 
     input_dim = int(state_dict["input_layer.0.weight"].shape[1])
     num_classes = int(state_dict["output_layer.weight"].shape[0])
@@ -4251,6 +4380,7 @@ def load_model_for_predict(
         num_l1 = int(state_dict["level1_head.weight"].shape[0])
         model_star, _ = build_mlp_classifier_for_state_dict(
             state_dict,
+            spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
             input_dim=input_dim,
             num_classes=num_classes,
             num_level1_classes=num_l1,
@@ -4266,7 +4396,12 @@ def load_model_for_predict(
             dropout=dropout,
         ).to(device)
 
+    if artifact:
+        model_star.checkpoint_scaler = restore_scaler(artifact["scaler"])
+        model_star.checkpoint_metadata = artifact["metadata"]
+        model_star.checkpoint_weight_sha256 = artifact["weight_sha256"]
     model_star.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
 
+    model_star.eval()
     print("✓ StarDist model loaded")
     return model_star

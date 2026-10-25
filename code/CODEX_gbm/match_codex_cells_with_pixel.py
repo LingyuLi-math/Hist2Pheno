@@ -183,6 +183,7 @@ def build_cells_matched_by_stardist(
         star_raw,
         celltype_pixel_coords_cols=("X_pix_HE", "Y_pix_HE"),
         stardist_pixel_coords_cols=("centroid_x", "centroid_y"),
+        max_distance=max_distance,
     )
     matched = matched.dropna(subset=["centroid_x", "centroid_y"])
     if max_distance is not None and "matched_distance" in matched.columns:

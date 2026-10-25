@@ -1656,8 +1656,10 @@ class SpatialContextFusion(nn.Module):
     ``neighbor_x is None``, returns ``x`` unchanged.
     """
 
-    def __init__(self, dim, mode="mean", dropout=0.1, enabled=True):
+    def __init__(self, dim, mode="mean", dropout=0.1, enabled=True, config=None):
         super().__init__()
+        from spatial_context import config_of
+        self.config = config_of(config)
         self.enabled = bool(enabled)
         self.mode = str(mode)
         if self.mode == "attention":
@@ -1668,6 +1670,14 @@ class SpatialContextFusion(nn.Module):
             raise ValueError("spatial_mode must be one of: mean, attention")
         self.proj = nn.Linear(dim, dim)    # 可学习的 Linear(1024 → 1024)，用于将邻居的 UNI embedding 融合到当前样本的 embedding
         self.dropout = nn.Dropout(dropout)
+        # 2026.10.24, optional multiscale gate / 多尺度与几何均可独立关闭
+        scales = max(1, len(self.config.radii_um))
+        self.scale_logits = nn.Parameter(torch.zeros(scales)) if scales > 1 else None
+        self.context_gate = nn.Linear(dim, 1) if self.config.gate else None
+        if self.context_gate is not None:
+            nn.init.zeros_(self.context_gate.weight); nn.init.constant_(self.context_gate.bias, 2.)
+        self.geometry_proj = nn.Linear(scales*3, dim, bias=False) if self.config.geometry else None
+        if self.geometry_proj is not None: nn.init.zeros_(self.geometry_proj.weight)
         nn.init.zeros_(self.proj.weight)
         nn.init.zeros_(self.proj.bias)
 
@@ -1675,16 +1685,40 @@ class SpatialContextFusion(nn.Module):
     # 2026.06.26 x_fused = x_i + proj(ctx)
     ########################################################
     def forward(self, x, neighbor_x=None):
-        if not self.enabled or neighbor_x is None:
+        if not self.enabled:
             return x
-        if self.mode == "mean":
-            ctx = neighbor_x.mean(dim=1)    # The UNI embeddings of each of the k neighbors, with shape (K, 1024)
+        if neighbor_x is None:
+            if self.config.allow_missing_context: return x
+            raise ValueError("Spatial checkpoint requires context; explicitly disable for an ablation")
+        geometry = None
+        if isinstance(neighbor_x, dict) and "contexts" in neighbor_x:
+            contexts = neighbor_x["contexts"]
+            weights = (torch.softmax(self.scale_logits, 0) if self.scale_logits is not None
+                       else torch.ones(1, device=x.device))
+            ctx = (contexts * weights[None, :, None]).sum(1)
+            geometry = neighbor_x.get("geometry")
         else:
-            q = self.attn_q(x).unsqueeze(1)
-            k = self.attn_k(neighbor_x)
-            w = torch.softmax((q * k).sum(dim=-1) * self.scale, dim=1)
-            ctx = (w.unsqueeze(-1) * neighbor_x).sum(dim=1)
-        return x + self.dropout(self.proj(ctx))    # still 1024 dim, used before MLP
+            payload = neighbor_x if isinstance(neighbor_x, dict) else {"neighbors": neighbor_x}
+            neighbors = payload["neighbors"]
+            mask = payload.get("mask", torch.ones(neighbors.shape[:2], dtype=torch.bool, device=x.device))
+            if self.mode == "mean":
+                # Original: the UNI embeddings of each of the k neighbors, shape (K, 1024).
+                # 2026.10.24, masked mean / 空邻居不通过重复填充引入偏差
+                ctx = (neighbors * mask[:,:,None]).sum(1)/mask.sum(1,keepdim=True).clamp_min(1)
+            else:
+                q = self.attn_q(x).unsqueeze(1)
+                k = self.attn_k(neighbors)
+                scores = (q*k).sum(-1)*self.scale
+                if self.config.weighting == "gaussian" and "distances" in payload:
+                    scores = scores - .5*(payload["distances"]/self.config.sigma_um)**2
+                scores = scores.masked_fill(~mask, -torch.inf)
+                ctx = (torch.softmax(scores,1).unsqueeze(-1)*neighbors).sum(1)
+        fused = self.proj(ctx)
+        if self.geometry_proj is not None:
+            if geometry is None: raise ValueError("geometry=True requires cached physical geometry")
+            fused = fused + self.geometry_proj(geometry)
+        if self.context_gate is not None: fused = fused * torch.sigmoid(self.context_gate(x))
+        return x + self.dropout(fused)    # still 1024 dim, used before MLP
 
 
 def build_spatial_neighbor_index(coords, k_neighbors=8):
@@ -1785,12 +1819,13 @@ class ImprovedMLPClassifier(nn.Module):
         use_spatial_context=False,
         spatial_mode="mean",
         spatial_k=8,
+        spatial_config=None,
     ):
         super().__init__()
         self.use_spatial_context = bool(use_spatial_context)
         self.spatial_k = int(spatial_k)
         self.spatial_fusion = (
-            SpatialContextFusion(input_dim, mode=spatial_mode, dropout=dropout, enabled=True)
+            SpatialContextFusion(input_dim, mode=spatial_mode, dropout=dropout, enabled=True, config=spatial_config)
             if self.use_spatial_context
             else None
         )
@@ -1820,14 +1855,16 @@ class ImprovedMLPClassifier(nn.Module):
         self._initialize_weights()
     
     def _initialize_weights(self):
-        for m in self.modules():
+        # 2026.10.24, preserve zero-init spatial projection / 保留空间残差零初始化
+        for name, m in self.named_modules():
+            if name.startswith("spatial_fusion"): continue
             if isinstance(m, nn.Linear):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
     
     def _apply_spatial(self, x, neighbor_x=None):
-        if self.spatial_fusion is not None and neighbor_x is not None:
+        if self.spatial_fusion is not None:
             return self.spatial_fusion(x, neighbor_x)
         return x
 
@@ -1862,6 +1899,7 @@ class DualHeadImprovedMLPClassifier(ImprovedMLPClassifier):
         use_spatial_context=False,
         spatial_mode="mean",
         spatial_k=8,
+        spatial_config=None,
     ):
         super().__init__(
             input_dim=input_dim,
@@ -1871,6 +1909,7 @@ class DualHeadImprovedMLPClassifier(ImprovedMLPClassifier):
             use_spatial_context=use_spatial_context,
             spatial_mode=spatial_mode,
             spatial_k=spatial_k,
+            spatial_config=spatial_config,
         )
         self.level1_head = nn.Linear(hidden_dims[-1], num_level1_classes)
         nn.init.kaiming_normal_(self.level1_head.weight, mode="fan_out", nonlinearity="relu")
@@ -1912,6 +1951,7 @@ class ThreeHeadImprovedMLPClassifier(DualHeadImprovedMLPClassifier):
         use_spatial_context=False,
         spatial_mode="mean",
         spatial_k=8,
+        spatial_config=None,
     ):
         super().__init__(
             input_dim=input_dim,
@@ -1922,6 +1962,7 @@ class ThreeHeadImprovedMLPClassifier(DualHeadImprovedMLPClassifier):
             use_spatial_context=use_spatial_context,
             spatial_mode=spatial_mode,
             spatial_k=spatial_k,
+            spatial_config=spatial_config,
         )
         self.level12_head = nn.Linear(hidden_dims[-1], num_level12_classes)
         nn.init.kaiming_normal_(
@@ -1965,6 +2006,7 @@ class FiveHeadImprovedMLPClassifier(DualHeadImprovedMLPClassifier):
         use_spatial_context=False,
         spatial_mode="mean",
         spatial_k=8,
+        spatial_config=None,
     ):
         super().__init__(
             input_dim=input_dim,
@@ -1975,6 +2017,7 @@ class FiveHeadImprovedMLPClassifier(DualHeadImprovedMLPClassifier):
             use_spatial_context=use_spatial_context,
             spatial_mode=spatial_mode,
             spatial_k=spatial_k,
+            spatial_config=spatial_config,
         )
         last_dim = hidden_dims[-1]
         self.level12_head = nn.Linear(last_dim, num_level12_classes)
@@ -3215,9 +3258,9 @@ def evaluate(model, loader, device, scaler=None, spatial_ctx=None):
     use_spatial = (
         spatial_ctx is not None
         and getattr(model, "use_spatial_context", False)
-        and spatial_ctx.get("X_all") is not None
+        and (spatial_ctx.get("X_all") is not None or "mode" in spatial_ctx)
     )
-    if use_spatial:
+    if use_spatial and "mode" not in spatial_ctx:
         dest = device if isinstance(device, torch.device) else torch.device(device)
         if spatial_ctx["X_all"].device != dest:
             spatial_ctx["X_all"] = spatial_ctx["X_all"].to(dest, non_blocking=False)
@@ -3242,9 +3285,11 @@ def evaluate(model, loader, device, scaler=None, spatial_ctx=None):
             neighbor_x = None
             if use_spatial and global_idx is not None:
                 global_idx = global_idx.to(device, non_blocking=True)
-                neighbor_x = gather_neighbor_embeddings(
-                    X_all, neighbor_index, global_idx, device=device
-                )
+                if "mode" in spatial_ctx:
+                    from spatial_context import runtime_batch
+                    neighbor_x = runtime_batch(spatial_ctx,global_idx,device)
+                else:
+                    neighbor_x = gather_neighbor_embeddings(X_all,neighbor_index,global_idx,device=device)
 
             if scaler is not None:
                 with torch.amp.autocast("cuda"):
@@ -3342,6 +3387,9 @@ def evaluate_and_plot_on_all_data(
     plot_l2_true = spatial_plot_mode == "pred_true_l2"
     plot_l1_pred = spatial_plot_mode == "pred_l2_pred_l1" and class_names_level1 is not None
 
+    if getattr(model,"checkpoint_scaler",None) is not None: scaler=model.checkpoint_scaler
+    if neighbor_index is None and getattr(model,"use_spatial_context",False) and X_coords_matched is not None:
+        neighbor_index={"xy":np.asarray(X_coords_matched)}
     use_spatial_infer = (
         neighbor_index is not None and getattr(model, "use_spatial_context", False)
     )
@@ -3349,8 +3397,11 @@ def evaluate_and_plot_on_all_data(
         print(f"  Spatial inference: enabled (neighbor_index shape={np.asarray(neighbor_index).shape})")
 
     def _neighbor_x_for_batch(X_full_t, nbr_idx_t, row_offset, x_batch):
-        if not use_spatial_infer or X_full_t is None:
+        if not use_spatial_infer:
             return None
+        if isinstance(X_full_t,dict):
+            from spatial_context import prediction_batch
+            return prediction_batch(X_full_t,torch.arange(row_offset,row_offset+len(x_batch)),device)
         b = x_batch.shape[0]
         global_idx = torch.arange(row_offset, row_offset + b, dtype=torch.long, device=device)
         return gather_neighbor_embeddings(X_full_t, nbr_idx_t, global_idx, device=device)
@@ -3582,9 +3633,12 @@ def evaluate_and_plot_on_all_data(
 
     X_full_t = nbr_idx_t = spatial_ctx = None
     if use_spatial_infer:
-        nbr_idx_t = torch.as_tensor(np.asarray(neighbor_index), dtype=torch.long)
-        X_full_t = torch.as_tensor(np.asarray(X_all_scaled, dtype=np.float32))
-        spatial_ctx = {"X_all": X_full_t, "neighbor_index": nbr_idx_t}
+        from spatial_context import prediction_context
+        X_full_t=prediction_context(model,np.asarray(X_all_scaled,dtype=np.float32),neighbor_index)
+        # evaluate() consumes the same streaming runtime; legacy index payload is handled below.
+        if "legacy_X" in X_full_t:
+            spatial_ctx={"X_all":torch.as_tensor(X_full_t["legacy_X"]),"neighbor_index":torch.as_tensor(X_full_t["legacy_idx"])}
+        else:spatial_ctx=X_full_t
         gidx = torch.arange(len(X_all_scaled), dtype=torch.long)
         if has_labels:
             all_dataset = TensorDataset(
@@ -4347,7 +4401,8 @@ def match_celltype2stardist(celltype_pixel_coords,
                             celltype_pixel_coords_cols=None,
                             stardist_pixel_coords_cols=None,
                             output_x_col=None,
-                            output_y_col=None):
+                            output_y_col=None,
+                            max_distance=20.0):
     """
     Match celltype_pixel_coords points to stardist_pixel_coords using KDTree
     and a greedy 1-to-1 nearest‑neighbor strategy.
@@ -4473,6 +4528,9 @@ def match_celltype2stardist(celltype_pixel_coords,
         # For this celltype point, iterate over its k nearest star points
         for neighbor_rank in range(k_neighbors):
             star_idx = int(indices[celltype_idx, neighbor_rank])
+            # 2026.10.24, reject implausible transfers / 超距离不强行分配标签
+            if max_distance is not None and distances[celltype_idx, neighbor_rank] > max_distance:
+                continue
             if star_idx not in matched_star_indices:
                 matched_star_indices.add(star_idx)
                 celltype_matched_indices.append(celltype_idx)
@@ -5093,10 +5151,11 @@ def load_matched_features_bundle(path):
         for npz_key, obs_key in H5AD_TO_NPZ_LABEL_KEYS.items():
             if obs_key in adata.obs.columns:
                 out[npz_key] = adata.obs[obs_key].to_numpy()
-        if "spatial" in adata.obsm:
-            out["X_coords"] = np.asarray(adata.obsm["spatial"], dtype=np.float64)
-        elif "spatial_HE" in adata.obsm:
+        # 2026.10.24, prefer the HE coordinate frame / 不混用原生测序坐标
+        if "spatial_HE" in adata.obsm:
             out["X_coords"] = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
+        elif "spatial" in adata.obsm:
+            out["X_coords"] = np.asarray(adata.obsm["spatial"], dtype=np.float64)
         return out
 
     loaded = np.load(path, allow_pickle=True)
@@ -6150,7 +6209,8 @@ def loader_train_test(
                 ).astype(np.float64)
                 l2_counts_parent = np.maximum(l2_counts_parent, 1.0)
                 sample_weights[parent_mask] = (
-                    (1.0 / l1_counts[int(parent)])
+                    (1.0 / len(np.unique(yl1)))
+                    * (1.0 / len(np.unique(yc_parent)))
                     * (1.0 / l2_counts_parent[yc_parent])
                 )
         elif train_balance_sampler_mode == "hierarchical_l1_l12_l2":
@@ -6179,8 +6239,9 @@ def loader_train_test(
                     ).astype(np.float64)
                     l2_counts = np.maximum(l2_counts, 1.0)
                     sample_weights[m12] = (
-                        (1.0 / l1_counts[int(parent)])
-                        * (1.0 / l12_counts[int(mid)])
+                        (1.0 / len(np.unique(yl1)))
+                        * (1.0 / len(np.unique(yl12_p)))
+                        * (1.0 / len(np.unique(yc_mid)))
                         * (1.0 / l2_counts[yc_mid])
                     )
         else:

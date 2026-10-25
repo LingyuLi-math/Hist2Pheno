@@ -34,7 +34,7 @@ from plotting_palettes import get_palette  # noqa: E402
 
 DATASETS = ("Lung", "BRCA", "CRC", "HCC", "PDAC", "GIST", "GBM")
 FOLD = 0
-PRED_ROOT = _REPO / "data" / "PanCancer" / "pred_all_spatial"
+PRED_ROOT = _REPO / "data" / "PanCancer" / "pred_all_spatial" / "oof"
 CKPT = (
     _REPO
     / "data"
@@ -42,9 +42,9 @@ CKPT = (
     / "result_all_spatial"
     / "cross_dataset_cv"
     / "D_emph_L2_spatial_pancancer"
-    / "best_mlp_gpu.pt"
+    / "hce_group_fold_0.pt"
 )
-FOLD_PLAN = _REPO / "data" / "PanCancer" / "fold_plan.csv"
+FOLD_PLAN = _REPO / "data" / "PanCancer" / "result_all_spatial" / "fold_plan.csv"
 METRICS = PRED_ROOT / "metrics_per_section.csv"
 FIG_DIR = PRED_ROOT / "internal_val_figures"
 
@@ -95,7 +95,7 @@ def pred_paths(dataset: str, sample: str) -> dict[str, Path]:
         / dataset
         / sample
         / f"{sample}_all_stardist_pred.h5ad",
-        "roc": PRED_ROOT / "stardist_roc" / f"{dataset}__{sample}",
+        "roc": PRED_ROOT / "gt_matched_roc" / f"{dataset}__{sample}",
     }
 
 

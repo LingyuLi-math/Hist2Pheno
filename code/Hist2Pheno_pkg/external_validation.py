@@ -472,8 +472,6 @@ class ExternalCohort:
         labels = _import_sibling("pancancer_labels")
         if not self.checkpoint.is_file():
             raise FileNotFoundError(self.checkpoint)
-        if not self.scaler.is_file():
-            raise FileNotFoundError(self.scaler)
         classes = labels.ontology_class_names()
         model = model_mod.load_model_for_predict(
             str(self.repo),
@@ -481,11 +479,21 @@ class ExternalCohort:
             self.project_tag,
             checkpoint_path=str(self.checkpoint),
             device=device,
-            hidden_dims=self.hidden_dims,
+            hidden_dims=None,
             parent_dir=True,
         )
-        scaler = joblib.load(self.scaler)
+        scaler = _import_sibling("checkpoint_artifact").checkpoint_scaler(self.checkpoint)
+        saved=model.checkpoint_metadata.get("head_classes")
+        if saved and all(saved.values()):classes=saved
         return model, scaler, classes
+
+    # 2026.10.24, physical geometry is per slide / 外部图像不沿用训练图像的像素尺寸
+    def _context_request(self,model,sample,xy):
+        cfg=vars(model.spatial_fusion.config).copy()
+        if cfg["radii_um"] or cfg["geometry"] or cfg["weighting"]=="gaussian":
+            xy=xy*float(self.geometry(sample)["mpp_um"])
+            cfg.update(coordinates_um=True,mpp=None)
+        return {"xy":xy,"config_override":cfg}
 
     def _device(self, allow_cpu: bool):
         import torch
@@ -512,15 +520,21 @@ class ExternalCohort:
 
         for sample in samples:
             paths = self.sample_paths(sample)
-            if paths["pred"].is_file() and not force:
-                print(f"[predict] skip {sample}: {paths['pred']}", flush=True)
-                continue
+            from checkpoint_artifact import file_digest
             feat_path = paths["feat"] if paths["feat"].is_file() else self._build_one_h5ad(sample, force=False)
+            feature_sha=file_digest(feat_path)
+            if paths["pred"].is_file() and not force:
+                previous=ad.read_h5ad(paths["pred"])
+                valid=previous.uns.get("checkpoint_sha256")==model.checkpoint_weight_sha256 and previous.uns.get("feature_sha256")==feature_sha
+                del previous
+                if valid:
+                    print(f"[predict] skip verified {sample}: {paths['pred']}",flush=True)
+                    continue
             adata = ad.read_h5ad(feat_path)
             X = np.asarray(base.adata_X_to_dense(adata.X), dtype=np.float32)
             xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
             Xs = np.asarray(scaler.transform(X), dtype=np.float32)
-            nbr = base.build_spatial_neighbor_index(xy, k_neighbors=self.spatial_k)
+            nbr = self._context_request(model,sample,xy) if getattr(model,"use_spatial_context",False) else None
             probs = plot.mlp_collect_five_head_softmax_probs(model, Xs, device, neighbor_index=nbr)
             obs = adata.obs.copy()
             for head in HEADS:
@@ -531,6 +545,8 @@ class ExternalCohort:
             pred = ad.AnnData(obs=obs)
             pred.obsm["spatial_HE"] = xy
             pred.uns["checkpoint"] = str(self.checkpoint)
+            pred.uns["checkpoint_sha256"] = model.checkpoint_weight_sha256
+            pred.uns["feature_sha256"] = feature_sha
             pred.uns["scaler"] = str(self.scaler)
             pred.uns["spatial_k"] = self.spatial_k
             pred.uns["classes"] = classes
@@ -578,7 +594,7 @@ class ExternalCohort:
         X = np.asarray(base.adata_X_to_dense(adata.X), dtype=np.float32)
         xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
         Xs = np.asarray(scaler.transform(X), dtype=np.float32)
-        nbr = base.build_spatial_neighbor_index(xy, k_neighbors=self.spatial_k)
+        nbr = self._context_request(model,sample,xy) if getattr(model,"use_spatial_context",False) else None
         got = plot.mlp_collect_five_head_softmax_probs(model, Xs, device, neighbor_index=nbr)
         probs = np.asarray(got["l2"], dtype=np.float32)
         if paths["pred"].is_file():

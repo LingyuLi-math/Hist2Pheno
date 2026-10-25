@@ -73,6 +73,8 @@ def assign_section_folds(
             for sid in sids:
                 if sid in existing:
                     fold = int(existing[sid])
+                    if not 0 <= fold < n_splits:
+                        raise ValueError("Existing fold plan incompatible with requested cv_k; use a new output/data directory")
                     out[sid] = fold
                     if 0 <= fold < n_splits:
                         counts[fold] += 1
