@@ -53,8 +53,19 @@ CKPT = (
     / "D_emph_L2_spatial_pancancer"
     / "best_mlp_gpu.pt"
 )
+UNI2_CKPT = (
+    _REPO
+    / "data"
+    / "PanCancer"
+    / "result_uni2_A3_adjacent_spatial_k8mean_gate"
+    / "cross_dataset_cv"
+    / "A3_adjacent_spatial_k8mean_gate"
+    / "best_mlp_gpu.pt"
+)
+UNI2_CACHE = _REPO / "data" / "PanCancer" / "uni2_aligned"
 SCALER = _REPO / "data" / "PanCancer" / "result_all_spatial" / "scaler.joblib"
 PRED_ROOT = _REPO / "data" / "PanCancer" / "pred_unlabel"
+UNI2_PRED = _REPO / "data" / "PanCancer" / "pred_uni2_A3_bestmlp" / "unlabel"
 LUNG_LEGACY = _REPO / "data" / "PanCancer" / "pred_all_spatial" / "incomplete_lung"
 LUNG_CASES = (
     _REPO
@@ -109,14 +120,30 @@ class Cohort:
     pred_parent: Path
 
 
-def _cohort(name: str) -> Cohort:
+def _ckpt(embedder: str) -> Path:
+    if embedder == "uni2":
+        return UNI2_CKPT
+    if embedder != "uni":
+        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
+    return CKPT
+
+
+def _cohort(name: str, embedder: str = "uni") -> Cohort:
     key = name.strip()
+    if embedder == "uni2":
+        pred = UNI2_PRED / key
+    elif key == "Lung_Incomplete":
+        pred = LUNG_LEGACY
+    elif key in {"HCC_unlabel", "PDAC_unlabel"}:
+        pred = PRED_ROOT / key
+    else:
+        raise SystemExit(f"unknown cohort {name!r}; choose Lung_Incomplete, HCC_unlabel, PDAC_unlabel")
     if key == "Lung_Incomplete":
-        return Cohort(key, LUNG_CASES, LUNG_LEGACY)
+        return Cohort(key, LUNG_CASES, pred)
     if key == "HCC_unlabel":
-        return Cohort(key, HCC_HE, PRED_ROOT / key)
+        return Cohort(key, HCC_HE, pred)
     if key == "PDAC_unlabel":
-        return Cohort(key, PDAC_ROOT, PRED_ROOT / key)
+        return Cohort(key, PDAC_ROOT, pred)
     raise SystemExit(f"unknown cohort {name!r}; choose Lung_Incomplete, HCC_unlabel, PDAC_unlabel")
 
 
@@ -178,19 +205,27 @@ def _matched_h5ad(sample: str) -> Path:
     return LUNG_CASES / sample / f"{sample}_matched_features.h5ad"
 
 
+def _lung_ranks_path(embedder: str = "uni") -> Path:
+    if embedder == "uni2":
+        return UNI2_PRED / "Lung_Incomplete" / "ranks_matched.csv"
+    return LUNG_RANKS
+
+
 def rank_lung_incomplete(
     *,
     compute: bool = False,
     force: bool = False,
     cuda_device: str = "0",
     allow_cpu: bool = False,
+    embedder: str = "uni",
 ) -> pd.DataFrame:
     """Matched-cell L1/L12/L2 scores for Incomplete_Cases that have GT.
 
     Three slides (TILD028LA, TILD049MA, VUHD038) have no matched h5ad.
     """
-    if LUNG_RANKS.is_file() and not force:
-        tab = pd.read_csv(LUNG_RANKS)
+    ranks_path = _lung_ranks_path(embedder)
+    if ranks_path.is_file() and not force:
+        tab = pd.read_csv(ranks_path)
         return tab.sort_values(["rank_ds", "sample"], na_position="last").reset_index(drop=True)
     if not compute:
         return pd.DataFrame()
@@ -200,7 +235,7 @@ def rank_lung_incomplete(
     from uni_label_cv_helpers import macro_auc_ovr
 
     classes = ontology_class_names()
-    model, scaler, device = _load_model(cuda_device, allow_cpu)
+    model, scaler, device = _load_model(cuda_device, allow_cpu, embedder=embedder)
     rows = []
     for sample in discover_samples("Lung_Incomplete"):
         path = _matched_h5ad(sample)
@@ -217,7 +252,18 @@ def rank_lung_incomplete(
         if not path.is_file():
             rows.append(rec)
             continue
-        loaded = load_matched(path, "final_CT", classes)
+        try:
+            loaded = load_matched(
+                path,
+                "final_CT",
+                classes,
+                embedder=embedder,
+                uni2_cache_dir=UNI2_CACHE if embedder == "uni2" else None,
+            )
+        except FileNotFoundError as exc:
+            print(f"  rank {sample}: {exc}", flush=True)
+            rows.append(rec)
+            continue
         if loaded is None:
             rows.append(rec)
             continue
@@ -249,17 +295,17 @@ def rank_lung_incomplete(
             tab.loc[scored, "macro_auc_L2"].rank(ascending=False, method="min").astype(int)
         )
     tab = tab.sort_values(["rank_ds", "sample"], na_position="last").reset_index(drop=True)
-    LUNG_RANKS.parent.mkdir(parents=True, exist_ok=True)
-    tab.to_csv(LUNG_RANKS, index=False)
-    print(f"wrote {LUNG_RANKS}", flush=True)
+    ranks_path.parent.mkdir(parents=True, exist_ok=True)
+    tab.to_csv(ranks_path, index=False)
+    print(f"wrote {ranks_path}", flush=True)
     return tab
 
 
-def viz_samples(name: str, n: int | None = None) -> list[str]:
+def viz_samples(name: str, n: int | None = None, embedder: str = "uni") -> list[str]:
     """Lung: all Incomplete_Cases, top-5 L2 AUROC first. Others: largest ``VIZ_N``."""
     all_s = discover_samples(name)
     if name == "Lung_Incomplete":
-        rank = rank_lung_incomplete(compute=False)
+        rank = rank_lung_incomplete(compute=False, embedder=embedder)
         if not rank.empty and "macro_auc_L2" in rank.columns:
             scored = rank.loc[rank["macro_auc_L2"].notna()].sort_values(
                 "macro_auc_L2", ascending=False
@@ -343,8 +389,10 @@ def mixed_rectangle_roi(
     return best[2], best[3], best[4], best[5]
 
 
-def coverage(name: str) -> pd.DataFrame:
-    cohort = _cohort(name)
+def coverage(name: str, embedder: str = "uni") -> pd.DataFrame:
+    from PanCancer_predict_visualize import _stardist_uni2_dir
+
+    cohort = _cohort(name, embedder)
     rows = []
     for sample in discover_samples(name):
         feat = _feat_h5ad(cohort, sample)
@@ -354,6 +402,7 @@ def coverage(name: str) -> pd.DataFrame:
                 "sample": sample,
                 "n_feat_mb": round(feat.stat().st_size / 1e6, 2) if feat.is_file() else 0.0,
                 "feat": feat.is_file(),
+                "uni2": _stardist_uni2_dir(feat) is not None,
                 "pred": pred.is_file(),
                 "he": he_path(cohort, sample) is not None,
             }
@@ -443,10 +492,10 @@ def _save_png_pdf(fig, path: Path, *, dpi: int) -> Path:
     return pdf
 
 
-def composition_table(name: str, samples: list[str]) -> pd.DataFrame:
+def composition_table(name: str, samples: list[str], embedder: str = "uni") -> pd.DataFrame:
     import anndata as ad
 
-    cohort = _cohort(name)
+    cohort = _cohort(name, embedder)
     rows = []
     for sample in samples:
         path = pred_h5ad(cohort, sample)
@@ -471,6 +520,7 @@ def plot_spatial(
     name: str,
     samples: list[str],
     *,
+    embedder: str = "uni",
     save: bool = False,
     figsize: tuple[float, float] = (17.2, 12.5),
     dpi: int = 160,
@@ -482,7 +532,7 @@ def plot_spatial(
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    cohort = _cohort(name)
+    cohort = _cohort(name, embedder)
     palettes = _palettes()
     point_s = (float(marker_px) * 72.0 / dpi) ** 2
     fig_dir = cohort.pred_parent / "figures"
@@ -569,6 +619,7 @@ def plot_composition(
     name: str,
     samples: list[str],
     *,
+    embedder: str = "uni",
     save: bool = False,
     dpi: int = 160,
     save_dpi: int = 300,
@@ -579,8 +630,8 @@ def plot_composition(
 
     palettes = _palettes()
     class_order = ontology_class_names()
-    comp = composition_table(name, samples)
-    fig_dir = _cohort(name).pred_parent / "figures"
+    comp = composition_table(name, samples, embedder)
+    fig_dir = _cohort(name, embedder).pred_parent / "figures"
     if save:
         fig_dir.mkdir(parents=True, exist_ok=True)
     figures = []
@@ -644,11 +695,18 @@ def plot_composition(
     return figures
 
 
-def cmd_status(name: str, samples: list[str] | None = None) -> None:
-    cov = coverage(name)
-    viz = set(viz_samples(name))
-    print(f"checkpoint  {'yes' if CKPT.is_file() else 'NO'}  {CKPT}")
-    print(f"scaler      {'yes' if SCALER.is_file() else 'NO'}  {SCALER}")
+def cmd_status(name: str, samples: list[str] | None = None, embedder: str = "uni") -> None:
+    ckpt = _ckpt(embedder)
+    cov = coverage(name, embedder)
+    print(f"embedder    {embedder}")
+    print(f"pred root   {_cohort(name, embedder).pred_parent}")
+    viz = set(viz_samples(name, embedder=embedder))
+    print(f"checkpoint  {'yes' if ckpt.is_file() else 'NO'}  {ckpt}")
+    if embedder == "uni":
+        print(f"scaler      {'yes' if SCALER.is_file() else 'NO'}  {SCALER}")
+    else:
+        art = Path(str(ckpt) + ".artifact.pt")
+        print(f"scaler      {'yes' if art.is_file() else 'NO'}  {art}")
     print(f"{name}: {len(cov)} slides with StarDist-all h5ad; viz={sorted(viz)}")
     if samples:
         cov = cov.loc[cov["sample"].isin(samples)]
@@ -659,7 +717,7 @@ def cmd_status(name: str, samples: list[str] | None = None) -> None:
     else:
         print("all listed pred h5ads present")
     if name == "Lung_Incomplete":
-        rank = rank_lung_incomplete(compute=False)
+        rank = rank_lung_incomplete(compute=False, embedder=embedder)
         if rank.empty:
             print("Lung ranks missing — run: demo.sh rank")
         else:
@@ -681,26 +739,26 @@ def cmd_status(name: str, samples: list[str] | None = None) -> None:
             print(rank[cols].to_string(index=False))
 
 
-def _load_model(cuda_device: str, allow_cpu: bool):
-    import joblib
+def _load_model(cuda_device: str, allow_cpu: bool, embedder: str = "uni"):
     from model import load_model_for_predict
     from PanCancer_predict_visualize import _device, setup_cuda
 
+    ckpt = _ckpt(embedder)
     setup_cuda(cuda_device)
     device = _device(allow_cpu)
-    if not CKPT.is_file():
-        raise FileNotFoundError(CKPT)
+    if not ckpt.is_file():
+        raise FileNotFoundError(ckpt)
     model = load_model_for_predict(
         str(_REPO),
         "PanCancer",
-        "project_all_UNI",
-        checkpoint_path=str(CKPT),
+        "project_all_UNI2" if embedder == "uni2" else "project_all_UNI",
+        checkpoint_path=str(ckpt),
         device=device,
         hidden_dims=None,
         parent_dir=True,
     )
     from checkpoint_artifact import checkpoint_scaler
-    scaler = checkpoint_scaler(CKPT)
+    scaler = checkpoint_scaler(ckpt)
     return model, scaler, device
 
 
@@ -711,11 +769,17 @@ def cmd_predict(
     cuda_device: str,
     force: bool,
     allow_cpu: bool,
+    embedder: str = "uni",
 ) -> None:
-    from PanCancer_predict_visualize import load_stardist_all, predict_block, write_star_h5ad
+    from PanCancer_predict_visualize import (
+        _stardist_uni2_dir,
+        load_stardist_all,
+        predict_block,
+        write_star_h5ad,
+    )
     from pancancer_labels import ontology_class_names
 
-    cohort = _cohort(name)
+    cohort = _cohort(name, embedder)
     classes = ontology_class_names()
     todo = []
     for sample in samples:
@@ -731,13 +795,26 @@ def cmd_predict(
     if not todo:
         print("nothing to predict")
         return
-    model, scaler, device = _load_model(cuda_device, allow_cpu)
+    if embedder == "uni2":
+        os.environ["HIST2PHENO_CONTEXT_CACHE"] = str(cohort.pred_parent / "context_cache")
+    model, scaler, device = _load_model(cuda_device, allow_cpu, embedder=embedder)
     classes=model.checkpoint_metadata.get("head_classes",classes)
-    print(f"predict {name}  n={len(todo)}  device={device}", flush=True)
+    print(f"predict {name}  embedder={embedder}  n={len(todo)}  device={device}", flush=True)
     for sample in todo:
         feat = _feat_h5ad(cohort, sample)
         dest = pred_h5ad(cohort, sample)
-        star = load_stardist_all(feat)
+        uni2_dir = None
+        if embedder == "uni2":
+            uni2_dir = _stardist_uni2_dir(feat)
+            if uni2_dir is None:
+                print(f"  skip {sample}: no UNI2 sc_pth_14_14 next to {feat.parent}", flush=True)
+                continue
+        star = load_stardist_all(
+            feat,
+            embedder=embedder,
+            uni2_cache_dir=UNI2_CACHE if embedder == "uni2" else None,
+            uni2_dir=uni2_dir,
+        )
         if star is None:
             print(f"  FAIL {sample}: could not load {feat}", flush=True)
             continue
@@ -750,12 +827,12 @@ def cmd_predict(
         gc.collect()
 
 
-def cmd_plot(name: str, samples: list[str], *, save: bool) -> None:
+def cmd_plot(name: str, samples: list[str], *, save: bool, embedder: str = "uni") -> None:
     import matplotlib.pyplot as plt
 
-    for fig in plot_spatial(name, samples, save=save):
+    for fig in plot_spatial(name, samples, embedder=embedder, save=save):
         plt.close(fig)
-    for fig in plot_composition(name, samples, save=save):
+    for fig in plot_composition(name, samples, embedder=embedder, save=save):
         plt.close(fig)
 
 
@@ -766,6 +843,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sample", default="", help="one sample id")
     p.add_argument("--all", action="store_true", help="use every unlabeled slide, not the viz subset")
     p.add_argument("--force", action="store_true")
+    p.add_argument("--embedder", choices=("uni", "uni2"), default="uni")
     p.add_argument("--cuda-device", default=os.environ.get("CUDA_DEVICE", "0"))
     p.add_argument("--allow-cpu", action="store_true")
     p.add_argument("--save", action="store_true", help="write 300 dpi PNGs under pred_unlabel/figures")
@@ -775,14 +853,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.all or args.step in {"status", "dry-run"}:
         samples = discover_samples(args.cohort)
     else:
-        samples = viz_samples(args.cohort)
+        samples = viz_samples(args.cohort, embedder=args.embedder)
     if args.step in {"status", "dry-run"}:
         show = None if args.step == "status" and not args.sample else samples
         if args.step == "dry-run" and not args.sample and not args.all:
-            show = viz_samples(args.cohort)
-        cmd_status(args.cohort, show)
+            show = viz_samples(args.cohort, embedder=args.embedder)
+        cmd_status(args.cohort, show, embedder=args.embedder)
         if args.step == "dry-run":
-            print("viz subset:", viz_samples(args.cohort))
+            print("viz subset:", viz_samples(args.cohort, embedder=args.embedder))
         return 0
     if args.step == "rank":
         if args.cohort != "Lung_Incomplete":
@@ -793,6 +871,7 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             cuda_device=args.cuda_device,
             allow_cpu=args.allow_cpu,
+            embedder=args.embedder,
         )
         print(tab.to_string(index=False))
         return 0
@@ -803,9 +882,10 @@ def main(argv: list[str] | None = None) -> int:
             cuda_device=args.cuda_device,
             force=args.force,
             allow_cpu=args.allow_cpu,
+            embedder=args.embedder,
         )
         return 0
-    cmd_plot(args.cohort, samples, save=args.save)
+    cmd_plot(args.cohort, samples, save=args.save, embedder=args.embedder)
     return 0
 
 

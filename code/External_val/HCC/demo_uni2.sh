@@ -13,6 +13,7 @@
 
 ## MPP_UM is required. The finished UNI run used 0.5.
 ##   MPP_UM=0.5 bash code/External_val/HCC/demo_uni2.sh all
+##   MPP_UM=0.5 CUDA_DEVICE=0 bash code/External_val/HCC/demo_uni2.sh all
 
 set -euo pipefail
 
@@ -21,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../log_run.sh"
 
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
-CUDA_DEVICE="${CUDA_DEVICE:-2}"
+CUDA_DEVICE="${CUDA_DEVICE:-3}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 if [[ -z "${MPP_UM:-}" ]]; then
@@ -71,7 +72,7 @@ Outputs:
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/HCC/Pred_visual_hcc_uni2.ipynb
-Log: code/External_val/HCC/HCC_uni2.log  (appended; each step and the whole run record elapsed time)
+Log: code/log/external_val_hcc_uni2.log  (appended; screen print plus per-step and whole-run elapsed time)
 EOF
 }
 
@@ -104,4 +105,4 @@ run_steps() {
   esac
 }
 
-extval_run_logged "${SCRIPT_DIR}/HCC_uni2.log" "HCC-UNI2" "${STEP}" run_steps
+extval_run_logged "${REPO}/code/log/external_val_hcc_uni2.log" "HCC-UNI2" "${STEP}" run_steps

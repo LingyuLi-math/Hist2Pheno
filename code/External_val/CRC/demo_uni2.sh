@@ -6,7 +6,7 @@
 ## Those stay with code/External_val/CRC/demo.sh (UNI, patch_size=16).
 ##
 ##   bash code/External_val/CRC/demo_uni2.sh dry-run
-##   bash code/External_val/CRC/demo_uni2.sh all
+##   bash CUDA_DEVICE=0 code/External_val/CRC/demo_uni2.sh all
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=...   One slide: SAMPLE=...
 ##
@@ -60,7 +60,7 @@ Outputs:
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/CRC/Pred_visual_crc_uni2.ipynb
-Log: code/External_val/CRC/CRC_uni2.log  (appended; each step and the whole run record elapsed time)
+Log: code/log/external_val_crc_uni2.log  (appended; screen print plus per-step and whole-run elapsed time)
 EOF
 }
 
@@ -93,4 +93,4 @@ run_steps() {
   esac
 }
 
-extval_run_logged "${SCRIPT_DIR}/CRC_uni2.log" "CRC-UNI2" "${STEP}" run_steps
+extval_run_logged "${REPO}/code/log/external_val_crc_uni2.log" "CRC-UNI2" "${STEP}" run_steps

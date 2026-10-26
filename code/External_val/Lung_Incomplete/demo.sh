@@ -9,6 +9,9 @@
 ##   bash code/External_val/Lung_Incomplete/demo.sh predict
 ##   SAMPLE=VUILD141MA bash code/External_val/Lung_Incomplete/demo.sh plot
 
+## UNI2 A3 (separate pred directory):
+##   bash code/External_val/Lung_Incomplete/demo_uni2.sh predict
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

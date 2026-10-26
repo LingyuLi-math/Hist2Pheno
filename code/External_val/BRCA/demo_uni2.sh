@@ -6,7 +6,7 @@
 ## Those stay with code/External_val/BRCA/demo.sh (UNI, patch_size=16).
 ##
 ##   bash code/External_val/BRCA/demo_uni2.sh dry-run
-##   bash code/External_val/BRCA/demo_uni2.sh all
+##   bash CUDA_DEVICE=0 code/External_val/BRCA/demo_uni2.sh all
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=...   One slide: SAMPLE=...
 ##
@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../log_run.sh"
 
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
-CUDA_DEVICE="${CUDA_DEVICE:-0}"
+CUDA_DEVICE="${CUDA_DEVICE:-1}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 if [[ -z "${PYTHON:-}" ]]; then
@@ -66,7 +66,7 @@ Outputs:
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/BRCA/Pred_visual_brca_uni2.ipynb
-Log: code/External_val/BRCA/BRCA_uni2.log  (appended; each step and the whole run record elapsed time)
+Log: code/log/external_val_brca_uni2.log  (appended; screen print plus per-step and whole-run elapsed time)
 EOF
 }
 
@@ -99,4 +99,4 @@ run_steps() {
   esac
 }
 
-extval_run_logged "${SCRIPT_DIR}/BRCA_uni2.log" "BRCA-UNI2" "${STEP}" run_steps
+extval_run_logged "${REPO}/code/log/external_val_brca_uni2.log" "BRCA-UNI2" "${STEP}" run_steps

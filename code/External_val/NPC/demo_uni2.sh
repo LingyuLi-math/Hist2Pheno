@@ -71,7 +71,7 @@ Outputs:
   data/Visium/NPC/pred_uni2_A3_bestmlp/{sample}/{sample}_l2_probs.npz
 Figures: code/External_val/NPC/Pred_visual_npc_uni2.ipynb
 
-Log: code/External_val/NPC/NPC_uni2.log
+Log: code/log/external_val_npc_uni2.log  (appended; screen print plus per-step and whole-run elapsed time)
 UNI (patch 16) remains: bash code/External_val/NPC/demo.sh
 EOF
 }
@@ -105,4 +105,4 @@ run_steps() {
   esac
 }
 
-extval_run_logged "${SCRIPT_DIR}/NPC_uni2.log" "NPC-UNI2" "${STEP}" run_steps
+extval_run_logged "${REPO}/code/log/external_val_npc_uni2.log" "NPC-UNI2" "${STEP}" run_steps

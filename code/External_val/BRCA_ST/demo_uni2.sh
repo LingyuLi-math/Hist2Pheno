@@ -20,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../log_run.sh"
 
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
-CUDA_DEVICE="${CUDA_DEVICE:-0}"
+CUDA_DEVICE="${CUDA_DEVICE:-1}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 if [[ -z "${PYTHON:-}" ]]; then
@@ -62,7 +62,7 @@ Outputs:
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebooks: code/External_val/BRCA_ST/Pred_visual_brca_st_{A,B,C,D,E,F,G,H}_uni2.ipynb
-Log: code/External_val/BRCA_ST/BRCA_ST_uni2.log  (appended; each step and the whole run record elapsed time)
+Log: code/log/external_val_brca_st_uni2.log  (appended; screen print plus per-step and whole-run elapsed time)
 
 SAMPLE=A1 or SAMPLE=A or SAMPLE=9769_C1_HE_small. About 2.4M nuclei across 36 slides.
 EOF
@@ -97,4 +97,4 @@ run_steps() {
   esac
 }
 
-extval_run_logged "${SCRIPT_DIR}/BRCA_ST_uni2.log" "BRCA_ST-UNI2" "${STEP}" run_steps
+extval_run_logged "${REPO}/code/log/external_val_brca_st_uni2.log" "BRCA_ST-UNI2" "${STEP}" run_steps

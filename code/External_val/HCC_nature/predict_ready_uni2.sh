@@ -4,7 +4,7 @@
 ##
 ##   CUDA_DEVICE=1 bash code/External_val/HCC_nature/predict_ready_uni2.sh
 ##
-## Default GPU is 1. Log: HCC_nature_uni2_predict_ready.log
+## Default GPU is 1. Log: code/log/external_val_hcc_nature_uni2_predict_ready.log
 
 set -euo pipefail
 
@@ -12,6 +12,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 export CUDA_DEVICE="${CUDA_DEVICE:-1}"
 export READY="${READY:-1}"
-export LOG="${LOG:-${SCRIPT_DIR}/HCC_nature_uni2_predict_ready.log}"
+export LOG="${LOG:-/home/lingyu/ssd2/Python/Hist2Pheno/code/log/external_val_hcc_nature_uni2_predict_ready.log}"
 
 exec bash "${SCRIPT_DIR}/demo_uni2.sh" predict-ready
