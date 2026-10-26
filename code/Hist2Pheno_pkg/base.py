@@ -1809,6 +1809,7 @@ def gather_neighbor_embeddings(X, neighbor_index, row_indices, device=None):
 
 
 # Define Improved MLP Model with Residual Connections
+# 2026.10.26, correction / 上述历史标题保留：MLP hidden layers 为顺序前馈；仅空间融合使用残差。
 class ImprovedMLPClassifier(nn.Module):
     def __init__(
         self,
@@ -1839,6 +1840,7 @@ class ImprovedMLPClassifier(nn.Module):
         )
         
         # Hidden layers with residual connections
+        # 2026.10.26, correction / 历史注释保留：这里没有 hidden-layer residual addition。
         self.hidden_layers = nn.ModuleList()
         for i in range(len(hidden_dims) - 1):
             self.hidden_layers.append(nn.Sequential(

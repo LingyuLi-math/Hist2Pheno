@@ -1268,6 +1268,13 @@ def train_and_save_model(
         spatial_config=result.get("spatial_config") if result else None,
     )
 
+    # 2026.10.26, paired layer initialization / A0–A3 同名 backbone/head 参数逐位一致
+    if result is not None and result.get("_cv_source", {}).get("paired_initialization", False):
+        from paired_initialization import initialize_paired_model
+        source = result["_cv_source"]
+        result["initialization"] = initialize_paired_model(
+            model, int(source.get("seed", 42)), int(result.get("outer_fold", 0)))
+
     spatial_ctx = None
     if use_spatial_context and result is not None and result.get("_streaming_spatial") is not None:
         spatial_ctx = result["_streaming_spatial"]
@@ -1919,7 +1926,7 @@ def train_and_save_model_from_split(
         result.get("val_global_indices", np.arange(len(result["y_test_encoded"]))),
         result["y_train_encoded"], result["y_test_encoded"],
         {"hce":[hce_w1,hce_w2,hce_w12,hce_w_l12head,hce_w_l3,hce_w_l4],
-         "implementation":digest(*[file_digest(Path(__file__).parent/name) for name in ("model.py","base.py","hierarchy_loss.py","spatial_context.py")]),
+         "implementation":digest(*[file_digest(Path(__file__).parent/name) for name in ("model.py","base.py","hierarchy_loss.py","spatial_context.py","paired_initialization.py")]),
          "epochs":max_epochs,"patience":patience,"hidden":list(hidden_dims),"dropout":dropout,
          "lr":lr,"weight_decay":weight_decay,"val_selection":val_selection_metric,
          "class_weight":class_weight_mode,"beta":class_balanced_beta,"focal":l2_focal_gamma,
@@ -1928,6 +1935,8 @@ def train_and_save_model_from_split(
          "spatial_k":result.get("spatial_k"),"hierarchy":result.get("hierarchy_config"),"hierarchy_maps":result.get("hierarchy_maps"),
          "classes":list(map(str,class_names)) if class_names is not None else None,
          "seed":result.get("_cv_source",{}).get("seed",42),
+         "split_seed":result.get("_cv_source",{}).get("split_seed",42),
+         "paired_initialization":result.get("_cv_source",{}).get("paired_initialization",False),
          "batch_size":loaders["train_loader"].batch_size,
          "sampler":type(loaders["train_loader"].sampler).__name__,
          "sampler_weights":digest(loaders["train_loader"].sampler.weights.numpy()) if hasattr(loaders["train_loader"].sampler,"weights") else None})
@@ -2027,7 +2036,11 @@ def train_and_save_model_from_split(
         result=result,
     )
 
-    meta = {"spatial_config":result.get("spatial_config"), "spatial_mode":result.get("spatial_mode"),
+    meta = {"initialization":result.get("initialization"),
+            "training_seed":result.get("_cv_source",{}).get("seed"),
+            "split_seed":result.get("_cv_source",{}).get("split_seed"),
+            "loss_weights":{"l1_ce":hce_w1,"l2_ce":hce_w2,"l2_to_l1_nll":hce_w12,"l12_ce":hce_w_l12head},
+            "spatial_config":result.get("spatial_config"), "spatial_mode":result.get("spatial_mode"),
             "class_names":list(map(str,class_names)) if class_names is not None else None,
             "hierarchy_config":result.get("hierarchy_config"),
             "hierarchy_maps":{k:np.asarray(v).tolist() for k,v in result.get("hierarchy_maps",{}).items()},

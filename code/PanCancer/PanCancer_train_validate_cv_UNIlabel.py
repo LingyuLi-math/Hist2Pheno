@@ -174,6 +174,7 @@ def setup_seed(seed: int) -> None:
         torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)  # 2026.10.26, fail on unsupported nondeterministic kernels
 
 
 def _uni2_embedding_dir(h5ad_path: Path, uns) -> Path:
@@ -209,7 +210,18 @@ def _uni2_embedding_dir(h5ad_path: Path, uns) -> Path:
     )
 
 
+# 2026.10.26, lock whole cache transaction / 防止首次并发生成相互覆盖
+from feature_integrity import feature_manifest, finite_rows, file_lock, atomic_json
+
+
 def _aligned_uni2_matrix(h5ad_path: Path, adata, cache_dir: Path) -> np.ndarray:
+    cache_dir = Path(cache_dir)
+    key = digest(str(Path(h5ad_path).resolve()))
+    with file_lock(cache_dir / f"{key}.lock"):
+        return _aligned_uni2_matrix_locked(Path(h5ad_path), adata, cache_dir)
+
+
+def _aligned_uni2_matrix_locked(h5ad_path: Path, adata, cache_dir: Path) -> np.ndarray:
     """H5ad-row-aligned UNI2 matrix. Unmatched rows are NaN. Cached on disk."""
     import json
 
@@ -224,6 +236,10 @@ def _aligned_uni2_matrix(h5ad_path: Path, adata, cache_dir: Path) -> np.ndarray:
         "uni2_dir": str(uni2_dir.resolve()),
         # Changes while an extract is still writing .pth files, so a mid-run cache is not reused.
         "uni2_dir_mtime_ns": int(uni2_stat.st_mtime_ns),
+        "feature_manifest": feature_manifest(uni2_dir, cache_dir),
+        "alignment_version": 2,
+        "pth_prefix": str(adata.uns.get("pth_prefix") or ""),
+        "match_tolerance": float(adata.uns.get("match_tolerance", 1.0)),
     }
     cache_dir.mkdir(parents=True, exist_ok=True)
     key = digest(stamp["h5ad"])
@@ -240,7 +256,9 @@ def _aligned_uni2_matrix(h5ad_path: Path, adata, cache_dir: Path) -> np.ndarray:
                 f"  UNI2 cache {h5ad_path.parent.name}: {cached.shape}",
                 flush=True,
             )
-            return cached
+            if cached.ndim == 2 and cached.shape[0] == adata.n_obs:
+                return cached
+            raise RuntimeError(f"Malformed aligned UNI2 cache: {npy_path}")
     prefix = str(adata.uns.get("pth_prefix") or "") or infer_pth_prefix_from_dir(uni2_dir)
     if not prefix:
         raise RuntimeError(f"Cannot infer UNI2 .pth prefix in {uni2_dir}")
@@ -276,10 +294,13 @@ def _aligned_uni2_matrix(h5ad_path: Path, adata, cache_dir: Path) -> np.ndarray:
         aligned[int(item["idx"])] = np.asarray(item["embedding"], dtype=np.float32).reshape(-1)
     del matched
     tmp = cache_dir / f"{key}.tmp.npy"
+    # Ensure extraction was not changed while matching / 不发布混合版本缓存
+    if feature_manifest(uni2_dir, cache_dir) != stamp["feature_manifest"]:
+        raise RuntimeError("UNI2 tokens changed during alignment; finish extraction and retry")
     np.save(tmp, aligned)
     os.replace(tmp, npy_path)
-    stamp_path.write_text(json.dumps(stamp, indent=2))
-    n_hit = int(np.isfinite(aligned[:, 0]).sum())
+    atomic_json(stamp_path, stamp)
+    n_hit = int(finite_rows(aligned).sum())
     print(
         f"  UNI2 aligned {n_hit:,}/{adata.n_obs:,} rows, dim={dim}",
         flush=True,
@@ -381,7 +402,7 @@ def load_section_arrays(
             if uni2_cache_dir is None:
                 raise ValueError("uni2 embedder requires uni2_cache_dir")
             X_uni2 = _aligned_uni2_matrix(h5ad_path, adata, uni2_cache_dir)
-            present = np.isfinite(X_uni2[idx, 0])
+            present = finite_rows(X_uni2, idx)
             n_miss = int((~present).sum())
             if n_miss:
                 print(
@@ -609,6 +630,7 @@ class PooledCtx:
     mpp_map: Path | None = None
     inner_val_fraction: float = 0.2
     embedder: str = "uni"
+    split_seed: int = 42  # 2026.10.26, fixed splits across training seeds / 固定 cross-section 拆分
     g: dict = field(default_factory=dict)
 
     @property
@@ -642,7 +664,7 @@ def load_or_build_index(ctx: PooledCtx, index_csv: Path | None) -> pd.DataFrame:
 def step_index(ctx: PooledCtx) -> None:
     from prepare_pancancer_index import main as index_main
 
-    argv = ["--out-dir", str(ctx.data_root), "--cv-k", str(ctx.cv_k), "--seed", str(ctx.seed)]
+    argv = ["--out-dir", str(ctx.data_root), "--cv-k", str(ctx.cv_k), "--seed", str(ctx.split_seed)]
     if ctx.datasets:
         argv.extend(["--datasets", *ctx.datasets])
     index_main(argv)
@@ -661,7 +683,7 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     plan = fold_plan_frame(
         index,
         n_splits=ctx.cv_k,
-        seed=ctx.seed,
+        seed=ctx.split_seed,
         existing=existing or None,
     )
     # 2026.10.24, optional patient-grouped outer folds / 患者级隔离需真实元数据
@@ -689,7 +711,7 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         index,
         classes,
         max_cells_per_section=ctx.max_cells_per_section,
-        seed=ctx.seed,
+        seed=ctx.split_seed,
         cache_dir=ctx.data_root / "label_cache",
         cv_k=ctx.cv_k,
         group_splitter=ctx.group_splitter,
@@ -714,6 +736,8 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     cv["spatial_config"] = ctx.spatial_options or vars(SpatialConfig(k=ctx.spatial_k))
     cv["inner_val_fraction"] = ctx.inner_val_fraction
     cv["seed"] = ctx.seed
+    cv["split_seed"] = ctx.split_seed
+    cv["paired_initialization"] = True
     if is_cell_stratified_splitter(ctx.group_splitter) and ctx.inner_val_fraction:
         raise ValueError("cell_stratified is a development ablation: pass --inner-val-fraction 0 explicitly")
     if patient_lookup is not None:
@@ -784,7 +808,7 @@ def step_train(ctx: PooledCtx) -> None:
         resume_from_checkpoints=ctx.resume_from_checkpoints,
         group_checkpoint_dir=str(ctx.ckpt_dir),
         hidden_dims=ctx.hidden_dims,
-        random_state=ctx.seed,
+        random_state=ctx.split_seed,
         val_selection_metric=ctx.val_selection_metric,
         cv_selection_metric=ctx.cv_selection_metric,
         class_weight_mode=ctx.class_weight_mode,
@@ -903,6 +927,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--spatial-k", type=int, default=DEFAULT_SPATIAL_K)
     p.add_argument("--spatial-mode", default=DEFAULT_SPATIAL_MODE)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--split-seed", type=int, default=42, help="Fixed outer/inner splits and cell subsampling; independent of training seed")
     p.add_argument("--cuda-device", default="0")
     p.add_argument("--allow-cpu-train", action="store_true")
     p.add_argument("--no-resume-from-checkpoints", action="store_true")
@@ -926,7 +951,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--hierarchy", choices=("adjacent","legacy"), default="adjacent")
     for name, default in vars(HierarchyConfig()).items():
         p.add_argument("--"+name.replace("_","-"),type=float,default=default)
-    p.add_argument("--legacy-l2-l1-weight",type=float,default=1.0)
+    p.add_argument("--legacy-l2-l1-weight",type=float,default=2.0)
     p.add_argument("--spatial-radii-um",type=float,nargs="*",default=[])
     p.add_argument("--spatial-mpp",type=float,default=None)
     p.add_argument("--spatial-coordinates-um",action="store_true")
@@ -990,6 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
         datasets=list(args.datasets) if args.datasets else [],
         device=device,
         seed=args.seed,
+        split_seed=args.split_seed,
         cv_k=args.cv_k,
         patience=args.patience,
         max_epochs=args.max_epochs,

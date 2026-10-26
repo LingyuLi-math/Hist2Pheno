@@ -101,7 +101,11 @@ def oof_tables(spec: dict, class_names: dict) -> tuple[pd.DataFrame, pd.DataFram
     order = np.argsort(z["row_indices"])
     if not np.array_equal(np.sort(z["row_indices"]), np.arange(len(rows))):
         raise ValueError(f"{spec['tag']} OOF row indices are not a complete 0..N-1 set")
-    cohort = rows.section_id.str.split("::").str[0].to_numpy()[order]
+    # 2026.10.26, align by true row identity / CSV 本已按原始行排列，禁止再次置换
+    if rows.row_index.duplicated().any():
+        raise ValueError("Duplicate row_index in oof_rows.csv")
+    rows = rows.set_index("row_index").loc[np.asarray(z["row_indices"])[order]]
+    cohort = rows.section_id.str.split("::").str[0].to_numpy()
     per_class, per_dataset = [], []
     for head, key in HEADS:
         y = z[f"{key}_labels"][order]
@@ -129,8 +133,49 @@ def oof_tables(spec: dict, class_names: dict) -> tuple[pd.DataFrame, pd.DataFram
     return pd.DataFrame(per_class), pd.DataFrame(per_dataset)
 
 
+
+# 2026.10.26, bind cached tables and cross-model comparison to exact inputs / 完整细胞身份
+OOF_TABLE_VERSION = "aligned-cohort-v2"
+
+
+def oof_identity(spec):
+    rows = pd.read_csv(spec["result"] / "oof_rows.csv", dtype={"cell_id":str})
+    if rows.row_index.duplicated().any():
+        raise ValueError("Duplicate OOF row identity")
+    columns = ["row_index", "section_id", "cell_id", "fold"]
+    return rows.sort_values("row_index")[columns].reset_index(drop=True)
+
+
+def cached_oof_tables(spec, class_names, out_dir, key):
+    from checkpoint_artifact import digest, file_digest
+    from feature_integrity import atomic_json
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = digest(OOF_TABLE_VERSION, class_names,
+        file_digest(spec["result"] / "oof_predictions.npz"),
+        file_digest(spec["result"] / "oof_rows.csv"))
+    class_path = out_dir / f"oof_per_class_{key}.csv"
+    dataset_path = out_dir / f"oof_per_dataset_{key}.csv"
+    marker = out_dir / f"oof_tables_{key}_v2.json"
+    try:
+        saved = json.loads(marker.read_text())
+        valid = (saved["stamp"] == stamp and saved["class_sha"] == file_digest(class_path)
+                 and saved["dataset_sha"] == file_digest(dataset_path))
+    except (OSError, ValueError, KeyError):
+        valid = False
+    if valid:
+        return pd.read_csv(class_path), pd.read_csv(dataset_path)
+    classes_df, dataset_df = oof_tables(spec, class_names)
+    classes_df.to_csv(class_path, index=False)
+    dataset_df.to_csv(dataset_path, index=False)
+    atomic_json(marker, {"stamp":stamp,"class_sha":file_digest(class_path),
+                         "dataset_sha":file_digest(dataset_path)})
+    return classes_df, dataset_df
+
 def split_old_cache(out_dir: Path) -> None:
     """Split a combined A0/A1 cache CSV so later runs only score new architectures."""
+    # 2026.10.26, correctness migration / 旧表可能含 cohort 错配，不再导入旧缓存
+    return
     old_class = out_dir / "oof_per_class_auroc.csv"
     old_dataset = out_dir / "oof_per_dataset_auroc.csv"
     if old_class.is_file():

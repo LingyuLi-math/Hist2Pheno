@@ -59,6 +59,17 @@ Predict: bash code/PanCancer/3_demo_pred.sh
 EOF
 }
 
+# 2026.10.26, portable timing / 保留 GNU time 指标，无 /usr/bin/time 时仍可运行
+run_timed() {
+  if [[ -x /usr/bin/time ]]; then
+    /usr/bin/time -f '===== wall %E  user %U  sys %S =====' "$@"
+  else
+    local started=$SECONDS
+    "$@"
+    echo "===== wall $((SECONDS-started))s ====="
+  fi
+}
+
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 run_py() {
@@ -68,7 +79,7 @@ run_py() {
   mkdir -p "$(dirname "$log")"
   {
     echo "===== start $(date '+%F %T') gpu=${CUDA_DEVICE} ====="
-    /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
+    run_timed \
       conda run --no-capture-output -n "$CONDA_ENV" python -u "$@"
     echo "===== end $(date '+%F %T') ====="
   } 2>&1 | if [[ "$mode" == append ]]; then tee -a "$log"; else tee "$log"; fi
@@ -81,7 +92,7 @@ prepare_uni2_cache() {
 }
 
 ADJ=(
-  --hierarchy adjacent --legacy-l2-l1-weight 1
+  --hierarchy adjacent --legacy-l2-l1-weight 2
   --l2-l12-nll 0.5 --l12-l1-nll 0.5 --l2-l12-js 0.1 --l12-l1-js 0.1
 )
 
@@ -154,6 +165,7 @@ cmd_uni2() {
     code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py
     --cuda-device "$CUDA_DEVICE"
     --embedder uni2
+    --seed "${TRAIN_SEED:-42}" --split-seed "${SPLIT_SEED:-42}"
     --group-splitter cross_dataset_section
     --inner-val-fraction 0.2
     --class-weight-mode balanced
@@ -216,6 +228,12 @@ cmd_uni2() {
       die "uni2 arch must be smoke|A0|A1|A2|A3|A4"
       ;;
   esac
+  # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
+  local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
+  for ((i=0; i<${#args[@]}; i++)); do
+    if [[ "${args[i]}" == --save-result ]]; then args[i+1]="${args[i+1]}_${suffix}"; fi
+  done
+  log="${log%.log}_${suffix}.log"
   echo "log $log"
   run_py "$log" replace "${args[@]}"
 }

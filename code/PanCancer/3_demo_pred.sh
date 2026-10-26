@@ -4,10 +4,11 @@
 ##
 ##   bash code/PanCancer/3_demo_pred.sh section  {predict|repredict|crc}
 ##   bash code/PanCancer/3_demo_pred.sh celltype {predict|repredict}
-##   bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A3}
+##   bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3}
 ##   CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A3
 ##
 ## section/celltype use the published UNI checkpoints.
+## 2026.10.26 correction: A0–A3 now default OOF; old descriptions below are retained as history.
 ## uni2 A0 and A1 are OOF: each section is scored by the fold that held it out.
 ## uni2 A3 is deployment: best_mlp_gpu.pt (fold 0) scores every training section.
 ## That number is not the five-model pooled OOF. Figures are skipped; ROC CSVs
@@ -47,13 +48,24 @@ usage() {
 Usage:
   bash code/PanCancer/3_demo_pred.sh section  {predict|repredict|crc}
   bash code/PanCancer/3_demo_pred.sh celltype {predict|repredict}
-  bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A3}
+  bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3}
 
 GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
 predict skips sections that already have a panel (published) or a run stamp (UNI2).
 repredict overwrites. crc rewrites only CRC into pred_all_spatial/.
 Train: bash code/PanCancer/1_demo_train.sh
 EOF
+}
+
+# 2026.10.26, portable timing / 保留 GNU time 指标，无 /usr/bin/time 时仍可运行
+run_timed() {
+  if [[ -x /usr/bin/time ]]; then
+    /usr/bin/time -f '===== wall %E  user %U  sys %S =====' "$@"
+  else
+    local started=$SECONDS
+    "$@"
+    echo "===== wall $((SECONDS-started))s ====="
+  fi
 }
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -69,7 +81,7 @@ run_pred() {
   export HIST2PHENO_CONTEXT_CACHE="$OUT/context_cache"
   {
     echo "===== start $(date '+%F %T') gpu=${CUDA_DEVICE} ====="
-    /usr/bin/time -f '===== wall %E  user %U  sys %S =====' \
+    run_timed \
       conda run --no-capture-output -n "$CONDA_ENV" python -u \
         code/PanCancer/PanCancer_predict_visualize.py \
           --cuda-device "$CUDA_DEVICE" \
@@ -130,15 +142,31 @@ cmd_uni2() {
       log="$REPO/code/log/pancancer_section_uni2_A1_adjacent_nospatial_predict.log"
       extra=(--embedder uni2 --no-spatial-context --skip-figures --skip-existing)
       ;;
+    A2)
+      ckpt="$OUT/result_uni2_A2_adjacent_spatial_k8mean/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
+      root="$OUT/pred_uni2_A2_adjacent_spatial_k8mean"
+      log="$REPO/code/log/pancancer_section_uni2_A2_predict.log"
+      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+      ;;
     A3)
       ckpt="$OUT/result_uni2_A3_adjacent_spatial_k8mean_gate/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt"
       root="$OUT/pred_uni2_A3_bestmlp"
       log="$REPO/code/log/pancancer_section_uni2_A3_bestmlp_predict.log"
-      extra=(--embedder uni2 --deployment --spatial-k 8 --skip-figures --skip-existing)
+      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
       ;;
     *)
-      die "uni2 predict must be A0 | A1 | A3"
+      die "uni2 predict must be A0 | A1 | A2 | A3"
       ;;
+  esac
+  # 2026.10.26, uniform A0–A3 evaluation / 历史 A3 deployment 注释保留，以此处为准
+  local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
+  ckpt="${ckpt/\/cross_dataset_cv\//_${suffix}/cross_dataset_cv/}"
+  root="${root}_${suffix}_${PREDICTION_MODE:-oof}"
+  log="${log%.log}_${suffix}_${PREDICTION_MODE:-oof}.log"
+  case "${PREDICTION_MODE:-oof}" in
+    oof) ;;
+    deployment) extra+=(--deployment) ;;
+    *) die "PREDICTION_MODE must be oof or deployment" ;;
   esac
   need_ckpt "$ckpt"
   echo "log $log"
@@ -165,8 +193,8 @@ case "${1:-}" in
     ;;
   uni2)
     case "${2:-}" in
-      A0|A1|A3) cmd_uni2 "$2" ;;
-      *) die "uni2 steps: A0 | A1 | A3" ;;
+      A0|A1|A2|A3) cmd_uni2 "$2" ;;
+      *) die "uni2 steps: A0 | A1 | A2 | A3" ;;
     esac
     ;;
   *) die "unknown command '$1' (section | celltype | uni2)" ;;
