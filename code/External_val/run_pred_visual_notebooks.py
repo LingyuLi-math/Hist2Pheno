@@ -83,7 +83,7 @@ def discover_notebooks(only: list[str]) -> list[Path]:
     extra = sorted(
         p
         for p in _HERE.rglob("Pred_visual*.ipynb")
-        if p not in found and p.name not in {
+        if p not in found and not p.name.endswith("_uni2.ipynb") and p.name not in {
             "Pred_visual_prostate_patient1.ipynb",
             "Pred_visual_prostate_patient2.ipynb",
         }

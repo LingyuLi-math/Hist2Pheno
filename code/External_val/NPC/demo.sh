@@ -20,6 +20,9 @@
 ## One slide:  SAMPLE=20210809-C-AH4199551 bash code/External_val/NPC/demo.sh features
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=0 (default)
+##
+## UNI2 A3 (patch 14, project_all_UNI2, separate from this script):
+##   bash code/External_val/NPC/demo_uni2.sh all
 
 ## 2026.10.15 Predict with new model
 # CUDA_DEVICE=0 FORCE=1 bash code/External_val/BRCA/demo.sh predict

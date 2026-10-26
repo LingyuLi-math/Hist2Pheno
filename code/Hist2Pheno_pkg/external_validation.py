@@ -69,7 +69,7 @@ def _mpp_from_env(name: str) -> float:
     return value
 
 
-def simple_cohort(name: str, repo: Path | None = None) -> ExternalCohort:
+def simple_cohort(name: str, repo: Path | None = None, embedder: str = "uni") -> ExternalCohort:
     """Build NPC, CRC, HCC, or HCC_NATURE. BRCA / Prostate / BRCA_ST use their own subclass."""
     key = name.upper()
     if key not in _SIMPLE_COHORTS:
@@ -80,6 +80,12 @@ def simple_cohort(name: str, repo: Path | None = None) -> ExternalCohort:
     display = spec[3] if len(spec) > 3 else key
     fallback = spec[4] if len(spec) > 4 else None
     root = Path(repo) if repo is not None else Path(__file__).resolve().parents[2]
+    tag = str(embedder).lower()
+    extra: dict = {}
+    if tag == "uni2":
+        extra = uni2_overrides(root)
+    elif tag != "uni":
+        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
     return ExternalCohort(
         name=str(display),
         data_root=root / rel,
@@ -87,6 +93,7 @@ def simple_cohort(name: str, repo: Path | None = None) -> ExternalCohort:
         he_suffix=suffix,
         mpp_um=_mpp_from_env(display) if need_mpp else None,
         mpp_fallback=None if need_mpp else (float(fallback) if fallback is not None else None),
+        **extra,
     )
 
 
@@ -94,6 +101,23 @@ _CKPT_REL = Path(
     "data/PanCancer/result_all_spatial/cross_dataset_cv"
     "/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt"
 )
+_UNI2_CKPT_REL = Path(
+    "data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate"
+    "/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt"
+)
+
+
+def uni2_overrides(repo: Path) -> dict:
+    """A3 checkpoint and directories. Does not touch UNI ``project_all_UNI``."""
+    root = Path(repo)
+    return {
+        "patch_size": 14,
+        "method": "UNI2",
+        "embedding_dirname": "project_all_UNI2",
+        "pred_dirname": "pred_uni2_A3_bestmlp",
+        "checkpoint": root / _UNI2_CKPT_REL,
+        "project_tag": "project_all_UNI2",
+    }
 _SCALER_REL = Path("data/PanCancer/result_all_spatial/scaler.joblib")
 
 
@@ -209,6 +233,9 @@ class ExternalCohort:
     scaler: Path | None = None
     dataset_tag: str = "PanCancer"
     project_tag: str = "project_all_UNI"
+    method: str = "UNI"
+    embedding_dirname: str = "project_all_UNI"
+    pred_dirname: str = "pred_pancancer_section"
 
     def __post_init__(self) -> None:
         self.data_root = Path(self.data_root)
@@ -216,7 +243,11 @@ class ExternalCohort:
         if self.checkpoint is None:
             self.checkpoint = self.repo / _CKPT_REL
         if self.scaler is None:
-            self.scaler = self.repo / _SCALER_REL
+            # UNI2 (and any later embedder) keeps its scaler inside the checkpoint artifact.
+            if self.method == "UNI":
+                self.scaler = self.repo / _SCALER_REL
+            else:
+                self.scaler = Path(str(self.checkpoint) + ".artifact.pt")
         code = Path(__file__).resolve().parent.parent
         for folder in (code, code / "Hist2Pheno_pkg"):
             text = str(folder)
@@ -237,11 +268,11 @@ class ExternalCohort:
 
     @property
     def uni_root(self) -> Path:
-        return self.data_root / "project_all_UNI"
+        return self.data_root / self.embedding_dirname
 
     @property
     def pred_root(self) -> Path:
-        return self.data_root / "pred_pancancer_section"
+        return self.data_root / self.pred_dirname
 
     @property
     def feature_script(self) -> Path:
@@ -249,7 +280,7 @@ class ExternalCohort:
 
     @property
     def _uns_key(self) -> str:
-        return f"{self.name.lower()}_uni"
+        return f"{self.name.lower()}_{self.method.lower()}"
 
     def discover_samples(self, only: str | Sequence[str] | None = None) -> list[str]:
         root = self.stardist_root
@@ -313,6 +344,7 @@ class ExternalCohort:
             "mpp_source": mpp_source,
             "scale": scale,
             "scale_image": abs(scale - 1.0) > 1e-3,
+            "method": self.method,
             "patch_size_px": self.patch_size,
             "patch_um_after_rescale": self.patch_um,
             "patch_um_if_native_16px": self.patch_size * mpp_x,
@@ -323,7 +355,7 @@ class ExternalCohort:
 
     def cmd_dry_run(self, samples: list[str]) -> None:
         print(
-            f"target {self.target_um_per_px} µm/px, "
+            f"method {self.method}  target {self.target_um_per_px} µm/px, "
             f"patch {self.patch_size}px = {self.patch_um:.1f} µm"
         )
         print(f"checkpoint {self.checkpoint} exists={self.checkpoint.is_file()}")
@@ -337,7 +369,7 @@ class ExternalCohort:
                 f"  nuclei CSV rows : {n:,}\n"
                 f"  µm/px           : {geo['mpp_um']:.6f}"
                 f"  ({geo['mpp_source']})\n"
-                f"  native 16px     : {geo['patch_um_if_native_16px']:.3f} µm"
+                f"  native {self.patch_size}px    : {geo['patch_um_if_native_16px']:.3f} µm"
                 f"{'' if not geo['scale_image'] else '  (not the training field)'}\n"
                 f"  scale_image     : {geo['scale_image']}  scale={geo['scale']:.6f}\n"
                 f"  crop after scale: {geo['patch_um_after_rescale']:.1f} µm\n"
@@ -375,7 +407,7 @@ class ExternalCohort:
                 "--scale",
                 f"{geo['scale']:.8f}",
                 "--method",
-                "UNI",
+                self.method,
                 "--patch_size",
                 str(self.patch_size),
                 "--output_img",
@@ -398,7 +430,9 @@ class ExternalCohort:
                 "n_pth": n_pth(paths["emb"]),
                 "pth_prefix": dataset,
             }
-            (paths["emb"].parent / "uni_geometry.json").write_text(json.dumps(meta, indent=2))
+            (paths["emb"].parent / f"{self.method.lower()}_geometry.json").write_text(
+                json.dumps(meta, indent=2)
+            )
             print(f"[features] {sample} wrote {meta['n_pth']:,} embeddings", flush=True)
 
     def _build_one_h5ad(self, sample: str, *, force: bool) -> Path:
@@ -407,9 +441,10 @@ class ExternalCohort:
             print(f"[h5ad] skip {sample}: {paths['feat']}", flush=True)
             return paths["feat"]
         if n_pth(paths["emb"]) == 0:
+            script = "demo.sh" if self.method == "UNI" else "demo_uni2.sh"
             raise FileNotFoundError(
-                f"no UNI .pth under {paths['emb']}. "
-                f"Run: bash code/External_val/{self.name}/demo.sh features"
+                f"no {self.method} .pth under {paths['emb']}. "
+                f"Run: bash code/External_val/{self.name}/{script} features"
             )
         base = _import_sibling("base")
         ad = importlib.import_module("anndata")
@@ -490,6 +525,8 @@ class ExternalCohort:
     # 2026.10.24, physical geometry is per slide / 外部图像不沿用训练图像的像素尺寸
     def _context_request(self,model,sample,xy):
         cfg=vars(model.spatial_fusion.config).copy()
+        # Keep this slide's neighbor cache out of the training context_cache.
+        cfg["cache_dir"] = str(self.pred_root / "context_cache")
         if cfg["radii_um"] or cfg["geometry"] or cfg["weighting"]=="gaussian":
             xy=xy*float(self.geometry(sample)["mpp_um"])
             cfg.update(coordinates_um=True,mpp=None)
@@ -1009,7 +1046,7 @@ class ExternalCohort:
         if args.ready:
             samples = [s for s in samples if self.has_uni_embeddings(s)]
             if not samples:
-                raise SystemExit("no slides have UNI embeddings yet (--ready)")
+                raise SystemExit(f"no slides have {self.method} embeddings yet (--ready)")
             print("[ready] " + ", ".join(samples), flush=True)
         if args.step == "dry-run":
             self.cmd_dry_run(samples)
@@ -1033,11 +1070,14 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0].upper() not in _SIMPLE_COHORTS:
         raise SystemExit(
             "usage: python code/Hist2Pheno_pkg/external_validation.py "
-            f"{{{known}}} {{dry-run|features|h5ad|predict|probs|plot}}\n"
+            f"{{{known}}} [uni|uni2] {{dry-run|features|h5ad|predict|probs|plot}}\n"
             "BRCA / Prostate / BRCA_ST: use code/External_val/<cohort>/*_external.py"
         )
     name = argv.pop(0)
-    return simple_cohort(name).main(argv)
+    embedder = "uni"
+    if argv and argv[0].lower() in {"uni", "uni2"}:
+        embedder = argv.pop(0).lower()
+    return simple_cohort(name, embedder=embedder).main(argv)
 
 
 if __name__ == "__main__":

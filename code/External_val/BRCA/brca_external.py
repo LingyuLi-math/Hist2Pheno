@@ -32,6 +32,7 @@ if str(_REPO / "code") not in sys.path:
 from Hist2Pheno_pkg.external_validation import (  # noqa: E402
     ExternalCohort,
     ome_um_per_px,
+    uni2_overrides,
     scale_for_mpp,
 )
 
@@ -247,12 +248,40 @@ class BrcaCohort(ExternalCohort):
         return geo
 
 
-COHORT = BrcaCohort(
-    name="BRCA",
-    data_root=DATA_ROOT,
-    repo=_REPO,
-    he_suffix=".tif",  # overridden per sample in sample_paths / resolve_he_path
-)
+def cohort_for(embedder: str = "uni") -> BrcaCohort:
+    extra = {}
+    tag = str(embedder).lower()
+    if tag == "uni2":
+        extra = uni2_overrides(_REPO)
+    elif tag != "uni":
+        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
+    return BrcaCohort(
+        name="BRCA",
+        data_root=DATA_ROOT,
+        repo=_REPO,
+        he_suffix=".tif",  # overridden per sample in sample_paths / resolve_he_path
+        **extra,
+    )
+
+
+def use_embedder(embedder: str = "uni") -> BrcaCohort:
+    """Rebind module-level helpers. Default import stays UNI."""
+    global COHORT, PRED_ROOT, discover_samples, sample_paths, geometry
+    global composition_table, ensure_l2_probs, plot_spatial, plot_composition, cmd_plot
+    COHORT = cohort_for(embedder)
+    PRED_ROOT = COHORT.pred_root
+    discover_samples = COHORT.discover_samples
+    sample_paths = COHORT.sample_paths
+    geometry = COHORT.geometry
+    composition_table = COHORT.composition_table
+    ensure_l2_probs = COHORT.ensure_l2_probs
+    plot_spatial = COHORT.plot_spatial
+    plot_composition = COHORT.plot_composition
+    cmd_plot = COHORT.cmd_plot
+    return COHORT
+
+
+COHORT = cohort_for("uni")
 
 PRED_ROOT = COHORT.pred_root
 discover_samples = COHORT.discover_samples
@@ -387,6 +416,9 @@ def plot_roi_composition(
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0].lower() in {"uni", "uni2"}:
+        use_embedder(argv.pop(0).lower())
     return COHORT.main(argv)
 
 

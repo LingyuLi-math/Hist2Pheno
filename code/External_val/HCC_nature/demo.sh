@@ -24,6 +24,9 @@
 ## GPU: CUDA_DEVICE=0 (default for demo.sh). predict_ready.sh defaults to GPU 1.
 ## Optional: MPP_UM=0.5  is only the fallback for TIFFs with no calibration.
 
+## UNI2 A3 (patch 14, separate directories):
+##   bash code/External_val/HCC_nature/demo_uni2.sh all
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

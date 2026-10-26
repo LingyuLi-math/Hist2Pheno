@@ -27,7 +27,7 @@ _REPO = Path(__file__).resolve().parents[3]
 if str(_REPO / "code") not in sys.path:
     sys.path.insert(0, str(_REPO / "code"))
 
-from Hist2Pheno_pkg.external_validation import ExternalCohort, scale_for_mpp
+from Hist2Pheno_pkg.external_validation import ExternalCohort, scale_for_mpp, uni2_overrides
 
 PATIENTS = ("Patient_1", "Patient_2")
 # 10x Space Ranger: spot_diameter_fullres spans a theoretical 65 µm spot.
@@ -124,6 +124,16 @@ def mpp_for(sample: str, he_path: Path) -> tuple[float, str]:
 
 class ProstateCohort(ExternalCohort):
     def discover_samples(self, only: str | None = None) -> list[str]:
+        if isinstance(only, (list, tuple)):
+            if len(only) <= 1:
+                only = only[0] if only else None
+            else:
+                out: list[str] = []
+                for item in only:
+                    for name in self.discover_samples(item):
+                        if name not in out:
+                            out.append(name)
+                return out
         names: list[str] = []
         for patient in PATIENTS:
             root = self.data_root / patient / "StarDist_Segment"
@@ -199,12 +209,40 @@ class ProstateCohort(ExternalCohort):
         }
 
 
-COHORT = ProstateCohort(
-    name="Prostate",
-    data_root=_REPO / "data" / "Visium" / "Prostate",
-    repo=_REPO,
-    he_suffix=".jpg",
-)
+def cohort_for(embedder: str = "uni") -> ProstateCohort:
+    extra = {}
+    tag = str(embedder).lower()
+    if tag == "uni2":
+        extra = uni2_overrides(_REPO)
+    elif tag != "uni":
+        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
+    return ProstateCohort(
+        name="Prostate",
+        data_root=_REPO / "data" / "Visium" / "Prostate",
+        repo=_REPO,
+        he_suffix=".jpg",
+        **extra,
+    )
+
+
+def use_embedder(embedder: str = "uni") -> ProstateCohort:
+    """Rebind module-level helpers. Default import stays UNI."""
+    global COHORT, PRED_ROOT, discover_samples, sample_paths, geometry
+    global composition_table, ensure_l2_probs, plot_spatial, plot_composition, cmd_plot
+    COHORT = cohort_for(embedder)
+    PRED_ROOT = COHORT.pred_root
+    discover_samples = COHORT.discover_samples
+    sample_paths = COHORT.sample_paths
+    geometry = COHORT.geometry
+    composition_table = COHORT.composition_table
+    ensure_l2_probs = COHORT.ensure_l2_probs
+    plot_spatial = COHORT.plot_spatial
+    plot_composition = COHORT.plot_composition
+    cmd_plot = COHORT.cmd_plot
+    return COHORT
+
+
+COHORT = cohort_for("uni")
 
 PRED_ROOT = COHORT.pred_root
 discover_samples = COHORT.discover_samples
@@ -218,6 +256,9 @@ cmd_plot = COHORT.cmd_plot
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0].lower() in {"uni", "uni2"}:
+        use_embedder(argv.pop(0).lower())
     return COHORT.main(argv)
 
 

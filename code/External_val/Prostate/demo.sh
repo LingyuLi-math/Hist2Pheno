@@ -43,6 +43,9 @@
 # CUDA_DEVICE=1 FORCE=1 SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh all
 
 
+## UNI2 A3 (patch 14, separate directories):
+##   bash code/External_val/Prostate/demo_uni2.sh all
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

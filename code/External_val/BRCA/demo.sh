@@ -32,6 +32,9 @@
 ## 必须 FORCE=1 predict，否则会跳过旧 pred
 # CUDA_DEVICE=0 FORCE=1 bash code/External_val/BRCA/demo.sh predict
 
+## UNI2 A3 (patch 14, separate directories):
+##   bash code/External_val/BRCA/demo_uni2.sh all
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
