@@ -11,9 +11,13 @@
 # Uses /bin/rm. The shell alias rm -> trash-put cannot move these trees
 # onto a full /nobackup2 volume.
 #
-# From the repo root:
+## 删除 ImgEmbeddings 下面的 sc_pth_16_16_image 和 sc_pth_14_14_image，
+## sc_pth_16_16 和 sc_pth_14_14 会留下
+# From the repo root: 第一行只打印路径。第二行才会删除
 #   bash code/Hist2Pheno_pkg/remove_patch_image_tiles.sh
 #   bash code/Hist2Pheno_pkg/remove_patch_image_tiles.sh delete
+
+
 set -euo pipefail
 
 mode="${1:-list}"
