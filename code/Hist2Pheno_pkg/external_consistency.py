@@ -26,7 +26,7 @@ def build_features(cohort,sample,force=False):
     paths=cohort.sample_paths(sample);path=paths['feat'];marker=path.with_suffix('.source.json')
     with pp.file_lock(str(path)+'.lock'):
         with pp.file_lock(paths['emb']/'.prepare.lock'):
-            if not extraction_complete(cohort,sample):cohort.cmd_features([sample],force=True)
+            if not extraction_complete(cohort,sample):cohort.cmd_features([sample],force=False)
         source=feature_source(cohort,sample);stamp=pp.fingerprint(source)
         if not force and pp.complete(marker,stamp,[path]):return path
         # Historical builder retained for matching/annotations; never allow its existence shortcut.
@@ -146,7 +146,7 @@ def extraction_complete(cohort,sample):
         if old.get('inputs')!={'image':source['he'],'positions':source['csv']}:return False
         geo=source['geometry']
         if old.get('scale_image')!=bool(geo['scale_image']) or abs(old.get('scale',-1)-float(geo['scale']))>1e-7:return False
-        if old.get('extractor_sha256')!=source['extractor']['sha256']:return False
+        if not __import__('embedding_store').compatible_extractor(old,source['extractor']['sha256']):return False
         weight=old.get('encoder_weights')
         if weight and pp.file_record(weight['path'],cohort.uni_root/'.provenance')!=weight:return False
         return old.get('tokens')==pp.feature_manifest(p['emb'],cohort.uni_root/'.provenance')

@@ -2244,6 +2244,8 @@ def infer_pth_prefix_from_dir(embedding_dir, max_sample: int = 64):
     Complete_Cases Xenium exports often use ``VUILD107MA_x_y.pth`` while Select4 /
     CODEX use ``sc_{sample}_x_y.pth``. Call when ``pth_prefix`` loads zero files.
     """
+    from embedding_store import uses_hdf5,EmbeddingTable
+    if uses_hdf5(embedding_dir):return EmbeddingTable(embedding_dir,validate=True).metadata.get("prefix")
     embedding_dir = Path(embedding_dir)
     if not embedding_dir.is_dir():
         return None
@@ -2882,12 +2884,13 @@ def match_embeddings(
     from scipy.spatial import cKDTree
 
     # Keep a stable index mapping between KDTree points and embeddings_dict values.
-    embedding_keys = list(embeddings_dict.keys())
+    stored=hasattr(embeddings_dict,"read_rows")
+    embedding_keys = embeddings_dict.coordinates if stored else list(embeddings_dict.keys())
     if len(embedding_keys) == 0:
         return matched_data
 
     embedding_coords = np.asarray(embedding_keys, dtype=np.float32)  # shape (N, 2)
-    embedding_vectors = [embeddings_dict[k] for k in embedding_keys]
+    embedding_vectors = None if stored else [embeddings_dict[k] for k in embedding_keys]
 
     print(f"  Building KDTree for embeddings: {embedding_coords.shape[0]:,} points")
     tree = cKDTree(embedding_coords)
@@ -2907,7 +2910,7 @@ def match_embeddings(
     # Query the nearest embedding for each cell point within `tolerance`.
     # For queries with no neighbor in range, cKDTree returns idx == tree.n.
     dists, nn_idxs = tree.query(cell_points, k=1, distance_upper_bound=tolerance)
-    matched_mask = nn_idxs < len(embedding_vectors)
+    matched_mask = nn_idxs < len(embedding_keys)
     matched_cell_indices = cell_indices[matched_mask]
     matched_nn_indices = nn_idxs[matched_mask].astype(int)
 
@@ -2917,6 +2920,7 @@ def match_embeddings(
     if group_col is not None and group_col not in celltype_df.columns:
         raise ValueError(f"group_col={group_col!r} not found in celltype_df columns")
 
+    selected_vectors=embeddings_dict.read_rows(matched_nn_indices) if stored else None
     # Gather arrays for faster post-processing.
     celltypes = celltype_df["celltype"].to_numpy()[matched_cell_indices]
     matched_x = x_vals[matched_cell_indices]
@@ -2956,7 +2960,7 @@ def match_embeddings(
             "Y_pix_HE": orig_y[j],
             "centroid_x": matched_x[j],
             "centroid_y": matched_y[j],
-            "embedding": embedding_vectors[matched_nn_indices[j]],
+            "embedding": selected_vectors[j] if stored else embedding_vectors[matched_nn_indices[j]],
         }
         for c in hierarchy_cols + extra_label_cols:
             row[c] = srow[c]
@@ -4927,6 +4931,9 @@ def load_hist_embeddings(
     ``ESCCAI_SELECTIVE_LEGACY_PROBES=1`` to restore lattice probes. Sample size:
     ``ESCCAI_SELECTIVE_PREFLIGHT_MAX`` (default 512).
     """
+    # 2026.10.28, transparent section-store reader / 保留旧 .pth 接口，HDF5 不构造全量向量字典
+    from embedding_store import uses_hdf5,EmbeddingTable
+    if uses_hdf5(embedding_dir):return EmbeddingTable(embedding_dir,validate=True)
     embedding_dir = Path(embedding_dir)
     pth_cap = int(os.environ.get("ESCCAI_EMBEDDING_PTH_CAP", "400000"))
 
@@ -6391,6 +6398,13 @@ def first_pth_tensor(dir_path):
     Supports .pth files containing a tensor, tuple, or dict.
     Returns: tensor object
     """
+    # 2026.10.28 LLY-compatible: support section HDF5 without loading all vectors.
+    from embedding_store import uses_hdf5, EmbeddingTable
+    if uses_hdf5(dir_path):
+        table = EmbeddingTable(dir_path)
+        if not len(table):
+            raise FileNotFoundError("Empty embedding store")
+        return torch.from_numpy(table.read_rows([0]))
     hist_embedding_dir = Path(dir_path)
     pth_files = list(hist_embedding_dir.glob("*.pth"))
     if not pth_files:

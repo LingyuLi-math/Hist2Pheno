@@ -462,21 +462,26 @@ def embed_patch_subtensors(
 
 # 2026.10.28, serialize extraction writers / 同一 embedding 目录禁止两个提取进程交叉写
 
-def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,output_img,output_pth,logging_folder,scale=DEFAULT_SCALE,save_patch_images=True):
+def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,output_img,output_pth,logging_folder,scale=DEFAULT_SCALE,save_patch_images=True,embedding_storage=None,embedding_dtype="float32",embedding_chunk_rows=1024,embedding_compression="lzf"):
     import sys
     from pathlib import Path
     package=Path(__file__).resolve().parent/"Hist2Pheno_pkg"
     if str(package) not in sys.path:sys.path.insert(0,str(package))
     from pipeline_provenance import file_lock
     with file_lock(Path(output_pth)/".extraction.lock"):
-        return _main_extraction(dataset,position_path,rawimage_path,scale_image,method,patch_size,
-            output_img,output_pth,logging_folder,scale,save_patch_images)
+        storage=embedding_storage or ("hdf5" if method in ("UNI","UNI2") else "pth")
+        from contextlib import nullcontext
+        from embedding_store import EmbeddingWriter
+        context=EmbeddingWriter(output_pth,dtype=embedding_dtype,chunk_rows=embedding_chunk_rows,compression=embedding_compression) if storage=="hdf5" else nullcontext(None)
+        with context as writer:
+            return _main_extraction(dataset,position_path,rawimage_path,scale_image,method,patch_size,
+                output_img,output_pth,logging_folder,scale,save_patch_images,_writer=writer,_storage=storage)
 
 
 def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale_image: bool, 
          method: str, patch_size: int, output_img: str, output_pth: str, 
          logging_folder: str, scale: float = DEFAULT_SCALE,
-         save_patch_images: bool = True):
+         save_patch_images: bool = True, *, _writer=None, _storage="pth"):
     """
     Extract image features from spatial transcriptomics data.
     
@@ -601,7 +606,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
     _embedding_root=_PipelinePath(output_pth)
     _embedding_root.mkdir(parents=True,exist_ok=True)
     _extraction_marker=_embedding_root/"embedding_manifest.json"
-    _pp.atomic_json(_extraction_marker,{"state":"writing","version":_pp.VERSION})
+    _pp.atomic_json(_extraction_marker,{"state":"writing","version":_pp.VERSION,"storage_format":_storage})
     _extractor_implementation_sha=_pp.sha256(__file__)
     _source_inputs={"image":_pp.file_record(rawimage_path,_embedding_root/".provenance"),"positions":_pp.file_record(position_path,_embedding_root/".provenance")}
     # Create the folder with a unique timestamp
@@ -695,6 +700,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
 
     start_time = time.time()
     _fresh_patch_names=[]
+    _fresh_patch_indices=[]
     if save_patch_images:
         os.makedirs(output_img, exist_ok=True)
         for i, stem, patch in iter_valid_patches(
@@ -704,6 +710,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                 logger.info(f"patch_name: {i}, {stem}.png")
             patch.save(os.path.join(output_img, f"{stem}.png"))
             _fresh_patch_names.append(f"{stem}.png")
+            _fresh_patch_indices.append(i)
         logger.info(f"Image segmentation time: {time.time() - start_time:.2f} seconds")
     else:
         logger.info(
@@ -1110,7 +1117,14 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                     logger.info(f"saved_name: {i}, {saved_name}")
                 if any(not torch.isfinite(value).all() for value in subtensors_list):
                     raise ValueError("Encoder produced NaN/Inf; extraction remains incomplete")
-                torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                if _writer is None:
+                    torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                else:
+                    source_row=_fresh_patch_indices[i] if save_patch_images else i
+                    x,y=coordinates[source_row]
+                    xy=(x/scale,y/scale) if scale_image else (x,y)
+                    vector=torch.cat([t.detach().float().cpu().reshape(-1) for t in subtensors_list]).numpy()
+                    _writer.append(vector,cell_id=f"{dataset}:{source_row}",xy=xy,input_row=source_row,legacy_name=saved_name[:-4])
                 _written_names.append(saved_name)
                 n_saved += 1
         else:
@@ -1126,7 +1140,14 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                     logger.info(f"saved_name: {i}, {saved_name}")
                 if any(not torch.isfinite(value).all() for value in subtensors_list):
                     raise ValueError("Encoder produced NaN/Inf; extraction remains incomplete")
-                torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                if _writer is None:
+                    torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                else:
+                    source_row=_fresh_patch_indices[i] if save_patch_images else i
+                    x,y=coordinates[source_row]
+                    xy=(x/scale,y/scale) if scale_image else (x,y)
+                    vector=torch.cat([t.detach().float().cpu().reshape(-1) for t in subtensors_list]).numpy()
+                    _writer.append(vector,cell_id=f"{dataset}:{source_row}",xy=xy,input_row=source_row,legacy_name=saved_name[:-4])
                 _written_names.append(saved_name)
                 n_saved += 1
 
@@ -1138,16 +1159,17 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
     _current=set(_written_names)
     _archive=_embedding_root/"previous_embeddings"/datetime.now().strftime("%Y%m%d%H%M%S%f")
     for _old in _embedding_root.glob("*.pth"):
-        if _old.name not in _current:
+        if _storage=="hdf5" or _old.name not in _current:
             _archive.mkdir(parents=True,exist_ok=True);_pipeline_shutil.move(str(_old),str(_archive/_old.name))
     if _pp.sha256(__file__)!=_extractor_implementation_sha:raise RuntimeError("Extraction code changed during run")
+    if _writer is not None:_writer.commit({"prefix":dataset,"method":method,"patch_size":patch_size})
     _manifest=_pp.feature_manifest(_embedding_root,_embedding_root/".provenance",allow_active=True)
     _weight=locals().get("weight_file")
     _encoder=locals().get("_encoder_record") or (_pp.file_record(_weight,_embedding_root/".provenance") if _weight else None)
     if _encoder and _pp.file_record(_encoder["path"],_embedding_root/".provenance")!=_encoder:
         raise RuntimeError("Encoder weights changed during extraction")
     _pp.atomic_json(_extraction_marker,{"state":"completed","version":_pp.VERSION,
-        "inputs":_source_inputs,"method":method,"patch_size":patch_size,
+        "inputs":_source_inputs,"method":method,"patch_size":patch_size,"storage_format":_storage,
         "scale_image":bool(scale_image),"scale":float(scale),"encoder_weights":_encoder,
         "extractor_sha256":_extractor_implementation_sha,"runtime":{"torch":torch.__version__,"numpy":np.__version__},"tokens":_manifest,"n_saved":n_saved})
     end_time = time.time()
@@ -1159,6 +1181,10 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--embedding-storage',choices=('hdf5','pth'),default=None)
+    parser.add_argument('--embedding-dtype',choices=('float32','float16'),default='float32')
+    parser.add_argument('--embedding-chunk-rows',type=int,default=1024)
+    parser.add_argument('--embedding-compression',choices=('lzf','gzip','none'),default='lzf')
     parser.add_argument('--dataset', required=True, help='Dataset name')
     parser.add_argument('--position_path', required=True, help='Position file name')
     parser.add_argument('--rawimage_path', required=True, help='Image file name')
@@ -1193,6 +1219,8 @@ if __name__ == '__main__':
         args.logging,
         args.scale,
         save_patch_images=not args.no_save_patch_images,
+        embedding_storage=args.embedding_storage,embedding_dtype=args.embedding_dtype,
+        embedding_chunk_rows=args.embedding_chunk_rows,embedding_compression=args.embedding_compression,
     )
     
 

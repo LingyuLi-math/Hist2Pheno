@@ -22,6 +22,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -105,6 +106,31 @@ _UNI2_CKPT_REL = Path(
     "data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate"
     "/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt"
 )
+
+
+_PROB_DIRNAME = re.compile(r"_prob\d+\.\d{2}$")
+
+
+def prediction_dirname(name: str, min_prob: float | None = None) -> str:
+    """One prediction folder per StarDist cutoff.
+
+    ``STAR_PROB_MIN`` unset or <=0 keeps ``name`` (the existing unsuffixed tree,
+    or a name that already chose its own suffix). A positive cutoff writes
+    ``<base>_prob0.40``. An existing ``_probXX`` suffix is replaced, not stacked.
+    """
+    if min_prob is None:
+        raw = os.environ.get("STAR_PROB_MIN", "").strip()
+        if not raw:
+            return name
+        min_prob = float(raw)
+    if not np.isfinite(min_prob) or min_prob < 0.0 or min_prob > 1.0:
+        raise SystemExit(f"STAR_PROB_MIN must be in [0, 1], got {min_prob}")
+    if min_prob <= 0.0:
+        return name
+    suffix = f"_prob{min_prob:.2f}"
+    if name.endswith(suffix):
+        return name
+    return f"{_PROB_DIRNAME.sub('', name)}{suffix}"
 
 
 def uni2_overrides(repo: Path) -> dict:
@@ -210,6 +236,9 @@ def n_csv_rows(csv_path: Path) -> int:
 
 
 def n_pth(emb_dir: Path) -> int:
+    # 2026.10.28, legacy name retained; count rows for HDF5
+    from embedding_store import uses_hdf5,EmbeddingTable
+    if uses_hdf5(emb_dir):return len(EmbeddingTable(emb_dir,validate=False))
     if not emb_dir.is_dir():
         return 0
     return sum(1 for p in emb_dir.glob("*.pth"))
@@ -282,7 +311,8 @@ class ExternalCohort:
 
     @property
     def pred_root(self) -> Path:
-        return self.data_root / self.pred_dirname
+        # 2026.10.28, folder follows STAR_PROB_MIN / 0 仍用构造时的目录名
+        return self.data_root / prediction_dirname(self.pred_dirname)
 
     @property
     def feature_script(self) -> Path:
@@ -440,7 +470,12 @@ class ExternalCohort:
             n_rows = n_csv_rows(paths["csv"])
             have = n_pth(paths["emb"])
             # 2026.10.28, replace 90% heuristic with exact extraction source/token manifest
-            if not force and _import_sibling("external_consistency").extraction_complete(self,sample):
+            storage=os.environ.get("HIST2PHENO_EMBEDDING_STORAGE","hdf5" if self.method in ("UNI","UNI2") else "pth")
+            if storage not in ("hdf5","pth"):raise ValueError("HIST2PHENO_EMBEDDING_STORAGE must be hdf5 or pth")
+            from embedding_store import uses_hdf5,migrate_pth
+            if not force and storage=="hdf5" and not uses_hdf5(paths["emb"]) and _import_sibling("external_consistency").extraction_complete(self,sample):
+                migrate_pth(paths["emb"],archive_pth=True)
+            if not force and _import_sibling("external_consistency").extraction_complete(self,sample) and (storage=="hdf5")==uses_hdf5(paths["emb"]):
                 print(f"[features] skip {sample}: {have:,} .pth already (FORCE=1 to redo)", flush=True)
                 continue
             paths["emb"].mkdir(parents=True, exist_ok=True)
@@ -460,6 +495,8 @@ class ExternalCohort:
                 "True" if geo["scale_image"] else "False",
                 "--scale",
                 f"{geo['scale']:.8f}",
+                "--embedding-storage",
+                storage,
                 "--method",
                 self.method,
                 "--patch_size",

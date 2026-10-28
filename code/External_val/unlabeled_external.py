@@ -132,12 +132,20 @@ def _uni2_ckpt() -> Path:
     return path if path.is_absolute() else (_REPO / path)
 
 
+def _prob_folder(path: Path) -> Path:
+    """2026.10.28, same cutoff rule as external_validation.prediction_dirname."""
+    from external_validation import prediction_dirname
+
+    return path.with_name(prediction_dirname(path.name))
+
+
 def _uni2_pred_root() -> Path:
     """``UNI2_PRED_DIRNAME`` is a folder under data/PanCancer. Slides go in unlabel/."""
     raw = os.environ.get("UNI2_PRED_DIRNAME", "").strip()
-    if not raw:
-        return UNI2_PRED
-    return _REPO / "data" / "PanCancer" / raw / "unlabel"
+    from external_validation import prediction_dirname
+
+    name = prediction_dirname(raw or UNI2_PRED.name)
+    return _REPO / "data" / "PanCancer" / name / "unlabel"
 
 
 def _ckpt(embedder: str) -> Path:
@@ -153,9 +161,9 @@ def _cohort(name: str, embedder: str = "uni") -> Cohort:
     if embedder == "uni2":
         pred = _uni2_pred_root() / key
     elif key == "Lung_Incomplete":
-        pred = LUNG_LEGACY
+        pred = _prob_folder(LUNG_LEGACY)
     elif key in {"HCC_unlabel", "PDAC_unlabel"}:
-        pred = PRED_ROOT / key
+        pred = _prob_folder(PRED_ROOT) / key
     else:
         raise SystemExit(f"unknown cohort {name!r}; choose Lung_Incomplete, HCC_unlabel, PDAC_unlabel")
     if key == "Lung_Incomplete":

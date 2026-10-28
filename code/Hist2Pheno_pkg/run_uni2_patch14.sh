@@ -102,22 +102,15 @@ run_one() {
     return 0
   fi
   if [[ "${SKIP_IF_DONE}" == "1" && -d "${pth_dir}" ]]; then
-    local n logf finished=0
-    n="$(find "${pth_dir}" -maxdepth 1 -name '*.pth' 2>/dev/null | wc -l | tr -d ' ')"
-    if [[ "${n}" -gt 0 ]]; then
-      # A crashed extract leaves .pth files and a log with no "Feature extraction time:".
-      # Those samples must run again. A directory with tokens but no log stays skipped.
-      logf="$(find "${out_root}" -maxdepth 2 -name 'UNI2_image_feature_extract.log' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
-      if [[ -z "${logf}" ]] || grep -q "Feature extraction time:" "${logf}"; then
-        finished=1
-      fi
-      if [[ "${finished}" == "1" ]]; then
-        echo "SKIP done (${n} .pth): ${pth_dir#${REPO}/}"
-        SKIP=$((SKIP + 1))
-        return 0
-      fi
-      echo "REDO incomplete (${n} .pth): ${pth_dir#${REPO}/}"
+    # 2026.10.28: old .pth count/log check is replaced by completed provenance.
+    # A crashed extract leaves .pth files and a log with no "Feature extraction time:".
+    local n
+    if n="$("${PYTHON}" "${REPO}/code/check_embeddings.py" "${pth_dir}")"; then
+      echo "SKIP done (${n} embeddings): ${pth_dir#${REPO}/}"
+      SKIP=$((SKIP + 1))
+      return 0
     fi
+    echo "REDO incomplete/stale embeddings: ${pth_dir#${REPO}/}"
   fi
   mkdir -p "${out_root}"
   local -a args=(

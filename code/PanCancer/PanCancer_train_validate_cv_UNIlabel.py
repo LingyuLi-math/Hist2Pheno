@@ -202,7 +202,7 @@ def _uni2_embedding_dir(h5ad_path: Path, uns) -> Path:
         if key in seen:
             continue
         seen.add(key)
-        if cand.is_dir() and any(cand.glob("*.pth")):
+        if __import__("embedding_store").available(cand):
             return cand
     raise FileNotFoundError(
         f"No UNI2 sc_pth_14_14 next to {h5ad_path}. Looked at: "

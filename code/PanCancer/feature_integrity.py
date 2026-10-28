@@ -67,6 +67,13 @@ def feature_manifest(directory, cache_dir, *, allow_active=False):
         try:state=json.loads(extraction.read_text()).get("state")
         except (OSError,ValueError):state="invalid"
         if state!="completed":raise RuntimeError(f"Embedding extraction is not complete: {directory}")
+    from embedding_store import uses_hdf5,descriptor
+    if uses_hdf5(directory):
+        if not allow_active and any(directory.glob("*.pth")):
+            raise RuntimeError("Mixed active .pth and HDF5 stores; archive legacy files or explicitly choose pth")
+        result=descriptor(directory,cache_dir)
+        if not allow_active:_validate_extraction_contract(directory,cache_dir,result)
+        return result
     key = hashlib.sha256(str(directory).encode()).hexdigest()
     path = Path(cache_dir)/'feature_manifests'/f'{key}.json'
     with file_lock(str(path)+'.lock'):
@@ -92,18 +99,7 @@ def feature_manifest(directory, cache_dir, *, allow_active=False):
         if result != old:
             atomic_json(path, result)
         short={k:result[k] for k in ('version','directory','count','fingerprint')}
-        if not allow_active:
-            contract=json.loads(extraction.read_text())
-            if contract.get('tokens')!=short:
-                raise RuntimeError(f"Tokens changed after completed extraction: {directory}; rerun extraction")
-            from pipeline_provenance import file_record
-            weight=contract.get('encoder_weights')
-            if contract.get('method') in ('UNI','UNI2') and not weight:
-                raise RuntimeError("Embedding manifest has no encoder weight fingerprint; rerun extraction")
-            records=list(contract.get('inputs',{}).values())+([weight] if weight else [])
-            for record in records:
-                if file_record(record['path'],cache_dir)!=record:
-                    raise RuntimeError(f"Embedding source changed: {record['path']}; rerun extraction")
+        if not allow_active:_validate_extraction_contract(directory,cache_dir,short)
         return short
 
 
@@ -143,3 +139,19 @@ def completed_run(marker, stamp, root, required=()):
         return run
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def _validate_extraction_contract(directory,cache_dir,short):
+    extraction=Path(directory)/"embedding_manifest.json"
+    contract=json.loads(extraction.read_text())
+    if contract.get('tokens')!=short:
+        raise RuntimeError(f"Tokens changed after completed extraction: {directory}; rerun extraction")
+    from pipeline_provenance import file_record
+    weight=contract.get('encoder_weights')
+    if contract.get('method') in ('UNI','UNI2') and not weight:
+        raise RuntimeError("Embedding manifest has no encoder weight fingerprint; rerun extraction")
+    records=list(contract.get('inputs',{}).values())+([weight] if weight else [])
+    for record in records:
+        if file_record(record['path'],cache_dir)!=record:
+            raise RuntimeError(f"Embedding source changed: {record['path']}; rerun extraction")
+

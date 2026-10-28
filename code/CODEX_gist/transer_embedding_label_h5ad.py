@@ -147,8 +147,8 @@ def _require_file(path: Path, label: str) -> None:
 def _require_embedding_dir(path: Path, label: str) -> None:
     if not path.is_dir():
         raise FileNotFoundError(f"Missing {label}: {path}")
-    if not any(path.glob("*.pth")):
-        raise FileNotFoundError(f"No .pth embeddings in {label}: {path}")
+    if not __import__("embedding_store").available(path):
+        raise FileNotFoundError(f"No embeddings (.pth or embeddings.h5) in {label}: {path}")
 
 
 def _source_row_count(csv_path: Path) -> int:

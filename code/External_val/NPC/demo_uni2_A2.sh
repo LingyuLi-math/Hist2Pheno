@@ -9,7 +9,8 @@
 ## 2026.10.27 STAR_PROB_MIN=0.40. Both slides' probability histogram is flat
 ## from about 0.30 to 0.40 and rises after that, so 0.40 is the right edge of
 ## the valley between the prob=0.01 tail and the nucleus mode.
-## The unfiltered predictions stay in pred_uni2_A2_bestmlp_paired_v2_seed42.
+## 2026.10.28 the output folder follows STAR_PROB_MIN (0.40 -> ..._prob0.40).
+## STAR_PROB_MIN=0 keeps the unsuffixed unfiltered tree.
 ##
 ## Does not rewrite:
 ##   data/Visium/NPC/project_all_UNI2
@@ -31,8 +32,19 @@ CUDA_DEVICE="${CUDA_DEVICE:-2}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 export UNI2_CKPT="${REPO}/data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
-export UNI2_PRED_DIRNAME="pred_uni2_A2_bestmlp_paired_v2_seed42_prob0.40"
 export STAR_PROB_MIN="${STAR_PROB_MIN:-0.40}"
+# 2026.10.28, one directory per cutoff / 默认 0.40 仍是 ..._prob0.40
+PROB_TAG="$(awk -v v="${STAR_PROB_MIN}" 'BEGIN {
+  if (v !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/) exit 2
+  x = v + 0
+  if (x < 0 || x > 1) exit 3
+  if (x == 0) exit 0
+  printf "_prob%.2f", x
+}')" || {
+  echo "ERROR: STAR_PROB_MIN must be in [0, 1], got ${STAR_PROB_MIN}" >&2
+  exit 1
+}
+export UNI2_PRED_DIRNAME="pred_uni2_A2_bestmlp_paired_v2_seed42${PROB_TAG}"
 
 if [[ -z "${PYTHON:-}" ]]; then
   for cand in \

@@ -150,10 +150,10 @@ for row in "${ALIGNMENT_ROWS[@]}"; do
   esac
 
   if [[ "${SKIP_IF_DONE}" == "1" && -d "${PTH_DIR}" ]]; then
-    pth_count="$(find "${PTH_DIR}" -maxdepth 1 -name '*.pth' 2>/dev/null | wc -l | tr -d ' ')"
-    if [[ "${pth_count}" -gt 0 ]]; then
+    # 2026.10.28: validate completed .pth/HDF5 provenance, not file existence.
+    if pth_count="$("${PYTHON}" "${REPO}/code/check_embeddings.py" "${PTH_DIR}")"; then
       echo "--------------------------------------------------"
-      echo "[${IDX}/${TOTAL}] SKIP (done, ${pth_count} .pth): ${LABEL}"
+      echo "[${IDX}/${TOTAL}] SKIP (done, ${pth_count} embeddings): ${LABEL}"
       (( ++SKIP )) || true
       continue
     fi

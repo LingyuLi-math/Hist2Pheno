@@ -218,7 +218,7 @@ def _require(path: Path, label: str) -> None:
 
 
 def _has_pth_files(emb_dir: Path) -> bool:
-    return emb_dir.is_dir() and any(emb_dir.glob("*.pth"))
+    return emb_dir.is_dir() and __import__("embedding_store").available(emb_dir)
 
 
 def build_he_matched_h5ad(
@@ -232,7 +232,7 @@ def build_he_matched_h5ad(
     _require(paths.gt_csv, "GT cell CSV")
     _require(paths.he_embedding_dir, "HE embedding directory")
     if not _has_pth_files(paths.he_embedding_dir):
-        raise FileNotFoundError(f"No .pth files in {paths.he_embedding_dir}")
+        raise FileNotFoundError(f"No embeddings (.pth or embeddings.h5) in {paths.he_embedding_dir}")
 
     print(f"  [HE h5ad] {paths.he_h5ad.name}")
     adata = match_hist2cell_h5ad(
@@ -309,7 +309,7 @@ def build_stardist_matched_h5ad(
     )
     _require(paths.stardist_embedding_dir, "StarDist embedding directory")
     if not _has_pth_files(paths.stardist_embedding_dir):
-        raise FileNotFoundError(f"No .pth files in {paths.stardist_embedding_dir}")
+        raise FileNotFoundError(f"No embeddings (.pth or embeddings.h5) in {paths.stardist_embedding_dir}")
 
     print(f"  [StarDist h5ad] {paths.stardist_h5ad.name}")
     adata = match_hist2cell_h5ad(
@@ -446,7 +446,7 @@ def build_stardist_all_h5ad(
     _require(paths.stardist_raw_csv, "StarDist raw CSV")
     _require(paths.stardist_embedding_dir, "StarDist embedding directory")
     if not _has_pth_files(paths.stardist_embedding_dir):
-        raise FileNotFoundError(f"No .pth files in {paths.stardist_embedding_dir}")
+        raise FileNotFoundError(f"No embeddings (.pth or embeddings.h5) in {paths.stardist_embedding_dir}")
 
     print(f"  [StarDist all h5ad] {paths.stardist_all_h5ad.name}")
     stardist_df = load_stardist_raw_table(paths.stardist_raw_csv, paths.sample)

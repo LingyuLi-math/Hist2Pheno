@@ -24,7 +24,13 @@ CUDA_DEVICE="${CUDA_DEVICE:-2}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 export CUDA_DEVICE
 export UNI2_CKPT="${REPO}/data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
-export UNI2_PRED_DIRNAME="pred_uni2_A2_bestmlp_paired_v2_seed42"
+export STAR_PROB_MIN="${STAR_PROB_MIN:-0}"
+# 2026.10.28, one directory per cutoff / 0 keeps the unsuffixed folder
+PROB_TAG="$(extval_prob_tag)" || {
+  echo "ERROR: STAR_PROB_MIN must be in [0, 1], got ${STAR_PROB_MIN}" >&2
+  exit 1
+}
+export UNI2_PRED_DIRNAME="pred_uni2_A2_bestmlp_paired_v2_seed42${PROB_TAG}"
 
 if [[ -z "${PYTHON:-}" ]]; then
   for cand in \

@@ -334,7 +334,7 @@ def plot_roi_spatial(
         figsize = (20.4, 14.82)
     save_path = None
     if save:
-        fig_dir = PRED_ROOT / "figures"
+        fig_dir = COHORT.pred_root / "figures"  # 2026.10.28, live cutoff folder
         fig_dir.mkdir(parents=True, exist_ok=True)
         save_path = fig_dir / f"{sample}_ROI_spatial_L1_L12_L2.png"
     title = kwargs.pop(
@@ -402,7 +402,7 @@ def plot_roi_composition(
     obs = pred.obs.iloc[np.flatnonzero(in_roi)].copy()
     save_path = csv_path = None
     if save:
-        fig_dir = PRED_ROOT / "figures"
+        fig_dir = COHORT.pred_root / "figures"  # 2026.10.28, live cutoff folder
         fig_dir.mkdir(parents=True, exist_ok=True)
         save_path = fig_dir / f"{sample}_ROI_composition_L1_L12_L2.png"
         csv_path = fig_dir / f"{sample}_ROI_composition.csv"

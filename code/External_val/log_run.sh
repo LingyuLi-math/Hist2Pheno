@@ -2,6 +2,18 @@
 # Appends terminal output to one dataset .log and records each step plus the
 # whole invocation. Source this file; do not execute it.
 
+# 2026.10.28. Empty when STAR_PROB_MIN is 0. Otherwise _prob0.40.
+extval_prob_tag() {
+  local v="${1:-${STAR_PROB_MIN:-0}}"
+  awk -v v="$v" 'BEGIN {
+    if (v !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/) exit 2
+    x = v + 0
+    if (x < 0 || x > 1) exit 3
+    if (x == 0) exit 0
+    printf "_prob%.2f", x
+  }'
+}
+
 extval_hms() {
   local t="$1"
   printf '%02d:%02d:%02d' $((t / 3600)) $(((t % 3600) / 60)) $((t % 60))

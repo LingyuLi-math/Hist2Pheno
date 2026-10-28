@@ -65,7 +65,7 @@ def file_record(path,cache_dir=None):
 def implementations():
     names=('pipeline_provenance.py','external_consistency.py','external_validation.py',
            'model.py','base.py','plot.py','spatial_context.py','checkpoint_artifact.py',
-           'embedding_alignment.py','../PanCancer/PanCancer_train_validate_cv_UNIlabel.py')
+           'embedding_alignment.py','embedding_store.py','../PanCancer/PanCancer_train_validate_cv_UNIlabel.py')
     return {name:sha256(_PKG/name) for name in names if (_PKG/name).is_file()}
 
 
@@ -242,7 +242,7 @@ def capture_inputs(files=(),tokens=(),cache_dir=None,optional_tokens=()):
     for directory in optional_tokens:
         directory=Path(directory).resolve()
         if str(directory) in known:continue
-        if directory.is_dir() and any(directory.glob('*.pth')):token_records.append(token_record(directory))
+        if __import__('embedding_store').available(directory):token_records.append(token_record(directory))
         else:token_records.append({'directory':str(directory),'missing':True})
     return {'files':records,'tokens':token_records,'mapping':mapping_descriptor()}
 
@@ -256,7 +256,7 @@ def inputs_current(record,cache_dir):
             elif file_record(value['path'],cache_dir)!=value:return False
         for value in record['tokens']:
             if value.get('missing'):
-                if Path(value['directory']).is_dir() and any(Path(value['directory']).glob('*.pth')):return False
+                if __import__('embedding_store').available(value['directory']):return False
             else:
                 current=feature_manifest(value['directory'],cache_dir)
                 current['extraction_sha256']=file_record(Path(value['directory'])/'embedding_manifest.json',cache_dir)['sha256']

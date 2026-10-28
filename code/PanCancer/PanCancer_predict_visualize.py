@@ -134,7 +134,7 @@ def _stardist_uni2_dir(h5ad_path: Path) -> Path | None:
     sample = parent.name
     rel = Path("ImgEmbeddings_all_stardist") / "sc_pth_14_14"
     for cand in (parent / f"{sample}_project_all_UNI2" / rel, parent / "project_all_UNI2" / rel):
-        if cand.is_dir() and any(cand.glob("*.pth")):
+        if __import__("embedding_store").available(cand):
             return cand
     return None
 
