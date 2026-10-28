@@ -52,7 +52,7 @@ def _inventory(directory):
     return rows
 
 
-def feature_manifest(directory, cache_dir):
+def feature_manifest(directory, cache_dir, *, allow_active=False):
     """Content SHA per token; unchanged files reuse hashes after complete stat inventory.
 
     No persistent in-process memo: later extraction/overwrites must be visible.
@@ -60,6 +60,13 @@ def feature_manifest(directory, cache_dir):
     Active writers must finish before use; this is a snapshot, not proof of extraction completion.
     """
     directory = Path(directory).resolve()
+    extraction=directory/"embedding_manifest.json"
+    if not extraction.is_file() and not allow_active:
+        raise RuntimeError(f"No completed extraction manifest: {directory}. Re-run Image_feature_extraction.py; legacy tokens cannot be silently trusted.")
+    if extraction.is_file() and not allow_active:
+        try:state=json.loads(extraction.read_text()).get("state")
+        except (OSError,ValueError):state="invalid"
+        if state!="completed":raise RuntimeError(f"Embedding extraction is not complete: {directory}")
     key = hashlib.sha256(str(directory).encode()).hexdigest()
     path = Path(cache_dir)/'feature_manifests'/f'{key}.json'
     with file_lock(str(path)+'.lock'):
@@ -84,7 +91,20 @@ def feature_manifest(directory, cache_dir):
                   'fingerprint': fingerprint, 'files': files}
         if result != old:
             atomic_json(path, result)
-        return {k: result[k] for k in ('version', 'directory', 'count', 'fingerprint')}
+        short={k:result[k] for k in ('version','directory','count','fingerprint')}
+        if not allow_active:
+            contract=json.loads(extraction.read_text())
+            if contract.get('tokens')!=short:
+                raise RuntimeError(f"Tokens changed after completed extraction: {directory}; rerun extraction")
+            from pipeline_provenance import file_record
+            weight=contract.get('encoder_weights')
+            if contract.get('method') in ('UNI','UNI2') and not weight:
+                raise RuntimeError("Embedding manifest has no encoder weight fingerprint; rerun extraction")
+            records=list(contract.get('inputs',{}).values())+([weight] if weight else [])
+            for record in records:
+                if file_record(record['path'],cache_dir)!=record:
+                    raise RuntimeError(f"Embedding source changed: {record['path']}; rerun extraction")
+        return short
 
 
 def finite_rows(matrix, rows=None, chunk_size=4096):

@@ -237,7 +237,8 @@ def _aligned_uni2_matrix_locked(h5ad_path: Path, adata, cache_dir: Path) -> np.n
         # Changes while an extract is still writing .pth files, so a mid-run cache is not reused.
         "uni2_dir_mtime_ns": int(uni2_stat.st_mtime_ns),
         "feature_manifest": feature_manifest(uni2_dir, cache_dir),
-        "alignment_version": 2,
+        "alignment_version": 3,
+        "alignment_implementation":digest(file_digest(Path(__file__)),file_digest(_PKG_DIR/"base.py"),file_digest(_PKG_DIR/"pipeline_provenance.py")),
         "pth_prefix": str(adata.uns.get("pth_prefix") or ""),
         "match_tolerance": float(adata.uns.get("match_tolerance", 1.0)),
     }
@@ -278,6 +279,7 @@ def _aligned_uni2_matrix_locked(h5ad_path: Path, adata, cache_dir: Path) -> np.n
         coord_cols=("centroid_x", "centroid_y"),
         tolerance=tolerance,
         pth_prefix=prefix,
+        strict=True,
     )
     matched = match_embeddings(
         cells,
@@ -360,7 +362,8 @@ def load_section_arrays(
         import pancancer_labels as _labels
         ontology_file = _PKG_DIR / "dataset" / "PanCancerCellType.xlsx"
         stamp = digest(file_digest(h5ad_path), file_digest(ontology_file),
-            file_digest(_PKG_DIR / "dataset" / "build_pancancer_celltype_v1.py"), native_col)
+            file_digest(_PKG_DIR / "dataset" / "build_pancancer_celltype_v1.py"), native_col,
+            __import__("pipeline_provenance").fingerprint(__import__("pipeline_provenance").mapping_descriptor()))
         cached = None
         cache_valid = False
         if cache_path is not None and cache_path.is_file():
@@ -671,6 +674,7 @@ def step_index(ctx: PooledCtx) -> None:
 
 
 def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
+    __import__("pipeline_provenance").mapping_descriptor()  # 2026.10.28, refresh long-lived-kernel ontology first
     classes = ontology_class_names()
     ctx.data_root.mkdir(parents=True, exist_ok=True)
     ctx.result_dir.mkdir(parents=True, exist_ok=True)

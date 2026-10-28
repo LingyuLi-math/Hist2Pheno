@@ -44,6 +44,8 @@ for _p in (_PKG_DIR, _HERE):
 from base import adata_X_to_dense, build_spatial_neighbor_index, encode_labels_with_class_names  # noqa: E402
 from checkpoint_artifact import read_artifact, checkpoint_scaler, digest, file_digest
 from feature_integrity import feature_manifest, finite_rows, atomic_json, output_manifest, completed_run
+import pipeline_provenance as pp
+from evaluation_audit import EvaluationRun
 from spatial_context import inference_runtime
 from model import load_model_for_predict  # noqa: E402
 from plot import mlp_collect_five_head_softmax_probs  # noqa: E402
@@ -141,7 +143,17 @@ def _feature_matrix(h5ad_path: Path, adata, row_idx, *, embedder: str, uni2_cach
     """Rows of ``row_idx``. UNI2 drops rows with no finite token and returns that mask."""
     row_idx = np.asarray(row_idx, dtype=np.int64)
     if embedder == "uni":
-        return np.asarray(adata_X_to_dense(adata.X)[row_idx], dtype=np.float32), np.ones(len(row_idx), dtype=bool)
+        recorded=adata.uns.get("embedding_dir")
+        if recorded:
+            from embedding_alignment import align_tokens
+            aligned=align_tokens(h5ad_path,adata,recorded,uni2_cache_dir or Path(h5ad_path).parent/".aligned_cache")
+            present=finite_rows(aligned,row_idx)
+            return np.asarray(aligned[row_idx[present]],dtype=np.float32),present
+        if adata.uns.get("feature_authority")!="h5ad":
+            raise ValueError("UNI h5ad has no embedding_dir: record the current token directory, or explicitly set uns['feature_authority']='h5ad' for a standalone feature matrix")
+        values=np.asarray(adata_X_to_dense(adata.X)[row_idx],dtype=np.float32)
+        pp.finite_matrix(values)
+        return values,np.ones(len(row_idx),dtype=bool)
     if embedder != "uni2":
         raise ValueError("embedder must be uni or uni2")
     if uni2_cache_dir is None:
@@ -160,6 +172,7 @@ def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]
     import anndata as ad
 
     adata = ad.read_h5ad(resolve_repo_path(h5ad_path))
+    pp.ground_truth_sources(adata,uni2_cache_dir)
     native = _native_series(adata.obs, native_col)
     mapped = map_native_series(native)
     keep = mapped.notna().to_numpy()
@@ -182,6 +195,9 @@ def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]
         return None
     xy = _spatial_xy(adata)[idx]
     names = adata.obs_names.to_numpy()[idx]
+    for head,values in (("L1",y_l1),("L12",y_l12),("L2",y_l2)):
+        unknown=set(values)-set(classes[head])
+        if unknown:raise ValueError(f"Latest GT contains classes absent from checkpoint {head}: {sorted(unknown)}")
     return {
         "X": X,
         "xy": xy,
@@ -193,6 +209,7 @@ def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]
         },
         "gt_str": {"L1": y_l1, "L12": y_l12, "L2": y_l2},
         "n_raw": int(adata.n_obs),
+        "native_col_used":str(native.name),
     }
 
 
@@ -214,31 +231,24 @@ def load_stardist_all(path: Path, *, embedder: str = "uni", uni2_cache_dir: Path
     return {"X": X, "xy": xy, "obs_names": names, "n": int(len(names))}
 
 
-def predict_block(model, scaler, X, xy, device, *, use_spatial: bool, spatial_k: int) -> dict:
-    if getattr(model,"use_spatial_context",False) and model.spatial_fusion.config.coordinates_um:
-        mpp=getattr(model,"inference_mpp",None)
-        if mpp is None and os.environ.get("HIST2PHENO_INFERENCE_MPP"):
-            mpp=float(os.environ["HIST2PHENO_INFERENCE_MPP"])
-        if mpp is None:
-            if getattr(model,"checkpoint_metadata",{}).get("section_mpp"):
-                raise ValueError("New native-pixel section needs HIST2PHENO_INFERENCE_MPP or a calibrated inference_mpp")
-            mpp=1.  # training explicitly declared that input coordinates are already µm
-        if not np.isfinite(mpp) or mpp<=0:raise ValueError("Invalid inference µm/px")
-        model.inference_mpp=mpp
-    Xs = np.asarray(scaler.transform(X),dtype=np.float32)
-    nbr = None
-    if use_spatial and getattr(model,"use_spatial_context",False):
-        rt = inference_runtime(X,xy*getattr(model,"inference_mpp",1.),scaler,model.spatial_fusion.config,model.spatial_fusion.mode)
-        nbr = {"runtime":rt}
-    elif getattr(model,"use_spatial_context",False):
-        raise ValueError("Spatial checkpoints cannot silently disable context; use a non-spatial ablation checkpoint")
-    probs = mlp_collect_five_head_softmax_probs(model, Xs, device, neighbor_index=nbr)
-    out_p, out_y = {}, {}
-    for head, pk in PROB_KEY.items():
-        pr = np.asarray(probs[pk], dtype=np.float64)
-        out_p[head] = pr
-        out_y[head] = np.argmax(pr, axis=1).astype(np.int64)
-    return {"probs": out_p, "pred": out_y}
+def predict_block(model,scaler,X,xy,device,*,use_spatial: bool,spatial_k=None) -> dict:
+    # 2026.10.28, explicit input units and no ignored K / 真实坐标单位与参数冲突检查
+    pp.finite_matrix(X)
+    Xs=np.asarray(scaler.transform(X),dtype=np.float32);pp.finite_matrix(Xs,"scaled features")
+    request=None
+    if not getattr(model,"use_spatial_context",False) and spatial_k is not None:
+        raise ValueError("--spatial-k has no effect on a nonspatial checkpoint")
+    if getattr(model,"use_spatial_context",False):
+        if not use_spatial:raise ValueError("Spatial checkpoint requires context; use a nonspatial model for ablation")
+        if spatial_k is not None and int(spatial_k)!=model.spatial_fusion.config.k:
+            raise ValueError("--spatial-k conflicts with checkpoint; retrain for a K ablation")
+        physical_xy,cfg=pp.inference_coordinates(model,xy,
+            unit=getattr(model,"inference_coordinate_unit",None),mpp=getattr(model,"inference_mpp",None))
+        request={"runtime":inference_runtime(X,physical_xy,scaler,cfg,model.spatial_fusion.mode)}
+    probs=mlp_collect_five_head_softmax_probs(model,Xs,device,neighbor_index=request)
+    classes=model.checkpoint_metadata['head_classes'];pp.validate_probabilities(probs,classes,len(X))
+    out_p={h:np.asarray(probs[k],dtype=np.float32) for h,k in PROB_KEY.items()}
+    return {"probs":out_p,"pred":{h:p.argmax(1).astype(np.int64) for h,p in out_p.items()}}
 
 
 def _scaler_section_order(ok: pd.DataFrame, seed: int) -> list:
@@ -346,7 +356,7 @@ def write_pred_h5ad(path: Path, obs_names, xy, gt_str, pred, classes) -> None:
     adata = ad.AnnData(obs=obs)
     adata.obsm["spatial_HE"] = np.asarray(xy, dtype=np.float64)
     path.parent.mkdir(parents=True, exist_ok=True)
-    adata.write_h5ad(path)
+    pp.atomic_h5ad(adata,path)
 
 
 def write_star_h5ad(path: Path, obs_names, xy, pred, classes) -> None:
@@ -361,7 +371,7 @@ def write_star_h5ad(path: Path, obs_names, xy, pred, classes) -> None:
     adata = ad.AnnData(obs=obs)
     adata.obsm["spatial_HE"] = np.asarray(xy, dtype=np.float64)
     path.parent.mkdir(parents=True, exist_ok=True)
-    adata.write_h5ad(path)
+    pp.atomic_h5ad(adata,path)
 
 
 
@@ -378,20 +388,52 @@ def _token_stamp(h5ad, cache_dir):
         data.file.close()
 
 
-def _prediction_stamp(h5ad, star_path, model, classes, embedder, cache_dir, star_tokens):
-    h5ad, star_path = resolve_repo_path(h5ad), resolve_repo_path(star_path)
-    star_manifest = feature_manifest(star_tokens, cache_dir) if star_tokens is not None else None
-    tokens = (star_manifest if h5ad == star_path and star_manifest is not None
-              else _token_stamp(h5ad, cache_dir)) if embedder == "uni2" else None
-    # Bind implementation, model metadata/scaler identity, calibration, scope and all feature inputs.
-    return digest("prediction-v2", file_digest(Path(__file__)), file_digest(_HERE/"feature_integrity.py"),
-        file_digest(_HERE/"PanCancer_train_validate_cv_UNIlabel.py"),
-        file_digest(h5ad), file_digest(star_path) if star_path.is_file() else None,
-        tokens, star_manifest, classes, embedder,
-        getattr(model,"checkpoint_weight_sha256","legacy"),
-        getattr(model,"checkpoint_metadata",{}), getattr(model,"inference_mpp",None),
-        os.environ.get("HIST2PHENO_INFERENCE_MPP"), getattr(model,"evaluation_scope","unspecified"),
-        vars(model.spatial_fusion.config) if getattr(model,"use_spatial_context",False) else None)
+def _prediction_source(h5ad,star_path,model,classes,embedder,cache_dir,star_tokens,*,identity,scaler):
+    h5ad,star_path=resolve_repo_path(h5ad),resolve_repo_path(star_path)
+    tokens=[]
+    if embedder=="uni2":
+        if h5ad==star_path and star_tokens is not None:tokens.append(star_tokens)
+        else:
+            import anndata as ad
+            from PanCancer_train_validate_cv_UNIlabel import _uni2_embedding_dir
+            data=ad.read_h5ad(h5ad,backed="r")
+            try:tokens.append(_uni2_embedding_dir(h5ad,data.uns))
+            finally:data.file.close()
+        if star_tokens is not None and str(star_tokens) not in set(map(str,tokens)):tokens.append(star_tokens)
+    if embedder=="uni":
+        import anndata as ad
+        for path in set((h5ad,star_path)):
+            if path.is_file():
+                data=ad.read_h5ad(path,backed="r")
+                try:
+                    recorded=data.uns.get("embedding_dir")
+                    if recorded:tokens.append(Path(recorded))
+                finally:data.file.close()
+    optional=[]
+    if embedder=="uni2":
+        parent=star_path.parent;sample=parent.name
+        rel=Path("ImgEmbeddings_all_stardist")/"sc_pth_14_14"
+        optional=[parent/f"{sample}_project_all_UNI2"/rel,parent/"project_all_UNI2"/rel]
+    files=[h5ad,star_path]
+    import anndata as ad
+    for file in set((h5ad,star_path)):
+        if file.is_file():
+            header=ad.read_h5ad(file,backed="r")
+            try:files.extend(pp.ground_truth_sources(header,cache_dir))
+            finally:header.file.close()
+    index_source=getattr(model,"evaluation_index_path",None)
+    if index_source:files.append(index_source)
+    data_inputs=pp.capture_inputs(files,tokens,cache_dir,optional_tokens=optional)
+    checkpoint=getattr(model,"checkpoint_source_path",None)
+    if checkpoint:files.extend([checkpoint,str(checkpoint)+".artifact.pt"])
+    return {"inputs":pp.capture_inputs(files,tokens,cache_dir,optional_tokens=optional),"data_inputs":data_inputs,"identity":identity,
+        "model":pp.model_descriptor(model,scaler,classes),"embedder":embedder,
+        "implementation":pp.implementations(),"predict_implementation":pp.sha256(Path(__file__)),
+        "coordinate_unit":getattr(model,"inference_coordinate_unit",None),
+        "mpp":getattr(model,"inference_mpp",None) or os.environ.get("HIST2PHENO_INFERENCE_MPP"),"scope":getattr(model,"evaluation_scope",None)}
+
+
+def _prediction_stamp(*args,**kwargs):return pp.fingerprint(_prediction_source(*args,**kwargs))
 
 def process_section(rec, *, model, scaler, device, classes, palettes, pred_root: Path, use_spatial, spatial_k, skip_existing, skip_figures, embedder="uni", uni2_cache_dir=None):
     dataset, sample, section_id = rec.dataset, rec.sample, rec.section_id
@@ -406,7 +448,9 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     uni2_star_ready = _stardist_uni2_dir(star_path) if embedder == "uni2" else None
     # A finished matched-cell run must not hide a later StarDist UNI2 extract.
     # 2026.10.26, content-bound completion / 新增 token、覆盖 token、丢失输出均重算
-    stamp = _prediction_stamp(h5ad, star_path, model, classes, embedder, uni2_cache_dir, uni2_star_ready)
+    identity={"section_id":str(section_id),"dataset":str(dataset),"sample":str(sample),"native_col":str(rec.native_col)}
+    source=_prediction_source(h5ad,star_path,model,classes,embedder,uni2_cache_dir,uni2_star_ready,identity=identity,scaler=scaler)
+    stamp=pp.fingerprint(source)
     required = [str((matched_dir/f"{sample}_matched_pred.h5ad").relative_to(pred_root))]
     if not skip_figures:
         required.append(str(panel_path.relative_to(pred_root)))
@@ -415,7 +459,8 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     run = completed_run(marker, stamp, pred_root, required)
     if skip_existing and run:
         print(f"  skip verified existing {section_id}", flush=True)
-        return run["row"]
+        return dict(run["row"],prediction_status="verified_cache")
+    atomic_json(marker,{"version":2,"state":"running","stamp":stamp,"outputs":[]})
     loaded = load_matched(h5ad, rec.native_col, classes, embedder=embedder, uni2_cache_dir=uni2_cache_dir)
     if loaded is None:
         print(f"  skip {section_id}: 0 kept cells", flush=True)
@@ -479,6 +524,12 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
         "evaluation_scope":getattr(model,"evaluation_scope","unspecified"),
         "checkpoint_sha256":getattr(model,"checkpoint_weight_sha256",None),
         "run_id":stamp,
+        "requested_native_col":str(rec.native_col),"native_col_used":loaded["native_col_used"],
+        "mapping_sha256":pp.fingerprint(pp.mapping_descriptor()),"model_family":pp.checkpoint_family(model.checkpoint_metadata),
+        "scaler_sha256":pp.scaler_signature(scaler),"embedder":embedder,"prediction_status":"computed",
+        "row_identity_sha256":pp.row_signature(loaded["obs_names"],loaded["xy"]),
+        "gt_sha256":pp.fingerprint(loaded["obs_names"],loaded["gt_str"]),
+        "input_sha256":pp.fingerprint(source["data_inputs"]),
         "dataset": dataset,
         "sample": sample,
         "n_matched": int(len(loaded["xy"])),
@@ -502,12 +553,12 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
         outputs.append(panel_path)
     if xy_star is not None:
         outputs.append(star_out)
-    if _prediction_stamp(rec.h5ad, star_path, model, classes, embedder, uni2_cache_dir, uni2_star_ready) != stamp:
+    if _prediction_stamp(rec.h5ad,star_path,model,classes,embedder,uni2_cache_dir,uni2_star_ready,identity=identity,scaler=scaler) != stamp:
         raise RuntimeError("Prediction inputs changed during run; retry after extraction completes")
     atomic_json(marker, {"version":2,"stamp":stamp,
         "checkpoint_sha256":getattr(model,"checkpoint_weight_sha256",None),
         "metric_source":"GT-centered matched cells; not StarDist-center ROC",
-        "outputs":output_manifest(outputs,pred_root),"row":row})
+        "outputs":output_manifest(outputs,pred_root),"row":row,"source":source})
     del loaded, got
     gc.collect()
     return row
@@ -523,22 +574,17 @@ def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_ro
     if embedder == "uni2" and uni2_star is None:
         print(f"  LungIncomplete::{sample}: no StarDist UNI2 tokens", flush=True)
         return None
-    if getattr(model,"use_spatial_context",False) and model.spatial_fusion.config.coordinates_um:
-        mpp = model.checkpoint_metadata.get("section_mpp",{}).get(str(rec.section_id))
-        if mpp is None:
-            mpp = os.environ.get("HIST2PHENO_INFERENCE_MPP")
-        if mpp is None:
-            raise ValueError("Incomplete lung requires explicit mpp calibration")
-        model.inference_mpp = float(mpp)
-    model.evaluation_scope = "unlabeled_deployment_not_oof"
-    stamp = _prediction_stamp(star_path, star_path, model, classes, embedder, uni2_cache_dir, uni2_star)
+    model.evaluation_scope="unlabeled_deployment_not_oof"
+    identity={"section_id":str(rec.section_id),"dataset":"LungIncomplete","sample":str(sample),"native_col":None}
+    source=_prediction_source(star_path,star_path,model,classes,embedder,uni2_cache_dir,uni2_star,identity=identity,scaler=scaler)
+    stamp=pp.fingerprint(source)
     marker = out_dir / "prediction_run.json"
     required = [str((out_dir/f"{sample}_all_stardist_pred.h5ad").relative_to(pred_root))]
     if not skip_figures:
         required.append(str(panel_path.relative_to(pred_root)))
     run = completed_run(marker, stamp, pred_root, required)
     if skip_existing and run:
-        return run["row"]
+        return dict(run["row"],prediction_status="verified_cache")
     star = load_stardist_all(star_path, embedder=embedder, uni2_cache_dir=uni2_cache_dir, uni2_dir=uni2_star)
     if star is None:
         return None
@@ -571,6 +617,8 @@ def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_ro
         "dataset": "LungIncomplete",
         "evaluation_scope":"unlabeled_deployment_not_oof",
         "run_id":stamp,
+        "mapping_sha256":pp.fingerprint(pp.mapping_descriptor()),"model_family":pp.checkpoint_family(model.checkpoint_metadata),
+        "scaler_sha256":pp.scaler_signature(scaler),"embedder":embedder,
         "checkpoint_sha256":getattr(model,"checkpoint_weight_sha256",None),
         "sample": sample,
         "n_matched": 0,
@@ -583,12 +631,43 @@ def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_ro
     outputs = [out_dir/f"{sample}_all_stardist_pred.h5ad"]
     if not skip_figures:
         outputs.append(panel_path)
-    if _prediction_stamp(star_path, star_path, model, classes, embedder, uni2_cache_dir, uni2_star) != stamp:
+    if _prediction_stamp(star_path,star_path,model,classes,embedder,uni2_cache_dir,uni2_star,identity=identity,scaler=scaler) != stamp:
         raise RuntimeError("Incomplete lung input changed while predicting")
-    atomic_json(marker, {"version":2,"stamp":stamp,"row":row,"outputs":output_manifest(outputs,pred_root)})
+    atomic_json(marker, {"version":2,"stamp":stamp,"row":row,"outputs":output_manifest(outputs,pred_root),"source":source})
     return row
 
 
+
+
+def predict_unlabeled_file(rec,dest,*,model,scaler,device,classes,embedder,cache_dir,force=False):
+    import anndata as ad
+    dest=Path(dest);feature=resolve_repo_path(rec.stardist_all)
+    directory=_stardist_uni2_dir(feature) if embedder=="uni2" else None
+    if embedder=="uni2" and directory is None:raise FileNotFoundError("No current UNI2 StarDist tokens")
+    model.evaluation_scope="unlabeled_deployment_not_oof"
+    identity={"section_id":str(rec.section_id),"dataset":str(rec.dataset),"sample":str(rec.sample),"native_col":None}
+    marker=dest.with_suffix(".pipeline.json");probfile=dest.with_name(str(rec.sample)+"_l2_probs.npz")
+    with pp.file_lock(str(dest)+".lock"):
+        source=_prediction_source(feature,feature,model,classes,embedder,cache_dir,directory,identity=identity,scaler=scaler)
+        stamp=pp.fingerprint(source)
+        if not force and pp.complete(marker,stamp,[dest,probfile]):return
+        pp.atomic_json(marker,{"version":pp.VERSION,"state":"running","stamp":stamp,"outputs":{}})
+        data=load_stardist_all(feature,embedder=embedder,uni2_cache_dir=cache_dir,uni2_dir=directory)
+        if data is None:raise ValueError("No valid unlabeled cells")
+        rows=pp.row_signature(data["obs_names"],data["xy"])
+        got=predict_block(model,scaler,data["X"],data["xy"],device,use_spatial=True,spatial_k=None)
+        obs=pd.DataFrame(index=pd.Index(data["obs_names"].astype(str),name="cell_id"))
+        for head,col in (("L1","pred_lineage"),("L12","pred_sublineage"),("L2","pred_CT")):
+            obs[col]=np.asarray(classes[head])[got["pred"][head]]
+        result=ad.AnnData(obs=obs);result.obsm["spatial_HE"]=data["xy"]
+        result.uns.update(pipeline_run_id=stamp,row_identity_sha256=rows,classes=classes,
+                          checkpoint_sha256=model.checkpoint_weight_sha256)
+        if _prediction_stamp(feature,feature,model,classes,embedder,cache_dir,directory,identity=identity,scaler=scaler)!=stamp:
+            raise RuntimeError("Unlabeled inputs changed during inference")
+        pp.atomic_h5ad(result,dest)
+        pp.atomic_npz(probfile,probs=got["probs"]["L2"],class_names=np.asarray(classes["L2"],dtype=str),
+                      obs_names=np.asarray(data["obs_names"]).astype(str),row_identity_sha256=np.asarray(rows),pipeline_run_id=np.asarray(stamp))
+        pp.publish(marker,stamp,[dest,probfile],source=source,row_signature=rows)
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -601,11 +680,11 @@ def parse_args(argv=None):
         "--fold",
         type=int,
         default=None,
-        help="restrict to this cross-section CV fold from fold_plan.csv (0 = held-out for best_mlp)",
+        help="restrict to the actual fold_plan entry; best_mlp may come from any fold",
     )
     p.add_argument("--max-sections", type=int, default=None)
-    p.add_argument("--no-spatial-context", action="store_true", help="disable kNN fusion (checkpoint is spatial)")
-    p.add_argument("--spatial-k", type=int, default=DEFAULT_SPATIAL_K)
+    p.add_argument("--no-spatial-context", action="store_true", help="require nonspatial checkpoint; spatial models cannot disable context")
+    p.add_argument("--spatial-k", type=int, default=None)
     p.add_argument("--cuda-device", default="0")
     p.add_argument("--allow-cpu", action="store_true")
     p.add_argument("--skip-existing", action="store_true")
@@ -625,7 +704,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--scaler-max-cells",
         type=int,
-        default=400_000,
+        default=None,
         help="partial_fit cap; 0 = all matched cells in the scaler index",
     )
     p.add_argument(
@@ -634,12 +713,26 @@ def parse_args(argv=None):
         help="fit scaler only on the sections being predicted (for smoke; do not reuse as production)",
     )
     p.add_argument("--embedder", choices=("uni", "uni2"), default="uni")
+    p.add_argument("--coordinates-unit",choices=("pixel","um"),default=os.environ.get("HIST2PHENO_INFERENCE_COORDINATES_UNIT","pixel"))
+    p.add_argument("--inference-mpp",type=float,default=None)
     p.add_argument("--deployment",action="store_true",help="Use one selected checkpoint for all sections; these are NOT OOF metrics")
-    return p.parse_args(argv)
+    args=p.parse_args(argv)
+    if args.scaler_path is not None or args.scaler_max_cells is not None or args.scaler_from_work_index:
+        p.error("Legacy scaler flags are unsupported: inference always uses checkpoint artifact scaler")
+    if args.inference_mpp is not None and (not np.isfinite(args.inference_mpp) or args.inference_mpp<=0):
+        p.error("--inference-mpp must be finite and positive")
+    if args.coordinates_unit=="um" and args.inference_mpp not in (None,1.):
+        p.error("Coordinates already in um must not be scaled by another mpp")
+    return args
 
 
 def main(argv=None) -> int:
-    args = parse_args(argv)
+    args=parse_args(argv)
+    with pp.file_lock(args.pred_root.expanduser().resolve()/".evaluation.lock"):
+        return _main(args)
+
+
+def _main(args) -> int:
     setup_cuda(args.cuda_device)
     device = _device(args.allow_cpu)
     classes = ontology_class_names()
@@ -734,7 +827,14 @@ def main(argv=None) -> int:
         pred_root = pred_root/"oof"
         pred_root.mkdir(parents=True,exist_ok=True)
 
-    rows = []
+    if index.empty:raise ValueError("No selected sections")
+    if index.section_id.duplicated().any() or index.duplicated(["dataset","sample"]).any():
+        raise ValueError("Duplicate sections/output paths")
+    family=pp.checkpoint_family(meta)
+    context={"scope":"deployment_not_oof" if args.deployment else "outer_fold_oof",
+             "mapping_sha256":pp.fingerprint(pp.mapping_descriptor()),"model_family":family,"embedder":args.embedder,
+             "checkpoint":str(ckpt),"coordinates_unit":args.coordinates_unit,"inference_mpp":args.inference_mpp}
+    audit=EvaluationRun(pred_root,index[["section_id","dataset","sample","native_col","h5ad"]].to_dict("records"),context=context)
     failures = []
     for rec in index.itertuples(index=False):
         try:
@@ -743,18 +843,14 @@ def main(argv=None) -> int:
                 model = load_model_for_predict(str(_REPO_ROOT),"PanCancer","project_all_UNI",checkpoint_path=str(fold_ckpt),device=device,hidden_dims=None,parent_dir=True)
                 scaler = checkpoint_scaler(fold_ckpt)
                 fold_meta = read_artifact(fold_ckpt,required=True)["metadata"]
+                if pp.checkpoint_family(fold_meta)!=family:raise ValueError("Mixed OOF checkpoint protocols")
                 if fold_meta.get("head_classes") != classes:
                     raise ValueError("Fold checkpoint class order mismatch")
                 if fold_meta.get("fold") != fold_lookup[str(rec.section_id)]: raise ValueError("Fold artifact mismatch")
                 if str(rec.section_id) not in fold_meta.get("held_out_sections",[]): raise ValueError("Section not held out by this artifact")
-            if getattr(model,"use_spatial_context",False) and model.spatial_fusion.config.coordinates_um:
-                mpp = model.checkpoint_metadata.get("section_mpp",{}).get(str(rec.section_id))
-                if mpp is None:
-                    explicit = os.environ.get("HIST2PHENO_INFERENCE_MPP")
-                    if explicit is None:
-                        raise ValueError(f"Missing mpp for {rec.section_id}; supply HIST2PHENO_INFERENCE_MPP or calibrated section metadata")
-                    mpp = float(explicit)
-                model.inference_mpp = mpp
+            model.evaluation_index_path=str(idx_path.resolve()) if idx_path.is_file() else None
+            model.inference_coordinate_unit=args.coordinates_unit
+            model.inference_mpp=args.inference_mpp or model.checkpoint_metadata.get("section_mpp",{}).get(str(rec.section_id))
             model.evaluation_scope="deployment_not_oof" if args.deployment else "outer_fold_oof"
             row = process_section(
                 rec,
@@ -771,23 +867,31 @@ def main(argv=None) -> int:
                 embedder=args.embedder,
                 uni2_cache_dir=uni2_cache_dir,
             )
-            if row:
-                rows.append(row)
+            if row:audit.success(rec.section_id,row)
+            else:raise ValueError("No verified matched result")
         except Exception as exc:
             import traceback
 
+            audit.failure(rec.section_id,exc)
             failures.append(str(getattr(rec,"section_id",rec)))
             print(f"  FAIL {getattr(rec, 'section_id', rec)}: {exc}", flush=True)
             traceback.print_exc()
+
+    met=audit.finish()
 
     if args.include_incomplete_lung:
         # New unlabeled sections use the explicit deployment artifact, never the last OOF fold.
         model=load_model_for_predict(str(_REPO_ROOT),"PanCancer","project_all_UNI",checkpoint_path=str(ckpt),device=device,hidden_dims=None,parent_dir=True)
         scaler=checkpoint_scaler(ckpt)
-        unlabeled_rows = []
-        for rec in discover_lung_incomplete():
+        incomplete=list(discover_lung_incomplete())
+        requests=[dict(r,dataset="LungIncomplete") for r in incomplete]
+        uncontext=dict(context,scope="unlabeled_deployment_not_oof")
+        uaudit=EvaluationRun(args.pred_root.expanduser().resolve()/"unlabeled_deployment",requests,context=uncontext)
+        for rec in incomplete:
             rec = argparse.Namespace(**rec)
             try:
+                model.inference_coordinate_unit=args.coordinates_unit
+                model.inference_mpp=args.inference_mpp or model.checkpoint_metadata.get("section_mpp",{}).get(str(rec.section_id))
                 row = process_incomplete(
                     rec,
                     model=model,
@@ -804,34 +908,22 @@ def main(argv=None) -> int:
                     uni2_cache_dir=uni2_cache_dir,
                 )
                 if row:
-                    unlabeled_rows.append(row)
+                    uaudit.success(rec.section_id,row)
+                else:uaudit.failure(rec.section_id,"No valid external features")
             except Exception as exc:
                 import traceback
 
+                uaudit.failure(rec.section_id,exc)
                 failures.append(str(rec.section_id))
                 print(f"  FAIL {rec.section_id}: {exc}", flush=True)
                 traceback.print_exc()
 
-        if unlabeled_rows:
-            unlabeled_root = args.pred_root.expanduser().resolve()/"unlabeled_deployment"
-            unlabeled_root.mkdir(parents=True,exist_ok=True)
-            pd.DataFrame(unlabeled_rows).to_csv(unlabeled_root/"metrics_per_section.csv",index=False)
+        uaudit.finish()
 
-    if rows:
-        met = pd.DataFrame(rows)
-        met_path = pred_root / "metrics_per_section.csv"
-        if met_path.is_file():
-            prev = pd.read_csv(met_path)
-            met = pd.concat([prev, met], ignore_index=True)
-            if "section_id" in met.columns:
-                met = met.drop_duplicates("section_id", keep="last")
-        met.to_csv(met_path, index=False)
-        print(f"\nWrote {met_path}  n={len(met)}", flush=True)
-        for ds, sub in met.groupby("dataset"):
-            print(
-                f"  {ds:16s}  n={len(sub):4d}  mean L2 AUROC={sub['macro_auc_L2_cells'].mean():.3f}",
-                flush=True,
-            )
+    # 2026.10.28, never concatenate older metrics / 当前 CSV 仅是本次成功结果
+    if not met.empty:
+        for ds,sub in met.groupby("dataset"):
+            print(f"{ds}: current sections={len(sub)}, mean L2 AUROC={sub.macro_auc_L2_cells.mean():.3f}",flush=True)
     print(f"Done; failures={len(failures)}", flush=True)
     return 1 if failures else 0
 

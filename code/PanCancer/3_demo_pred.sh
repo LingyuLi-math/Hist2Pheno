@@ -131,7 +131,6 @@ cmd_celltype() {
     --checkpoint "$CKPT_CELL" \
     --deployment \
     --pred-root "$OUT/pred_cell_stratified_spatial" \
-    --scaler-path "$OUT/result_cell_stratified_spatial/scaler.joblib" \
     --include-incomplete-lung \
     "${skip[@]}"
 }

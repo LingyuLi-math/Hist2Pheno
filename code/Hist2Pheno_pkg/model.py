@@ -4486,6 +4486,7 @@ def load_model_for_predict(
         model_star.checkpoint_scaler = restore_scaler(artifact["scaler"])
         model_star.checkpoint_metadata = artifact["metadata"]
         model_star.checkpoint_weight_sha256 = artifact["weight_sha256"]
+        model_star.checkpoint_source_path = str(Path(checkpoint_path).resolve())  # 2026.10.28, source binding
     model_star.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
 
     model_star.eval()

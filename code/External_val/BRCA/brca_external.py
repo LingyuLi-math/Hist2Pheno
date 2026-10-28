@@ -320,8 +320,13 @@ def plot_roi_spatial(
     x0, y0 = roi["x_min_px"], roi["y_min_px"]
     x1, y1 = roi["x_max_px"], roi["y_max_px"]
     paths = sample_paths(sample)
-    if pred is None:
-        pred = ad.read_h5ad(paths["pred"])
+    COHORT.ensure_l2_probs(sample,allow_cpu=True)  # 2026.10.28, ROI must use current prediction
+    current=ad.read_h5ad(paths["pred"])
+    if pred is not None:
+        if pred.uns.get("pipeline_run_id")!=current.uns.get("pipeline_run_id"):
+            raise ValueError("Supplied ROI prediction is stale; reload current predictions")
+    else:
+        pred=current
     if in_roi is None:
         xy = __import__("numpy").asarray(pred.obsm["spatial_HE"], dtype="float64")
         in_roi = nuclei_in_rectangle(xy, x0, y0, x1, y1)
@@ -381,8 +386,11 @@ def plot_roi_composition(
         plot_pred_composition_stacked,
     )
 
-    if pred is None:
-        pred = ad.read_h5ad(sample_paths(sample)["pred"])
+    COHORT.ensure_l2_probs(sample,allow_cpu=True)
+    current=ad.read_h5ad(sample_paths(sample)["pred"])
+    if pred is not None and pred.uns.get("pipeline_run_id")!=current.uns.get("pipeline_run_id"):
+        raise ValueError("Supplied ROI prediction is stale")
+    if pred is None:pred=current
     if in_roi is None:
         if roi_tsv is None:
             raise ValueError("Need in_roi from plot_roi_spatial, or pass roi_tsv.")

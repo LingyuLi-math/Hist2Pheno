@@ -4907,6 +4907,7 @@ def load_hist_embeddings(
     force_full_scan=False,
     load_workers=0,
     selective_strategy="batch",
+    strict=False,  # 2026.10.28, new pipelines reject unreadable/nonfinite/mixed-size tokens
 ):
     """
     Load HIPT .pth embeddings.
@@ -4999,6 +5000,13 @@ def load_hist_embeddings(
         print("  ERROR: No embeddings loaded! Please check the .pth files.")
 
     print("="*60 + "\n")
+    if strict:
+        if failed_files:raise ValueError(f"Could not load {len(failed_files)} embedding files; partial inputs are forbidden")
+        dimensions=set()
+        for value in embeddings_dict.values():
+            vector=np.asarray(value).reshape(-1);dimensions.add(vector.size)
+            if not vector.size or not np.isfinite(vector).all():raise ValueError("Embedding contains NaN/Inf or is empty")
+        if len(dimensions)>1:raise ValueError("Mixed embedding dimensions in one extraction")
     return embeddings_dict
 
 

@@ -439,7 +439,8 @@ class ExternalCohort:
                 raise FileNotFoundError(paths["csv"])
             n_rows = n_csv_rows(paths["csv"])
             have = n_pth(paths["emb"])
-            if not force and have >= int(0.9 * n_rows):
+            # 2026.10.28, replace 90% heuristic with exact extraction source/token manifest
+            if not force and _import_sibling("external_consistency").extraction_complete(self,sample):
                 print(f"[features] skip {sample}: {have:,} .pth already (FORCE=1 to redo)", flush=True)
                 continue
             paths["emb"].mkdir(parents=True, exist_ok=True)
@@ -486,9 +487,14 @@ class ExternalCohort:
             (paths["emb"].parent / f"{self.method.lower()}_geometry.json").write_text(
                 json.dumps(meta, indent=2)
             )
+            _import_sibling("external_consistency").record_extraction(self,sample)
             print(f"[features] {sample} wrote {meta['n_pth']:,} embeddings", flush=True)
 
-    def _build_one_h5ad(self, sample: str, *, force: bool) -> Path:
+    # 2026.10.28, versioned feature builder / 保留原 matching 框架，外层校验所有输入
+    def _build_one_h5ad(self,sample: str,*,force: bool) -> Path:
+        return _import_sibling("external_consistency").build_features(self,sample,force=force)
+
+    def _legacy_build_one_h5ad(self, sample: str, *, force: bool) -> Path:
         paths = self.sample_paths(sample)
         if paths["feat"].is_file() and not force:
             print(f"[h5ad] skip {sample}: {paths['feat']}", flush=True)
@@ -517,6 +523,7 @@ class ExternalCohort:
             coord_cols=("centroid_x", "centroid_y"),
             tolerance=1.0,
             pth_prefix=prefix,
+            strict=True,
         )
         matched = base.match_embeddings(
             matching,
@@ -545,7 +552,7 @@ class ExternalCohort:
         uns["n_csv"] = int(len(raw))
         adata.uns[self._uns_key] = uns
         paths["feat"].parent.mkdir(parents=True, exist_ok=True)
-        adata.write_h5ad(paths["feat"])
+        _import_sibling("pipeline_provenance").atomic_h5ad(adata,paths["feat"])
         print(f"[h5ad] {sample}: {adata.n_obs:,}/{len(raw):,} nuclei, {adata.n_vars} features", flush=True)
         return paths["feat"]
 
@@ -577,12 +584,9 @@ class ExternalCohort:
 
     # 2026.10.24, physical geometry is per slide / 外部图像不沿用训练图像的像素尺寸
     def _context_request(self,model,sample,xy):
-        cfg=vars(model.spatial_fusion.config).copy()
-        # Keep this slide's neighbor cache out of the training context_cache.
-        cfg["cache_dir"] = str(self.pred_root / "context_cache")
-        if cfg["radii_um"] or cfg["geometry"] or cfg["weighting"]=="gaussian":
-            xy=xy*float(self.geometry(sample)["mpp_um"])
-            cfg.update(coordinates_um=True,mpp=None)
+        pp=_import_sibling("pipeline_provenance")
+        xy,cfg=pp.inference_coordinates(model,xy,unit="pixel",mpp=float(self.geometry(sample)["mpp_um"]))
+        cfg["cache_dir"]=str(self.pred_root/"context_cache")
         return {"xy":xy,"config_override":cfg}
 
     def _device(self, allow_cpu: bool):
@@ -595,7 +599,16 @@ class ExternalCohort:
             return torch.device("cpu")
         raise RuntimeError("CUDA unavailable. Pass --allow-cpu.")
 
-    def cmd_predict(self, samples: list[str], *, force: bool, allow_cpu: bool) -> None:
+    def _pipeline_base(self): return _import_sibling("base")
+    def _pipeline_plot(self): return _import_sibling("plot")
+
+    def cmd_predict(self,samples: list[str],*,force: bool,allow_cpu: bool) -> None:
+        service=_import_sibling("external_consistency")
+        for sample in samples:
+            service.predict_one(self,sample,force=force,allow_cpu=allow_cpu)
+
+    # Historical implementation retained for annotations / 不再由公共入口调用
+    def _legacy_cmd_predict(self, samples: list[str], *, force: bool, allow_cpu: bool) -> None:
         ad = importlib.import_module("anndata")
         base = _import_sibling("base")
         plot = _import_sibling("plot")
@@ -666,7 +679,11 @@ class ExternalCohort:
         print(f"[probs] {path}  shape={tuple(np.asarray(probs_l2).shape)}", flush=True)
         return path
 
-    def ensure_l2_probs(self, sample: str, *, force: bool = False, allow_cpu: bool = False):
+    def ensure_l2_probs(self,sample: str,*,force: bool=False,allow_cpu: bool=False):
+        return _import_sibling("external_consistency").probabilities(self,sample,force=force,allow_cpu=allow_cpu)
+
+    # Historical cache code retained / 新入口禁止仅按 npz 存在复用
+    def _legacy_ensure_l2_probs(self, sample: str, *, force: bool = False, allow_cpu: bool = False):
         """L2 softmax used by TLS / SRI / TNI. Cached next to the pred h5ad."""
         path = self.l2_probs_path(sample)
         if path.is_file() and not force:
@@ -836,14 +853,18 @@ class ExternalCohort:
         ax.set_title(title, fontsize=11)
         ax.set_aspect("equal")
 
-    def composition_table(self, samples: list[str]) -> pd.DataFrame:
+    def composition_table(self,samples: list[str]) -> pd.DataFrame:
+        _import_sibling("external_consistency").preflight(self,samples,allow_cpu=True)
+        return self._legacy_composition_table(samples)
+
+    def _legacy_composition_table(self, samples: list[str]) -> pd.DataFrame:
         ad = importlib.import_module("anndata")
         rows = []
         for sample in samples:
             path = self.sample_paths(sample)["pred"]
             if not path.is_file():
                 raise FileNotFoundError(path)
-            obs = ad.read_h5ad(path).obs
+            obs = _import_sibling("pipeline_provenance").read_verified_prediction(path).obs
             n = len(obs)
             for head, col in OBS_COL.items():
                 counts = obs[col].astype(str).value_counts()
@@ -880,6 +901,7 @@ class ExternalCohort:
         so labels stay editable. ``marker_px`` is in display pixels at ``dpi``.
         """
         ad = importlib.import_module("anndata")
+        _import_sibling("external_consistency").preflight(self,samples,allow_cpu=True)
         import matplotlib.pyplot as plt
         from matplotlib.lines import Line2D
 
@@ -899,7 +921,7 @@ class ExternalCohort:
         figures = []
         for sample in samples:
             paths = self.sample_paths(sample)
-            adata = ad.read_h5ad(paths["pred"])
+            adata = _import_sibling("pipeline_provenance").read_verified_prediction(paths["pred"])
             xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
             spacing = self._neighbor_spacing_px(xy)
             thumb, full_w, full_h = self._he_thumbnail(paths["he"], max_side=he_max_side)

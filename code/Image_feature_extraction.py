@@ -460,7 +460,20 @@ def embed_patch_subtensors(
 #########################################################
 
 
-def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool, 
+# 2026.10.28, serialize extraction writers / 同一 embedding 目录禁止两个提取进程交叉写
+
+def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,output_img,output_pth,logging_folder,scale=DEFAULT_SCALE,save_patch_images=True):
+    import sys
+    from pathlib import Path
+    package=Path(__file__).resolve().parent/"Hist2Pheno_pkg"
+    if str(package) not in sys.path:sys.path.insert(0,str(package))
+    from pipeline_provenance import file_lock
+    with file_lock(Path(output_pth)/".extraction.lock"):
+        return _main_extraction(dataset,position_path,rawimage_path,scale_image,method,patch_size,
+            output_img,output_pth,logging_folder,scale,save_patch_images)
+
+
+def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale_image: bool, 
          method: str, patch_size: int, output_img: str, output_pth: str, 
          logging_folder: str, scale: float = DEFAULT_SCALE,
          save_patch_images: bool = True):
@@ -579,6 +592,18 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
     ...     scale=0.5
     ... )
     """
+    # 2026.10.28, extraction transaction / 未完成或失败提取不可被下游采用
+    import sys as _pipeline_sys
+    from pathlib import Path as _PipelinePath
+    _pkg=_PipelinePath(__file__).resolve().parent/"Hist2Pheno_pkg"
+    if str(_pkg) not in _pipeline_sys.path:_pipeline_sys.path.insert(0,str(_pkg))
+    import pipeline_provenance as _pp
+    _embedding_root=_PipelinePath(output_pth)
+    _embedding_root.mkdir(parents=True,exist_ok=True)
+    _extraction_marker=_embedding_root/"embedding_manifest.json"
+    _pp.atomic_json(_extraction_marker,{"state":"writing","version":_pp.VERSION})
+    _extractor_implementation_sha=_pp.sha256(__file__)
+    _source_inputs={"image":_pp.file_record(rawimage_path,_embedding_root/".provenance"),"positions":_pp.file_record(position_path,_embedding_root/".provenance")}
     # Create the folder with a unique timestamp
     dir_name = logging_folder + datetime.now().strftime('%Y%m%d%H%M%S%f')
     os.makedirs(dir_name, exist_ok=True)
@@ -669,6 +694,7 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
     step = get_logging_step(len(coordinates))
 
     start_time = time.time()
+    _fresh_patch_names=[]
     if save_patch_images:
         os.makedirs(output_img, exist_ok=True)
         for i, stem, patch in iter_valid_patches(
@@ -677,6 +703,7 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
             if i % step == 0:
                 logger.info(f"patch_name: {i}, {stem}.png")
             patch.save(os.path.join(output_img, f"{stem}.png"))
+            _fresh_patch_names.append(f"{stem}.png")
         logger.info(f"Image segmentation time: {time.time() - start_time:.2f} seconds")
     else:
         logger.info(
@@ -841,6 +868,7 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
             num_classes=0, 
             dynamic_img_size=True
         )
+        _encoder_record=_pp.file_record(weight_file,_embedding_root/".provenance")
         model.load_state_dict(torch.load(weight_file, map_location="cpu"), strict=True)
 
         def eval_transforms():
@@ -953,6 +981,7 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
             dynamic_img_size=True,
             pretrained=False,
         )
+        _encoder_record=_pp.file_record(weight_file,_embedding_root/".provenance")
         model.load_state_dict(torch.load(weight_file, map_location="cpu"), strict=True)
 
         def eval_transforms():
@@ -1064,9 +1093,10 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
 
     start_time = time.time()
     n_saved = 0
+    _written_names=[]
     with torch.inference_mode():
         if save_patch_images:
-            patches_list = os.listdir(output_img)
+            patches_list = _fresh_patch_names  # 2026.10.28, never include stale PNG crops
             step = get_logging_step(len(patches_list))
             for i, patch in enumerate(patches_list):
                 patch_base_name, _extension = os.path.splitext(patch)
@@ -1078,7 +1108,10 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
                 saved_name = patch_base_name + ".pth"
                 if i % step == 0:
                     logger.info(f"saved_name: {i}, {saved_name}")
+                if any(not torch.isfinite(value).all() for value in subtensors_list):
+                    raise ValueError("Encoder produced NaN/Inf; extraction remains incomplete")
                 torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                _written_names.append(saved_name)
                 n_saved += 1
         else:
             step = get_logging_step(len(coordinates))
@@ -1091,9 +1124,32 @@ def main(dataset: str, position_path: str, rawimage_path: str, scale_image: bool
                 saved_name = f"{stem}.pth"
                 if i % step == 0:
                     logger.info(f"saved_name: {i}, {saved_name}")
+                if any(not torch.isfinite(value).all() for value in subtensors_list):
+                    raise ValueError("Encoder produced NaN/Inf; extraction remains incomplete")
                 torch.save(subtensors_list, os.path.join(output_pth, saved_name))
+                _written_names.append(saved_name)
                 n_saved += 1
 
+    # 2026.10.28, quarantine obsolete tokens / 可恢复地移走本轮没有产生的旧 token
+    if not _written_names:raise RuntimeError("Extraction produced no current embeddings")
+    if _source_inputs!={"image":_pp.file_record(rawimage_path,_embedding_root/".provenance"),"positions":_pp.file_record(position_path,_embedding_root/".provenance")}:
+        raise RuntimeError("Image/positions changed during extraction")
+    import shutil as _pipeline_shutil
+    _current=set(_written_names)
+    _archive=_embedding_root/"previous_embeddings"/datetime.now().strftime("%Y%m%d%H%M%S%f")
+    for _old in _embedding_root.glob("*.pth"):
+        if _old.name not in _current:
+            _archive.mkdir(parents=True,exist_ok=True);_pipeline_shutil.move(str(_old),str(_archive/_old.name))
+    if _pp.sha256(__file__)!=_extractor_implementation_sha:raise RuntimeError("Extraction code changed during run")
+    _manifest=_pp.feature_manifest(_embedding_root,_embedding_root/".provenance",allow_active=True)
+    _weight=locals().get("weight_file")
+    _encoder=locals().get("_encoder_record") or (_pp.file_record(_weight,_embedding_root/".provenance") if _weight else None)
+    if _encoder and _pp.file_record(_encoder["path"],_embedding_root/".provenance")!=_encoder:
+        raise RuntimeError("Encoder weights changed during extraction")
+    _pp.atomic_json(_extraction_marker,{"state":"completed","version":_pp.VERSION,
+        "inputs":_source_inputs,"method":method,"patch_size":patch_size,
+        "scale_image":bool(scale_image),"scale":float(scale),"encoder_weights":_encoder,
+        "extractor_sha256":_extractor_implementation_sha,"runtime":{"torch":torch.__version__,"numpy":np.__version__},"tokens":_manifest,"n_saved":n_saved})
     end_time = time.time()
     execution_time = end_time - start_time
     logger.info(

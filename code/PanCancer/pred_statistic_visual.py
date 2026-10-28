@@ -211,6 +211,7 @@ def load_paired_v2_deployment(repo: Path) -> pd.DataFrame:
     """Matched-cell metrics for each architecture's single best_mlp on all sections."""
     frames = []
     section_ids = None
+    reference_identity=None
     for spec in PAIRED_V2_DEPLOYMENT:
         pred = repo / "data" / "PanCancer" / spec["pred"]
         path = pred / "metrics_per_section.csv"
@@ -220,6 +221,40 @@ def load_paired_v2_deployment(repo: Path) -> pd.DataFrame:
         if not ckpt.is_file():
             raise FileNotFoundError(ckpt)
         df = pd.read_csv(path)
+        # 2026.10.28, validate actual weights + live input chain / 新权重不能挂旧结果
+        import sys
+        pkg=Path(__file__).resolve().parents[1]/"Hist2Pheno_pkg"
+        if str(pkg) not in sys.path:sys.path.insert(0,str(pkg))
+        import pipeline_provenance as pp
+        from feature_integrity import completed_run
+        from checkpoint_artifact import read_artifact,restore_scaler
+        artifact=read_artifact(ckpt,required=True)
+        expected_sha=artifact["weight_sha256"]
+        audit=json.loads((pred/"evaluation_run.json").read_text())
+        if audit.get("state")!="completed" or audit.get("n_success")!=audit.get("n_requested"):
+            raise ValueError(f"{spec['arch']}: incomplete evaluation; rerun prediction")
+        if audit.get("metrics_sha256")!=pp.sha256(path):raise ValueError("Metrics CSV was modified after evaluation")
+        if set(df["checkpoint_sha256"].astype(str))!={expected_sha}:
+            raise ValueError(f"{spec['arch']}: metrics checkpoint SHA differs from actual weight")
+        for record in df.to_dict("records"):
+            marker=pred/"matched"/str(record["dataset"])/str(record["sample"])/"prediction_run.json"
+            run=completed_run(marker,record["run_id"],pred)
+            if run is None:raise ValueError(f"Invalid prediction outputs for {record['section_id']}")
+            source=run["source"]
+            if not pp.inputs_current(source["inputs"],pred/".provenance"):
+                raise ValueError(f"Updated embedding/GT/model inputs for {record['section_id']}; rerun predict")
+            if source["implementation"]!=pp.implementations():raise ValueError("Inference implementation changed; rerun predict")
+            if source["predict_implementation"]!=pp.sha256(Path(__file__).parent/"PanCancer_predict_visualize.py"):
+                raise ValueError("Prediction implementation changed")
+            if source["model"]["metadata"]!=pp.fingerprint(artifact["metadata"]):raise ValueError("Checkpoint metadata changed")
+            if record["scaler_sha256"]!=pp.scaler_signature(restore_scaler(artifact["scaler"])):
+                raise ValueError("Metrics scaler differs from actual artifact")
+            if str(record["execution_id"])!=audit["execution_id"]:raise ValueError("Mixed execution rows")
+            for key in ("row_identity_sha256","gt_sha256","input_sha256","mapping_sha256","checkpoint_sha256"):
+                if str(record[key])!=str(run["row"][key]):raise ValueError("Metrics row differs from validated marker")
+        identity=df.set_index("section_id")[["row_identity_sha256","gt_sha256","input_sha256","mapping_sha256","requested_native_col"]].sort_index()
+        if reference_identity is None:reference_identity=identity
+        elif not identity.equals(reference_identity):raise ValueError("Models evaluated different cells/GT/feature versions")
         if df["section_id"].duplicated().any():
             raise ValueError(f"{spec['arch']} has duplicate section_id rows")
         scopes = set(df["evaluation_scope"].astype(str))

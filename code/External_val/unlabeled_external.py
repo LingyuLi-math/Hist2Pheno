@@ -227,11 +227,11 @@ def _matched_h5ad(sample: str) -> Path:
 
 def _lung_ranks_path(embedder: str = "uni") -> Path:
     if embedder == "uni2":
-        return UNI2_PRED / "Lung_Incomplete" / "ranks_matched.csv"
+        return _uni2_pred_root() / "Lung_Incomplete" / "ranks_matched.csv"
     return LUNG_RANKS
 
 
-def rank_lung_incomplete(
+def _legacy_rank_lung_incomplete(
     *,
     compute: bool = False,
     force: bool = False,
@@ -244,7 +244,7 @@ def rank_lung_incomplete(
     Three slides (TILD028LA, TILD049MA, VUHD038) have no matched h5ad.
     """
     ranks_path = _lung_ranks_path(embedder)
-    if ranks_path.is_file() and not force:
+    if False and ranks_path.is_file() and not force:  # 2026.10.28, legacy ranks lack provenance; recompute explicitly
         tab = pd.read_csv(ranks_path)
         return tab.sort_values(["rank_ds", "sample"], na_position="last").reset_index(drop=True)
     if not compute:
@@ -256,6 +256,7 @@ def rank_lung_incomplete(
 
     classes = ontology_class_names()
     model, scaler, device = _load_model(cuda_device, allow_cpu, embedder=embedder)
+    classes=model.checkpoint_metadata["head_classes"]
     rows = []
     for sample in discover_samples("Lung_Incomplete"):
         path = _matched_h5ad(sample)
@@ -288,7 +289,7 @@ def rank_lung_incomplete(
             rows.append(rec)
             continue
         got = predict_block(
-            model, scaler, loaded["X"], loaded["xy"], device, use_spatial=True, spatial_k=8
+            model, scaler, loaded["X"], loaded["xy"], device, use_spatial=True, spatial_k=None
         )
         rec["n_matched"] = int(loaded["X"].shape[0])
         for head in HEADS:
@@ -320,6 +321,42 @@ def rank_lung_incomplete(
     print(f"wrote {ranks_path}", flush=True)
     return tab
 
+
+
+def _rank_source(embedder):
+    import anndata as ad
+    import pipeline_provenance as pp
+    from PanCancer_train_validate_cv_UNIlabel import _uni2_embedding_dir
+    files=[_ckpt(embedder),Path(str(_ckpt(embedder))+".artifact.pt")];tokens=[]
+    for sample in discover_samples("Lung_Incomplete"):
+        h=_matched_h5ad(sample)
+        if not h.is_file():continue
+        files.append(h);a=ad.read_h5ad(h,backed="r")
+        try:
+            if embedder=="uni2":tokens.append(_uni2_embedding_dir(h,a.uns))
+            elif a.uns.get("embedding_dir"):tokens.append(Path(a.uns["embedding_dir"]))
+        finally:a.file.close()
+    return {"inputs":pp.capture_inputs(files,tokens,UNI2_CACHE),"embedder":embedder,
+            "unit":os.environ.get("HIST2PHENO_INFERENCE_COORDINATES_UNIT","pixel"),
+            "mpp":os.environ.get("HIST2PHENO_INFERENCE_MPP"),"implementation":pp.implementations(),
+            "ranking_code":pp.sha256(__file__)}
+
+
+def rank_lung_incomplete(*,compute=False,force=False,cuda_device="0",allow_cpu=False,embedder="uni"):
+    import pipeline_provenance as pp
+    path=_lung_ranks_path(embedder);marker=path.with_suffix(".pipeline.json")
+    with pp.file_lock(str(path)+".lock"):
+        try:source=_rank_source(embedder)
+        except (OSError,RuntimeError):
+            if not compute:return pd.DataFrame()
+            raise
+        stamp=pp.fingerprint(source)
+        if not force and pp.complete(marker,stamp,[path]):return pd.read_csv(path)
+        if not compute:return pd.DataFrame()
+        result=_legacy_rank_lung_incomplete(compute=True,force=True,cuda_device=cuda_device,allow_cpu=allow_cpu,embedder=embedder)
+        if _rank_source(embedder)!=source:raise RuntimeError("Ranking inputs changed")
+        pp.publish(marker,stamp,[path],source=source)
+        return result
 
 def viz_samples(name: str, n: int | None = None, embedder: str = "uni") -> list[str]:
     """Lung: all Incomplete_Cases, top-5 L2 AUROC first. Others: largest ``VIZ_N``."""
@@ -513,13 +550,16 @@ def _save_png_pdf(fig, path: Path, *, dpi: int) -> Path:
 
 
 def composition_table(name: str, samples: list[str], embedder: str = "uni") -> pd.DataFrame:
+    cmd_predict(name,samples,cuda_device=os.environ.get("CUDA_DEVICE","0"),force=False,allow_cpu=True,embedder=embedder)
     import anndata as ad
+    import pipeline_provenance as pp
 
     cohort = _cohort(name, embedder)
     rows = []
     for sample in samples:
         path = pred_h5ad(cohort, sample)
-        adata = ad.read_h5ad(path)
+        from pipeline_provenance import read_verified_prediction
+        adata = read_verified_prediction(path)
         for head in HEADS:
             lab = adata.obs[OBS_COL[head]].astype(str)
             n = max(int(len(lab)), 1)
@@ -548,6 +588,7 @@ def plot_spatial(
     he_max_side: int = 1400,
     marker_px: float = 1.0,
 ):
+    cmd_predict(name,samples,cuda_device=os.environ.get("CUDA_DEVICE","0"),force=False,allow_cpu=True,embedder=embedder)
     import anndata as ad
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
@@ -560,7 +601,8 @@ def plot_spatial(
         fig_dir.mkdir(parents=True, exist_ok=True)
     figures = []
     for sample in samples:
-        adata = ad.read_h5ad(pred_h5ad(cohort, sample))
+        from pipeline_provenance import read_verified_prediction
+        adata = read_verified_prediction(pred_h5ad(cohort,sample))
         xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
         he = he_path(cohort, sample)
         thumb = _he_thumbnail(he, he_max_side) if he is not None else None
@@ -782,7 +824,7 @@ def _load_model(cuda_device: str, allow_cpu: bool, embedder: str = "uni"):
     return model, scaler, device
 
 
-def cmd_predict(
+def _legacy_cmd_predict(
     name: str,
     samples: list[str],
     *,
@@ -843,13 +885,36 @@ def cmd_predict(
             print(f"  FAIL {sample}: could not load {feat}", flush=True)
             continue
         got = predict_block(
-            model, scaler, star["X"], star["xy"], device, use_spatial=True, spatial_k=8
+            model, scaler, star["X"], star["xy"], device, use_spatial=True, spatial_k=None
         )
         write_star_h5ad(dest, star["obs_names"], star["xy"], got["pred"], classes)
         print(f"  {sample}: n={star['n']:,}  {dest}", flush=True)
         del star, got
         gc.collect()
 
+
+
+def cmd_predict(name,samples,*,cuda_device,force,allow_cpu,embedder="uni"):
+    # 2026.10.28, no existence-only skip / 无标签分支复用同一套输入/模型/概率事务
+    from PanCancer_predict_visualize import predict_unlabeled_file
+    import pipeline_provenance as pp
+    from types import SimpleNamespace
+    cohort=_cohort(name,embedder)
+    model,scaler,device=_load_model(cuda_device,allow_cpu,embedder=embedder)
+    classes=model.checkpoint_metadata["head_classes"]
+    failures=[]
+    for sample in samples:
+        try:
+            feat=_feat_h5ad(cohort,sample)
+            if not feat.is_file():raise FileNotFoundError(feat)
+            model.inference_coordinate_unit=os.environ.get("HIST2PHENO_INFERENCE_COORDINATES_UNIT","pixel")
+            model.inference_mpp=model.checkpoint_metadata.get("section_mpp",{}).get(f"{name}::{sample}")
+            rec=SimpleNamespace(dataset=name,sample=sample,section_id=f"{name}::{sample}",stardist_all=feat)
+            predict_unlabeled_file(rec,pred_h5ad(cohort,sample),model=model,scaler=scaler,device=device,
+                classes=classes,embedder=embedder,cache_dir=UNI2_CACHE,force=force)
+        except Exception as exc:
+            failures.append((sample,str(exc)));print(f"FAIL {sample}: {exc}",flush=True)
+    if failures:raise RuntimeError(f"Unlabeled prediction failed: {failures}")
 
 def cmd_plot(name: str, samples: list[str], *, save: bool, embedder: str = "uni") -> None:
     import matplotlib.pyplot as plt
