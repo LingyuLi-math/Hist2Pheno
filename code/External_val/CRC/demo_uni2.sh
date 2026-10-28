@@ -6,7 +6,7 @@
 ## Those stay with code/External_val/CRC/demo.sh (UNI, patch_size=16).
 ##
 ##   bash code/External_val/CRC/demo_uni2.sh dry-run
-##   bash CUDA_DEVICE=0 code/External_val/CRC/demo_uni2.sh all
+##   CUDA_DEVICE=0 bash code/External_val/CRC/demo_uni2.sh all
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=...   One slide: SAMPLE=...
 ##

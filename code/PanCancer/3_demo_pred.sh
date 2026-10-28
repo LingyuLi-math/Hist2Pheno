@@ -5,34 +5,45 @@
 ##   bash code/PanCancer/3_demo_pred.sh section  {predict|repredict|crc}
 ##   bash code/PanCancer/3_demo_pred.sh celltype {predict|repredict}
 ##   bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3}
-##   CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A3
+##   CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A0
+##   CUDA_DEVICE=1 bash code/PanCancer/3_demo_pred.sh uni2 A1
+##   CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh uni2 A2
+##   CUDA_DEVICE=3 bash code/PanCancer/3_demo_pred.sh uni2 A3
+##
+## If CUDA_DEVICE is unset, uni2 A0–A3 use cards 0–3. An explicit
+## CUDA_DEVICE overrides that pin. section/celltype stay on card 2.
 ##
 ## section/celltype use the published UNI checkpoints.
-## 2026.10.26 correction: A0–A3 now default OOF; old descriptions below are retained as history.
-## uni2 A0 and A1 are OOF: each section is scored by the fold that held it out.
-## uni2 A3 is deployment: best_mlp_gpu.pt (fold 0) scores every training section.
-## That number is not the five-model pooled OOF. Figures are skipped; ROC CSVs
-## are written from matched GT cells. All-nuclei StarDist maps need UNI2 tokens
-## under ImgEmbeddings_all_stardist/sc_pth_14_14, which are not required here.
-## Train commands are in 1_demo_train.sh.
+## 2026.10.27: uni2 A0–A3 each load that run's best_mlp_gpu.pt
+## (paired_v2_seed42). Training copied the selected fold into that file:
+## A0 fold 0, A1 fold 0, A2 fold 1, A3 fold 0. Default PREDICTION_MODE=deployment
+## applies that one weight to every section.
+## 2026.10.26 history: the script briefly defaulted to OOF, which scores each
+## section with the fold that held it out, not with best_mlp. Set
+## PREDICTION_MODE=oof to get that behaviour.
+## Figures are skipped; ROC CSVs are written from matched GT cells.
 
 ########################################################
 # 2026.10.26 Cross-section CV Predict
 ########################################################
-# bash code/PanCancer/3_demo_pred.sh section predict
-# bash code/PanCancer/3_demo_pred.sh section repredict
-# bash code/PanCancer/3_demo_pred.sh section crc
-# bash code/PanCancer/3_demo_pred.sh celltype predict
-# bash code/PanCancer/3_demo_pred.sh celltype repredict
-# bash code/PanCancer/3_demo_pred.sh uni2 A0
-# bash code/PanCancer/3_demo_pred.sh uni2 A1
-# bash code/PanCancer/3_demo_pred.sh uni2 A3     # use -- LLY
+# CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh section predict
+# CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh section repredict
+# CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh section crc
+# CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh celltype predict
+# CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh celltype repredict
+# CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A0   # best_mlp, fold 0
+# CUDA_DEVICE=1 bash code/PanCancer/3_demo_pred.sh uni2 A1   # best_mlp, fold 0
+# CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh uni2 A2   # best_mlp, fold 1
+# CUDA_DEVICE=3 bash code/PanCancer/3_demo_pred.sh uni2 A3   # best_mlp, fold 0
 
 
 set -euo pipefail
 
 REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 OUT="$REPO/data/PanCancer"
+# 2026.10.28, remember whether the caller pinned a card / uni2 未指定时用 0–3
+CUDA_DEVICE_WAS_SET=0
+[[ -n "${CUDA_DEVICE+x}" ]] && CUDA_DEVICE_WAS_SET=1
 CUDA_DEVICE="${CUDA_DEVICE:-2}"
 CONDA_ENV="${CONDA_ENV:-SeededNTM}"
 cd "$REPO"
@@ -129,6 +140,15 @@ cmd_uni2() {
   local which=$1
   local ckpt root log
   local -a extra=()
+  # 2026.10.28, A0–A3 default cards 0–3 / 调用前已设 CUDA_DEVICE 则不改
+  if [[ "$CUDA_DEVICE_WAS_SET" -eq 0 ]]; then
+    case "$which" in
+      A0) CUDA_DEVICE=0 ;;
+      A1) CUDA_DEVICE=1 ;;
+      A2) CUDA_DEVICE=2 ;;
+      A3) CUDA_DEVICE=3 ;;
+    esac
+  fi
   case "$which" in
     A0)
       ckpt="$OUT/result_uni2_A0_legacy_nospatial/cross_dataset_cv/A0_legacy_nospatial/best_mlp_gpu.pt"
@@ -158,12 +178,14 @@ cmd_uni2() {
       die "uni2 predict must be A0 | A1 | A2 | A3"
       ;;
   esac
-  # 2026.10.26, uniform A0–A3 evaluation / 历史 A3 deployment 注释保留，以此处为准
+  # 2026.10.26, rewrite onto paired_v2_seed42 / 上面的无后缀路径是重训前的目录
+  # 2026.10.27, default deployment uses best_mlp_gpu.pt / 旧默认 oof 不用这一份权重
+  local mode="${PREDICTION_MODE:-deployment}"
   local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
   ckpt="${ckpt/\/cross_dataset_cv\//_${suffix}/cross_dataset_cv/}"
-  root="${root}_${suffix}_${PREDICTION_MODE:-oof}"
-  log="${log%.log}_${suffix}_${PREDICTION_MODE:-oof}.log"
-  case "${PREDICTION_MODE:-oof}" in
+  root="${root}_${suffix}_${mode}"
+  log="${log%.log}_${suffix}_${mode}.log"
+  case "${mode}" in
     oof) ;;
     deployment) extra+=(--deployment) ;;
     *) die "PREDICTION_MODE must be oof or deployment" ;;

@@ -4929,11 +4929,13 @@ def load_hist_embeddings(
     embedding_dir = Path(embedding_dir)
     pth_cap = int(os.environ.get("ESCCAI_EMBEDDING_PTH_CAP", "400000"))
 
+    # 2026.10.26, print label / 历史打印是 “Loading HIPT embeddings”；同一函数也加载 UNI 与 UNI2 的 .pth
     if celltype_df is not None and not force_full_scan:
         pth_files, hit_cap = _list_pth_paths_capped(embedding_dir, cap=pth_cap)
         if not hit_cap:
             print(
-                f"Loading HIPT embeddings (full scan: {len(pth_files):,} .pth files, cap={pth_cap:,}; "
+                f"Loading embeddings from {embedding_dir} "
+                f"(full scan: {len(pth_files):,} .pth files, cap={pth_cap:,}; "
                 "skipping selective path probe)."
             )
             embeddings_dict, failed_files = load_embeddings(
@@ -4941,7 +4943,8 @@ def load_hist_embeddings(
             )
         else:
             print(
-                f"Loading HIPT embeddings from .pth files (selective mode; ≥{pth_cap:,} files)..."
+                f"Loading embeddings from {embedding_dir} "
+                f"(selective mode; ≥{pth_cap:,} files)..."
             )
             embeddings_dict, failed_files = load_embeddings_selective(
                 celltype_df,
@@ -4963,7 +4966,7 @@ def load_hist_embeddings(
                     pth_files, pth_prefix=pth_prefix, load_workers=load_workers
                 )
     else:
-        print("Loading HIPT embeddings from .pth files (full directory scan)...")
+        print(f"Loading embeddings from {embedding_dir} (full directory scan)...")
         pth_files = list(embedding_dir.glob("*.pth"))
         embeddings_dict, failed_files = load_embeddings(
             pth_files, pth_prefix=pth_prefix, load_workers=load_workers

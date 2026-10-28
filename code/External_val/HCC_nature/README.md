@@ -86,3 +86,7 @@ L-8012 zoom box (native HE pixels, left edge of the first crop, right edge exten
 | `pred_pancancer_section/figures/HCC_nature_NK_IF_vs_TC.png` | NK fraction at IF vs TC, all slides |
 
 `Pred_visual_hcc_nature.ipynb` is the full 17-slide notebook (spatial maps, L-8012 zoom, IF/TC analogue, TLS / SRI / TNI). `Pred_visual_hcc_nature_ready.ipynb` is the same plots restricted to the first five slides. `SAVE_FIGURES = False` only displays them; saved PNGs/CSV go under `pred_pancancer_section/figures/` (ready notebook: `figures_ready/`). There is no ROC: these slides have no ground-truth cell type.
+
+## UNI2 paired_v2 best weights
+
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` and `predict_ready_uni2.sh` use A3. A2 is `demo_uni2_A2.sh` and `predict_ready_uni2_A2.sh`. Outputs are under `data/Visium/HCC/nature_data/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_hcc_nature_uni2.ipynb` and `Pred_visual_hcc_nature_uni2_A3.ipynb` read A3, as do the `*_ready_uni2.ipynb` and `*_ready_uni2_A3.ipynb` notebooks. `Pred_visual_hcc_nature_uni2_A2.ipynb` and `*_ready_uni2_A2.ipynb` read A2.

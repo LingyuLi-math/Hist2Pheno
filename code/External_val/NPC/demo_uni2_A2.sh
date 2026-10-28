@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
-## NPC external validation — UNI2 A2 (adjacent loss, spatial k=8 mean, no gate).
-## Reuses project_all_UNI2 tokens. Does not rewrite A3 predictions.
+## 2026.10.27 NPC external validation — this retrain's UNI2 A2 best_mlp
 ##
-##   CUDA_DEVICE=0 bash code/External_val/NPC/demo_uni2_A2.sh predict
-##   SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=0 bash code/External_val/NPC/demo_uni2_A2.sh predict
-## Figures: code/External_val/NPC/Pred_visual_npc_uni2_A2.ipynb
+## Weight: result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42
+##         cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt
+## That file is fold 1 (best three-tier sum). Pooled OOF L2 macro AUROC was 0.8894.
+## Spatial k=8 mean, no gate. The checkpoint metadata supplies the neighbor config.
+##
+## 2026.10.27 STAR_PROB_MIN=0.40. Both slides' probability histogram is flat
+## from about 0.30 to 0.40 and rises after that, so 0.40 is the right edge of
+## the valley between the prob=0.01 tail and the nucleus mode.
+## The unfiltered predictions stay in pred_uni2_A2_bestmlp_paired_v2_seed42.
+##
+## Does not rewrite:
+##   data/Visium/NPC/project_all_UNI2
+##
+##   bash code/External_val/NPC/demo_uni2_A2.sh dry-run
+##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A2.sh predict
+## One slide: SAMPLE=20210809-C-AH4199551
+## Redo a finished prediction: FORCE=1
+##
 
 set -euo pipefail
 
@@ -13,9 +27,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../log_run.sh"
 
 REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
-CUDA_DEVICE="${CUDA_DEVICE:-0}"
+CUDA_DEVICE="${CUDA_DEVICE:-2}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
-export CUDA_DEVICE
+
+export UNI2_CKPT="${REPO}/data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
+export UNI2_PRED_DIRNAME="pred_uni2_A2_bestmlp_paired_v2_seed42_prob0.40"
+export STAR_PROB_MIN="${STAR_PROB_MIN:-0.40}"
 
 if [[ -z "${PYTHON:-}" ]]; then
   for cand in \
@@ -46,13 +63,16 @@ fi
 
 usage() {
   cat <<EOF
-Usage: bash code/External_val/NPC/demo_uni2_A2.sh {dry-run|predict|probs|plot|all}
+Usage: bash code/External_val/NPC/demo_uni2_A2.sh {dry-run|features|h5ad|predict|probs|plot|all}
 
-Checkpoint: data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean/.../best_mlp_gpu.pt
-Embeddings (already extracted): data/Visium/NPC/project_all_UNI2/
-Outputs: data/Visium/NPC/pred_uni2_A2_bestmlp/
-A3 predictions in pred_uni2_A3_bestmlp/ are left unchanged.
-Log: code/log/external_val_npc_uni2_A2.log
+Checkpoint: \${UNI2_CKPT}
+Outputs:
+  data/Visium/NPC/project_all_UNI2/{sample}/ImgEmbeddings_all_stardist/sc_pth_14_14/
+  data/Visium/NPC/${UNI2_PRED_DIRNAME}/{sample}/{sample}_stardist_pred.h5ad
+  data/Visium/NPC/${UNI2_PRED_DIRNAME}/{sample}/{sample}_l2_probs.npz
+
+Notebook: code/External_val/NPC/Pred_visual_npc_uni2_A2.ipynb
+Log: code/log/external_val_npc_uni2_A2_paired_v2_seed42.log
 EOF
 }
 
@@ -62,51 +82,21 @@ if [[ -z "${STEP}" ]]; then
 fi
 
 cd "${REPO}"
-export PYTHONPATH="${REPO}/code${PYTHONPATH:+:${PYTHONPATH}}"
 
 run_step() {
   extval_time_step "NPC-UNI2-A2" "$1" \
-    "${PYTHON}" -u - "$1" "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}" <<'PY'
-import shutil
-import sys
-from pathlib import Path
-
-from Hist2Pheno_pkg.external_validation import simple_cohort
-
-repo = Path("/home/lingyu/ssd2/Python/Hist2Pheno")
-step = sys.argv[1]
-argv = sys.argv[2:]
-cohort = simple_cohort("NPC", repo, "uni2")
-cohort.pred_dirname = "pred_uni2_A2_bestmlp"
-cohort.checkpoint = (
-    repo
-    / "data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean"
-    / "cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
-)
-cohort.scaler = Path(str(cohort.checkpoint) + ".artifact.pt")
-if not cohort.checkpoint.is_file():
-    raise SystemExit(f"missing A2 checkpoint: {cohort.checkpoint}")
-
-# Same UNI2 matrix as A3. Copy it so predict does not rematch 140k .pth files.
-src_root = cohort.data_root / "pred_uni2_A3_bestmlp"
-for sample in cohort.discover_samples():
-    src = src_root / sample / f"{sample}_stardist_features.h5ad"
-    dst = cohort.sample_paths(sample)["feat"]
-    if src.is_file() and not dst.is_file():
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        print(f"[h5ad] copied A3 features -> {dst}", flush=True)
-
-raise SystemExit(cohort.main([step, *argv]))
-PY
+    "${PYTHON}" -u code/Hist2Pheno_pkg/external_validation.py NPC uni2 "$1" \
+      "${SAMPLE_ARG[@]}" "${FORCE_ARG[@]}"
 }
 
 run_steps() {
   case "${STEP}" in
-    dry-run|predict|probs|plot)
+    dry-run|features|h5ad|predict|probs|plot)
       run_step "${STEP}" || return $?
       ;;
     all)
+      run_step features || return $?
+      run_step h5ad || return $?
       run_step predict || return $?
       ;;
     *)
@@ -116,4 +106,4 @@ run_steps() {
   esac
 }
 
-extval_run_logged "${REPO}/code/log/external_val_npc_uni2_A2.log" "NPC-UNI2-A2" "${STEP}" run_steps
+extval_run_logged "${LOG:-${REPO}/code/log/external_val_npc_uni2_A2_paired_v2_seed42.log}" "NPC-UNI2-A2" "${STEP}" run_steps

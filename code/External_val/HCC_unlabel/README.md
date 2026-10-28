@@ -18,3 +18,12 @@ CUDA_DEVICE=0 bash code/External_val/HCC_unlabel/demo.sh predict
 ```
 
 `ALL=1` scores all 8. Open `Pred_visual_hcc_unlabel.ipynb`.
+
+UNI2 uses this retrain's best weight, one architecture at a time. A2 is fold 1, A3 is fold 0. The morning unsuffixed A3 checkpoint is not used.
+
+```bash
+CUDA_DEVICE=2 bash code/External_val/HCC_unlabel/demo_uni2_A2.sh predict
+CUDA_DEVICE=3 bash code/External_val/HCC_unlabel/demo_uni2_A3.sh predict
+```
+
+Notebooks: `Pred_visual_hcc_unlabel_uni2_A2.ipynb`, `Pred_visual_hcc_unlabel_uni2_A3.ipynb`.

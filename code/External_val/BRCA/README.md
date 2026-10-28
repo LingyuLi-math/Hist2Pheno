@@ -103,3 +103,14 @@ conda run --no-capture-output -n SeededNTM python -u \
 ```
 
 Outputs next to the JPEGs: `HE_images/{sample}_qupath.tif`. Open those in QuPath.
+
+## UNI2 paired_v2 best weights
+
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A3.
+
+```bash
+CUDA_DEVICE=0 bash code/External_val/BRCA/demo_uni2_A2.sh predict
+CUDA_DEVICE=1 bash code/External_val/BRCA/demo_uni2_A3.sh predict
+```
+
+Outputs: `data/Visium/BRCA/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_brca_uni2.ipynb` and `Pred_visual_brca_uni2_A3.ipynb` read A3. `Pred_visual_brca_uni2_A2.ipynb` reads A2.

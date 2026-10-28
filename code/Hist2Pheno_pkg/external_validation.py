@@ -108,14 +108,24 @@ _UNI2_CKPT_REL = Path(
 
 
 def uni2_overrides(repo: Path) -> dict:
-    """A3 checkpoint and directories. Does not touch UNI ``project_all_UNI``."""
+    """UNI2 checkpoint and directories. Does not touch UNI ``project_all_UNI``.
+
+    Default remains the A3 deployment weight and ``pred_uni2_A3_bestmlp``.
+    2026.10.27: NPC A2 paired_v2 sets ``UNI2_CKPT`` and ``UNI2_PRED_DIRNAME``
+    so that run writes a separate prediction directory.
+    """
     root = Path(repo)
+    ckpt_env = os.environ.get("UNI2_CKPT", "").strip()
+    pred_env = os.environ.get("UNI2_PRED_DIRNAME", "").strip()
+    checkpoint = Path(ckpt_env) if ckpt_env else (root / _UNI2_CKPT_REL)
+    if not checkpoint.is_absolute():
+        checkpoint = root / checkpoint
     return {
         "patch_size": 14,
         "method": "UNI2",
         "embedding_dirname": "project_all_UNI2",
-        "pred_dirname": "pred_uni2_A3_bestmlp",
-        "checkpoint": root / _UNI2_CKPT_REL,
+        "pred_dirname": pred_env or "pred_uni2_A3_bestmlp",
+        "checkpoint": checkpoint,
         "project_tag": "project_all_UNI2",
     }
 _SCALER_REL = Path("data/PanCancer/result_all_spatial/scaler.joblib")
@@ -353,21 +363,64 @@ class ExternalCohort:
             "embeddings": str(paths["emb"]),
         }
 
+    def _stardist_prob_min(self) -> float:
+        """Optional nucleus filter. Unset or 0 keeps every StarDist row.
+
+        2026.10.27, NPC sets STAR_PROB_MIN. The permissive export threshold
+        in the CSV name (prob0.01) is not this cutoff.
+        """
+        raw = os.environ.get("STAR_PROB_MIN", "").strip()
+        if not raw:
+            return 0.0
+        value = float(raw)
+        if not np.isfinite(value) or value < 0.0 or value > 1.0:
+            raise SystemExit(f"STAR_PROB_MIN must be in [0, 1], got {raw!r}")
+        return float(value)
+
+    def _subset_by_stardist_prob(self, adata, sample: str):
+        min_prob = self._stardist_prob_min()
+        if min_prob <= 0.0:
+            return adata, 0.0
+        if "probability" not in adata.obs.columns:
+            raise KeyError(f"{sample} feature table has no StarDist probability column")
+        keep = np.asarray(adata.obs["probability"], dtype=np.float64) >= min_prob
+        n_keep = int(keep.sum())
+        print(
+            f"[predict] {sample}: probability>={min_prob:.2f} "
+            f"keeps {n_keep:,}/{adata.n_obs:,} nuclei",
+            flush=True,
+        )
+        if n_keep == 0:
+            raise RuntimeError(f"{sample}: no nuclei with probability>={min_prob:.2f}")
+        return adata[keep].copy(), min_prob
+
     def cmd_dry_run(self, samples: list[str]) -> None:
+        min_prob = self._stardist_prob_min()
         print(
             f"method {self.method}  target {self.target_um_per_px} µm/px, "
             f"patch {self.patch_size}px = {self.patch_um:.1f} µm"
         )
         print(f"checkpoint {self.checkpoint} exists={self.checkpoint.is_file()}")
         print(f"scaler     {self.scaler} exists={self.scaler.is_file()}")
+        if min_prob > 0:
+            print(f"StarDist probability minimum {min_prob:.2f}")
         for sample in samples:
             geo = self.geometry(sample)
             paths = self.sample_paths(sample)
             n = n_csv_rows(paths["csv"]) if paths["csv"].is_file() else -1
+            n_keep = None
+            if min_prob > 0 and paths["csv"].is_file():
+                prob = pd.read_csv(paths["csv"], usecols=["probability"])
+                n_keep = int((prob["probability"] >= min_prob).sum())
             print(
                 f"\n{sample}\n"
                 f"  nuclei CSV rows : {n:,}\n"
-                f"  µm/px           : {geo['mpp_um']:.6f}"
+                + (
+                    f"  probability>={min_prob:.2f} : {n_keep:,}\n"
+                    if n_keep is not None
+                    else ""
+                )
+                + f"  µm/px           : {geo['mpp_um']:.6f}"
                 f"  ({geo['mpp_source']})\n"
                 f"  native {self.patch_size}px    : {geo['patch_um_if_native_16px']:.3f} µm"
                 f"{'' if not geo['scale_image'] else '  (not the training field)'}\n"
@@ -560,14 +613,17 @@ class ExternalCohort:
             from checkpoint_artifact import file_digest
             feat_path = paths["feat"] if paths["feat"].is_file() else self._build_one_h5ad(sample, force=False)
             feature_sha=file_digest(feat_path)
+            min_prob = self._stardist_prob_min()
             if paths["pred"].is_file() and not force:
                 previous=ad.read_h5ad(paths["pred"])
-                valid=previous.uns.get("checkpoint_sha256")==model.checkpoint_weight_sha256 and previous.uns.get("feature_sha256")==feature_sha
+                prev_min = float(previous.uns.get("stardist_prob_min", 0.0))
+                valid=previous.uns.get("checkpoint_sha256")==model.checkpoint_weight_sha256 and previous.uns.get("feature_sha256")==feature_sha and abs(prev_min - min_prob) < 1e-9
                 del previous
                 if valid:
                     print(f"[predict] skip verified {sample}: {paths['pred']}",flush=True)
                     continue
             adata = ad.read_h5ad(feat_path)
+            adata, min_prob = self._subset_by_stardist_prob(adata, sample)
             X = np.asarray(base.adata_X_to_dense(adata.X), dtype=np.float32)
             xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
             Xs = np.asarray(scaler.transform(X), dtype=np.float32)
@@ -586,6 +642,7 @@ class ExternalCohort:
             pred.uns["feature_sha256"] = feature_sha
             pred.uns["scaler"] = str(self.scaler)
             pred.uns["spatial_k"] = self.spatial_k
+            pred.uns["stardist_prob_min"] = float(min_prob)
             pred.uns["classes"] = classes
             pred.uns["note"] = (
                 f"No {self.name} ground truth. Labels are pan-cancer L1/L12/L2 from the "
@@ -628,6 +685,7 @@ class ExternalCohort:
         device = self._device(allow_cpu)
         model, scaler, classes = self._load_model(device)
         adata = ad.read_h5ad(paths["feat"])
+        adata, _min_prob = self._subset_by_stardist_prob(adata, sample)
         X = np.asarray(base.adata_X_to_dense(adata.X), dtype=np.float32)
         xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64)
         Xs = np.asarray(scaler.transform(X), dtype=np.float32)

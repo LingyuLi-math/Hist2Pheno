@@ -120,9 +120,29 @@ class Cohort:
     pred_parent: Path
 
 
+def _uni2_ckpt() -> Path:
+    """Morning default stays ``UNI2_CKPT``. ``UNI2_CKPT`` selects another weight.
+
+    2026.10.28: HCC_unlabel A2/A3 set this to that run's paired_v2 best_mlp.
+    """
+    raw = os.environ.get("UNI2_CKPT", "").strip()
+    if not raw:
+        return UNI2_CKPT
+    path = Path(raw)
+    return path if path.is_absolute() else (_REPO / path)
+
+
+def _uni2_pred_root() -> Path:
+    """``UNI2_PRED_DIRNAME`` is a folder under data/PanCancer. Slides go in unlabel/."""
+    raw = os.environ.get("UNI2_PRED_DIRNAME", "").strip()
+    if not raw:
+        return UNI2_PRED
+    return _REPO / "data" / "PanCancer" / raw / "unlabel"
+
+
 def _ckpt(embedder: str) -> Path:
     if embedder == "uni2":
-        return UNI2_CKPT
+        return _uni2_ckpt()
     if embedder != "uni":
         raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
     return CKPT
@@ -131,7 +151,7 @@ def _ckpt(embedder: str) -> Path:
 def _cohort(name: str, embedder: str = "uni") -> Cohort:
     key = name.strip()
     if embedder == "uni2":
-        pred = UNI2_PRED / key
+        pred = _uni2_pred_root() / key
     elif key == "Lung_Incomplete":
         pred = LUNG_LEGACY
     elif key in {"HCC_unlabel", "PDAC_unlabel"}:
@@ -799,7 +819,11 @@ def cmd_predict(
         os.environ["HIST2PHENO_CONTEXT_CACHE"] = str(cohort.pred_parent / "context_cache")
     model, scaler, device = _load_model(cuda_device, allow_cpu, embedder=embedder)
     classes=model.checkpoint_metadata.get("head_classes",classes)
-    print(f"predict {name}  embedder={embedder}  n={len(todo)}  device={device}", flush=True)
+    print(
+        f"predict {name}  embedder={embedder}  n={len(todo)}  device={device}\n"
+        f"  ckpt {_ckpt(embedder)}",
+        flush=True,
+    )
     for sample in todo:
         feat = _feat_h5ad(cohort, sample)
         dest = pred_h5ad(cohort, sample)

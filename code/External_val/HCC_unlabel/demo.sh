@@ -8,8 +8,9 @@
 ##   CUDA_DEVICE=0 bash code/External_val/HCC_unlabel/demo.sh predict
 ##   bash code/External_val/HCC_unlabel/demo.sh plot
 
-## UNI2 A3 (separate pred directory):
-##   bash code/External_val/HCC_unlabel/demo_uni2.sh predict
+## UNI2 paired_v2 best_mlp (separate pred directories):
+##   bash code/External_val/HCC_unlabel/demo_uni2_A2.sh predict
+##   bash code/External_val/HCC_unlabel/demo_uni2_A3.sh predict
 
 set -euo pipefail
 

@@ -18,3 +18,14 @@ CUDA_DEVICE=0 bash code/External_val/PDAC_unlabel/demo.sh predict
 ```
 
 `ALL=1` scores all 195 (long). Open `Pred_visual_pdac_unlabel.ipynb`.
+
+## UNI2 paired_v2 best weights
+
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A3. A core is skipped when `project_all_UNI2/.../sc_pth_14_14` is missing.
+
+```bash
+CUDA_DEVICE=1 bash code/External_val/PDAC_unlabel/demo_uni2_A2.sh predict
+CUDA_DEVICE=0 bash code/External_val/PDAC_unlabel/demo_uni2_A3.sh predict
+```
+
+Outputs: `data/PanCancer/pred_uni2_A2_bestmlp_paired_v2_seed42/unlabel/PDAC_unlabel/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/unlabel/PDAC_unlabel/`. Notebooks: `Pred_visual_pdac_unlabel_uni2_A2.ipynb`, `Pred_visual_pdac_unlabel_uni2_A3.ipynb`.

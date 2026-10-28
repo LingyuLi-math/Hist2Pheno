@@ -57,3 +57,7 @@ Screen output is appended to `code/External_val/BRCA_ST/BRCA_ST.log`. Each step 
 | `data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_features.h5ad` | embeddings + native `spatial_HE` |
 | `data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad` | L1/L12/L2 labels and max-softmax |
 `Pred_visual_brca_st_A.ipynb` through `Pred_visual_brca_st_H.ipynb` draw the spatial maps and the TLS / SRI / TNI indices, one HER2ST patient per notebook. `SAVE_FIGURES = False` only displays them. There is no ROC: these slides have no ground-truth cell type.
+
+## UNI2 paired_v2 best weights
+
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A3. Outputs are `data/ST/BRCA/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_brca_st_{A..H}_uni2.ipynb` and `_uni2_A3.ipynb` read A3. The `_uni2_A2.ipynb` copies read A2.
