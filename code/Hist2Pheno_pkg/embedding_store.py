@@ -56,7 +56,7 @@ class EmbeddingWriter:
         self.dtype=np.dtype(dtype);self.chunk_rows=int(chunk_rows);self.compression=None if compression in (None,'none') else compression
         self.buffer=[];self.count=0;self.dim=None;self.committed=False
 
-    def append(self,vector,*,cell_id,xy,input_row=-1,legacy_name=''):
+    def append(self,vector,*,cell_id,xy,input_row=-1,legacy_name='',component_shapes=None):
         vector=np.asarray(vector).reshape(-1)
         if vector.size==0 or not np.isfinite(vector).all():raise ValueError('Invalid embedding')
         with np.errstate(over='ignore',invalid='ignore'):value=vector.astype(self.dtype)

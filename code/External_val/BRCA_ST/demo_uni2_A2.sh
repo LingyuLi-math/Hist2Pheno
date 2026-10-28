@@ -8,7 +8,7 @@
 ## Those stay with code/External_val/BRCA_ST/demo.sh (UNI, patch_size=16).
 ##
 ##   bash code/External_val/BRCA_ST/demo_uni2_A2.sh dry-run
-##   bash code/External_val/BRCA_ST/demo_uni2_A2.sh all
+##   CUDA_DEVICE=2 bash code/External_val/BRCA_ST/demo_uni2_A2.sh all
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=...   One slide: SAMPLE=...
 ##

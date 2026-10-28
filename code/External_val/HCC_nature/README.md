@@ -89,4 +89,4 @@ L-8012 zoom box (native HE pixels, left edge of the first crop, right edge exten
 
 ## UNI2 paired_v2 best weights
 
-A2 is fold 1. A3 is fold 0. `demo_uni2.sh` and `predict_ready_uni2.sh` use A3. A2 is `demo_uni2_A2.sh` and `predict_ready_uni2_A2.sh`. Outputs are under `data/Visium/HCC/nature_data/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_hcc_nature_uni2.ipynb` and `Pred_visual_hcc_nature_uni2_A3.ipynb` read A3, as do the `*_ready_uni2.ipynb` and `*_ready_uni2_A3.ipynb` notebooks. `Pred_visual_hcc_nature_uni2_A2.ipynb` and `*_ready_uni2_A2.ipynb` read A2.
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A2. `predict_ready_uni2.sh` still loads A3; A2 ready is `predict_ready_uni2_A2.sh`. Outputs are under `data/Visium/HCC/nature_data/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_hcc_nature_uni2.ipynb` and `Pred_visual_hcc_nature_uni2_A3.ipynb` read A3, as do the `*_ready_uni2.ipynb` and `*_ready_uni2_A3.ipynb` notebooks. `Pred_visual_hcc_nature_uni2_A2.ipynb` and `*_ready_uni2_A2.ipynb` read A2.

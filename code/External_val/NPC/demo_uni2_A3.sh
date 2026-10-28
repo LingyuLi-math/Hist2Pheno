@@ -14,6 +14,7 @@
 ##   data/Visium/NPC/project_all_UNI2
 ##
 ##   bash code/External_val/NPC/demo_uni2_A3.sh dry-run
+##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A3.sh all
 ##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A3.sh predict
 ## One slide: SAMPLE=20210809-C-AH4199551
 ## Redo a finished prediction: FORCE=1

@@ -106,7 +106,7 @@ Outputs next to the JPEGs: `HE_images/{sample}_qupath.tif`. Open those in QuPath
 
 ## UNI2 paired_v2 best weights
 
-A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A3.
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A2.
 
 ```bash
 CUDA_DEVICE=0 bash code/External_val/BRCA/demo_uni2_A2.sh predict

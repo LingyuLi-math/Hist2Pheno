@@ -103,8 +103,8 @@ _CKPT_REL = Path(
     "/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt"
 )
 _UNI2_CKPT_REL = Path(
-    "data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate"
-    "/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt"
+    "data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42"
+    "/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
 )
 
 
@@ -136,7 +136,8 @@ def prediction_dirname(name: str, min_prob: float | None = None) -> str:
 def uni2_overrides(repo: Path) -> dict:
     """UNI2 checkpoint and directories. Does not touch UNI ``project_all_UNI``.
 
-    Default remains the A3 deployment weight and ``pred_uni2_A3_bestmlp``.
+    Default is the paired_v2 A2 weight and ``pred_uni2_A2_bestmlp_paired_v2_seed42``.
+    ``demo_uni2_A3.sh`` sets ``UNI2_CKPT`` to the paired_v2 A3 weight.
     2026.10.27: NPC A2 paired_v2 sets ``UNI2_CKPT`` and ``UNI2_PRED_DIRNAME``
     so that run writes a separate prediction directory.
     """
@@ -150,7 +151,7 @@ def uni2_overrides(repo: Path) -> dict:
         "patch_size": 14,
         "method": "UNI2",
         "embedding_dirname": "project_all_UNI2",
-        "pred_dirname": pred_env or "pred_uni2_A3_bestmlp",
+        "pred_dirname": pred_env or "pred_uni2_A2_bestmlp_paired_v2_seed42",
         "checkpoint": checkpoint,
         "project_tag": "project_all_UNI2",
     }

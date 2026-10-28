@@ -12,7 +12,7 @@
 ##   CUDA_DEVICE=3 bash code/External_val/HCC_unlabel/demo_uni2_A3.sh predict
 ##   ALL=1 bash code/External_val/HCC_unlabel/demo_uni2_A3.sh predict
 ## GPU: CUDA_DEVICE=3 (default). Python sees that card as cuda:0.
-## demo_uni2.sh forwards here. The morning unsuffixed A3 checkpoint is not used.
+## demo_uni2.sh forwards to demo_uni2_A2.sh. The morning unsuffixed A3 checkpoint is not used.
 
 set -euo pipefail
 

@@ -10,8 +10,10 @@
 ##
 ##   bash code/External_val/HCC_unlabel/demo_uni2_A2.sh status
 ##   CUDA_DEVICE=2 bash code/External_val/HCC_unlabel/demo_uni2_A2.sh predict
+##   CUDA_DEVICE=2 bash code/External_val/HCC_unlabel/demo_uni2_A2.sh all
 ##   ALL=1 bash code/External_val/HCC_unlabel/demo_uni2_A2.sh predict
 ## GPU: CUDA_DEVICE=2 (default). Python sees that card as cuda:0.
+## demo_uni2.sh forwards here.
 
 set -euo pipefail
 

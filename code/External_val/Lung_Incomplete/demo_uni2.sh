@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-## Xenium lung Incomplete_Cases — UNI2 A3 Hist2Pheno (no GT).
+## Xenium lung Incomplete_Cases — UNI2 A2 Hist2Pheno (no GT).
 ## Reads StarDist UNI2 tokens (sc_pth_14_14) next to the existing h5ad.
 ## Does not write data/PanCancer/pred_all_spatial/incomplete_lung/.
 ## No TLS / SRI / TNI.
 ##
+## 2026.10.29: paired_v2 A2 best_mlp. The morning unsuffixed checkpoint was removed.
 ##   bash code/External_val/Lung_Incomplete/demo_uni2.sh status
 ##   CUDA_DEVICE=0 bash code/External_val/Lung_Incomplete/demo_uni2.sh predict
+##   CUDA_DEVICE=0 bash code/External_val/Lung_Incomplete/demo_uni2.sh all
 ##   ALL=1 bash code/External_val/Lung_Incomplete/demo_uni2.sh predict
 ##   SAMPLE=VUILD141MA bash code/External_val/Lung_Incomplete/demo_uni2.sh plot
 ## GPU: CUDA_DEVICE=0 (default). Python sees that card as cuda:0.
@@ -20,6 +22,13 @@ REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 export CUDA_DEVICE
+export UNI2_CKPT="${REPO}/data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
+export STAR_PROB_MIN="${STAR_PROB_MIN:-0}"
+PROB_TAG="$(extval_prob_tag)" || {
+  echo "ERROR: STAR_PROB_MIN must be in [0, 1], got ${STAR_PROB_MIN}" >&2
+  exit 1
+}
+export UNI2_PRED_DIRNAME="pred_uni2_A2_bestmlp_paired_v2_seed42${PROB_TAG}"
 
 if [[ -z "${PYTHON:-}" ]]; then
   for cand in \
@@ -56,8 +65,8 @@ usage() {
   cat <<EOF
 Usage: bash code/External_val/Lung_Incomplete/demo_uni2.sh {status|dry-run|rank|predict|plot|all}
 
-Checkpoint: data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate/.../best_mlp_gpu.pt
-Outputs: data/PanCancer/pred_uni2_A3_bestmlp/unlabel/Lung_Incomplete/
+Checkpoint: ${UNI2_CKPT}
+Outputs: data/PanCancer/${UNI2_PRED_DIRNAME}/unlabel/Lung_Incomplete/
 Log: code/log/external_val_lung_incomplete_uni2.log
 SAMPLE=   one slide   ALL=1  every Incomplete_Cases slide
 A slide is skipped when project_all_UNI2/.../sc_pth_14_14 is missing.

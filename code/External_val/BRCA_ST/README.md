@@ -60,4 +60,4 @@ Screen output is appended to `code/External_val/BRCA_ST/BRCA_ST.log`. Each step 
 
 ## UNI2 paired_v2 best weights
 
-A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A3. Outputs are `data/ST/BRCA/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_brca_st_{A..H}_uni2.ipynb` and `_uni2_A3.ipynb` read A3. The `_uni2_A2.ipynb` copies read A2.
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A2. Outputs are `data/ST/BRCA/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_brca_st_{A..H}_uni2.ipynb` and `_uni2_A3.ipynb` read A3. The `_uni2_A2.ipynb` copies read A2.

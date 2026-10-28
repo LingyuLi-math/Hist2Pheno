@@ -21,7 +21,7 @@ CUDA_DEVICE=0 bash code/External_val/PDAC_unlabel/demo.sh predict
 
 ## UNI2 paired_v2 best weights
 
-A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A3. A core is skipped when `project_all_UNI2/.../sc_pth_14_14` is missing.
+A2 is fold 1. A3 is fold 0. `demo_uni2.sh` forwards to A2. A core is skipped when `project_all_UNI2/.../sc_pth_14_14` is missing.
 
 ```bash
 CUDA_DEVICE=1 bash code/External_val/PDAC_unlabel/demo_uni2_A2.sh predict

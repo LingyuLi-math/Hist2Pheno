@@ -197,6 +197,7 @@ def plot_roi_pred_spatial(
     y1: float,
     palettes: Mapping[str, Mapping[str, Any]],
     in_roi: np.ndarray | None = None,
+    legend_mask: np.ndarray | None = None,
     obs_cols: Mapping[str, str] | None = None,
     marker_px: float = 5.0,
     dpi: float = 200,
@@ -209,7 +210,11 @@ def plot_roi_pred_spatial(
     save_path: str | Path | None = None,
     save_dpi: int = 300,
 ):
-    """2×3 ROI panel: HE+points / points-only × L1 / L12 / L2 (pred only)."""
+    """2×3 ROI panel: HE+points / points-only × L1 / L12 / L2 (pred only).
+
+    ``legend_mask`` is a boolean over all nuclei. When set, each column legend
+    lists only labels present in that mask (still drawn inside the ROI).
+    """
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
@@ -258,7 +263,14 @@ def plot_roi_pred_spatial(
             suffix = "HE" if show_he else "points"
             ax.set_title(f"{head}  {suffix}  n={n:,}", fontsize=title_fontsize)
 
-        seen = set(map(str, labels.tolist()))
+        # legend_mask is full-length; the legend lists only those nuclei (e.g. inside a TLS outline).
+        if legend_mask is None:
+            seen = set(map(str, labels.tolist()))
+        else:
+            legend_mask = np.asarray(legend_mask, dtype=bool)
+            if legend_mask.shape != in_roi.shape:
+                raise ValueError("legend_mask length must match the number of nuclei")
+            seen = set(map(str, labels[legend_mask[in_roi]].tolist()))
         names = _present_order(palette, seen)
         ncol = 1 if len(names) <= 5 else (2 if len(names) <= 10 else 4)
         handles = [

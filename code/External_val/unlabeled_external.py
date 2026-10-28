@@ -57,15 +57,15 @@ UNI2_CKPT = (
     _REPO
     / "data"
     / "PanCancer"
-    / "result_uni2_A3_adjacent_spatial_k8mean_gate"
+    / "result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42"
     / "cross_dataset_cv"
-    / "A3_adjacent_spatial_k8mean_gate"
+    / "A2_adjacent_spatial_k8mean"
     / "best_mlp_gpu.pt"
 )
 UNI2_CACHE = _REPO / "data" / "PanCancer" / "uni2_aligned"
 SCALER = _REPO / "data" / "PanCancer" / "result_all_spatial" / "scaler.joblib"
 PRED_ROOT = _REPO / "data" / "PanCancer" / "pred_unlabel"
-UNI2_PRED = _REPO / "data" / "PanCancer" / "pred_uni2_A3_bestmlp" / "unlabel"
+UNI2_PRED = _REPO / "data" / "PanCancer" / "pred_uni2_A2_bestmlp_paired_v2_seed42" / "unlabel"
 LUNG_LEGACY = _REPO / "data" / "PanCancer" / "pred_all_spatial" / "incomplete_lung"
 LUNG_CASES = (
     _REPO
@@ -121,7 +121,7 @@ class Cohort:
 
 
 def _uni2_ckpt() -> Path:
-    """Morning default stays ``UNI2_CKPT``. ``UNI2_CKPT`` selects another weight.
+    """Default is the paired_v2 A2 weight. ``UNI2_CKPT`` selects another weight.
 
     2026.10.28: HCC_unlabel A2/A3 set this to that run's paired_v2 best_mlp.
     """

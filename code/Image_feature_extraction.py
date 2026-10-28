@@ -469,10 +469,13 @@ def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,outpu
     if str(package) not in sys.path:sys.path.insert(0,str(package))
     from pipeline_provenance import file_lock
     with file_lock(Path(output_pth)/".extraction.lock"):
-        storage=embedding_storage or ("hdf5" if method in ("UNI","UNI2") else "pth")
+        # 2026.10.28, unified AnnData output / 所有 encoder 默认每切片一个标准 h5ad
+        storage=embedding_storage or "h5ad"
+        if storage not in ("h5ad", "pth"):
+            raise ValueError("embedding_storage must be h5ad or pth")
         from contextlib import nullcontext
         from embedding_store import EmbeddingWriter
-        context=EmbeddingWriter(output_pth,dtype=embedding_dtype,chunk_rows=embedding_chunk_rows,compression=embedding_compression) if storage=="hdf5" else nullcontext(None)
+        context=EmbeddingWriter(output_pth,dtype=embedding_dtype,chunk_rows=embedding_chunk_rows,compression=embedding_compression) if storage=="h5ad" else nullcontext(None)
         with context as writer:
             return _main_extraction(dataset,position_path,rawimage_path,scale_image,method,patch_size,
                 output_img,output_pth,logging_folder,scale,save_patch_images,_writer=writer,_storage=storage)
@@ -1124,7 +1127,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                     x,y=coordinates[source_row]
                     xy=(x/scale,y/scale) if scale_image else (x,y)
                     vector=torch.cat([t.detach().float().cpu().reshape(-1) for t in subtensors_list]).numpy()
-                    _writer.append(vector,cell_id=f"{dataset}:{source_row}",xy=xy,input_row=source_row,legacy_name=saved_name[:-4])
+                    _writer.append(vector,cell_id=f"{dataset}:{source_row}",xy=xy,input_row=source_row,legacy_name=saved_name[:-4],component_shapes=[list(t.shape) for t in subtensors_list])
                 _written_names.append(saved_name)
                 n_saved += 1
         else:
@@ -1147,7 +1150,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                     x,y=coordinates[source_row]
                     xy=(x/scale,y/scale) if scale_image else (x,y)
                     vector=torch.cat([t.detach().float().cpu().reshape(-1) for t in subtensors_list]).numpy()
-                    _writer.append(vector,cell_id=f"{dataset}:{source_row}",xy=xy,input_row=source_row,legacy_name=saved_name[:-4])
+                    _writer.append(vector,cell_id=f"{dataset}:{source_row}",xy=xy,input_row=source_row,legacy_name=saved_name[:-4],component_shapes=[list(t.shape) for t in subtensors_list])
                 _written_names.append(saved_name)
                 n_saved += 1
 
@@ -1159,10 +1162,16 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
     _current=set(_written_names)
     _archive=_embedding_root/"previous_embeddings"/datetime.now().strftime("%Y%m%d%H%M%S%f")
     for _old in _embedding_root.glob("*.pth"):
-        if _storage=="hdf5" or _old.name not in _current:
+        if _storage=="h5ad" or _old.name not in _current:
             _archive.mkdir(parents=True,exist_ok=True);_pipeline_shutil.move(str(_old),str(_archive/_old.name))
+    # 2026.10.28, archive the previous custom HDF5 generation / 不混用旧 .h5。
+    if _storage=="h5ad" and (_embedding_root/"embeddings.h5").is_file():
+        _archive.mkdir(parents=True,exist_ok=True)
+        _pipeline_shutil.move(str(_embedding_root/"embeddings.h5"),str(_archive/"embeddings.h5"))
     if _pp.sha256(__file__)!=_extractor_implementation_sha:raise RuntimeError("Extraction code changed during run")
-    if _writer is not None:_writer.commit({"prefix":dataset,"method":method,"patch_size":patch_size})
+    if _writer is not None:_writer.commit({"prefix":dataset,"method":method,"patch_size":patch_size,
+        "inputs":_source_inputs,"extractor_sha256":_extractor_implementation_sha,
+        "scale_image":bool(scale_image),"scale":float(scale),"coordinate_system":"original_image_pixels"})
     _manifest=_pp.feature_manifest(_embedding_root,_embedding_root/".provenance",allow_active=True)
     _weight=locals().get("weight_file")
     _encoder=locals().get("_encoder_record") or (_pp.file_record(_weight,_embedding_root/".provenance") if _weight else None)
@@ -1181,7 +1190,8 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--embedding-storage',choices=('hdf5','pth'),default=None)
+    parser.add_argument('--embedding-storage',choices=('h5ad','pth'),default=None,
+                        help='All encoders default to h5ad; pth is an explicit legacy option.')
     parser.add_argument('--embedding-dtype',choices=('float32','float16'),default='float32')
     parser.add_argument('--embedding-chunk-rows',type=int,default=1024)
     parser.add_argument('--embedding-compression',choices=('lzf','gzip','none'),default='lzf')
@@ -1192,14 +1202,15 @@ if __name__ == '__main__':
     parser.add_argument('--method', required=True, help='Image feature extract method')
     parser.add_argument('--patch_size', required=True, help='Patch size for image segmentation')
     parser.add_argument('--output_img', required=True, help='Output image path')
-    parser.add_argument('--output_pth', required=True, help='Output path')
+    parser.add_argument('--output_dir','--output_pth', dest='output_pth', required=True,
+                        help='Embedding output directory; all encoders default to embeddings.h5ad (--output_pth is a legacy alias).')
     parser.add_argument('--logging', required=True, help='Logging folder path')
     parser.add_argument('--scale', type=float, default=DEFAULT_SCALE, 
                        help=f'Image scale factor (default: {DEFAULT_SCALE})')
     parser.add_argument(
         '--no_save_patch_images',
         action='store_true',
-        help='Do not write PNG crops under --output_img; embed in memory and save .pth only.',
+        help='Do not write PNG crops under --output_img; embed in memory and save in the selected format (default: h5ad).',
     )
     args = parser.parse_args()
 
