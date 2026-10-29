@@ -61,6 +61,9 @@ def predict_one(cohort,sample,*,force=False,allow_cpu=False):
     with pp.file_lock(str(dest)+'.lock'):
         feat=build_features(cohort,sample)
         model,scaler,classes,device=load_model(cohort,allow_cpu)
+        if cohort.method in ("UNI","UNI2","Virchow2"):
+            from embedding_backend import validate_tokens
+            validate_tokens(model,paths['emb'],{"UNI":"uni","UNI2":"uni2","Virchow2":"virchow2"}[cohort.method])
         minimum=cohort._stardist_prob_min()
         header=ad.read_h5ad(feat,backed='r')
         try:
@@ -141,6 +144,7 @@ def extraction_complete(cohort,sample):
     p=cohort.sample_paths(sample);marker=p['emb']/"embedding_manifest.json"
     try:
         old=json.loads(marker.read_text());source=extraction_source(cohort,sample)
+        if cohort.method in ('UNI','Virchow2') and not old.get('encoder_protocol'):return False
         if old.get('state')!='completed' or old.get('version')!=pp.VERSION:return False
         if old.get('method')!=cohort.method or old.get('patch_size')!=cohort.patch_size:return False
         if old.get('inputs')!={'image':source['he'],'positions':source['csv']}:return False

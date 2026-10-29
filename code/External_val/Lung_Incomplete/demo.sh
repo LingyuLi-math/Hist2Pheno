@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ## Xenium lung Incomplete_Cases — pan-cancer cross-section Hist2Pheno (no GT).
 ## UNI StarDist-all h5ads already exist. Predict is already in
-## data/PanCancer/pred_all_spatial/incomplete_lung/. Notebooks draw 5 slides.
+## data/PanCancer/pred_uni_A2/unlabel/Lung_Incomplete/. Notebooks draw 5 slides.
 ## No TLS / SRI / TNI.
 ##
 ##   bash code/External_val/Lung_Incomplete/demo.sh status
@@ -59,7 +59,7 @@ usage() {
 Usage: bash code/External_val/Lung_Incomplete/demo.sh {status|dry-run|rank|predict|plot}
 
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
-Preds (already written): data/PanCancer/pred_all_spatial/incomplete_lung/
+Preds (already written): data/PanCancer/pred_uni_A2/unlabel/Lung_Incomplete/
 Notebook: code/External_val/Lung_Incomplete/Pred_visual_lung_incomplete.ipynb
 SAMPLE=   one slide   ALL=1  every Incomplete_Cases slide
 EOF

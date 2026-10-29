@@ -75,20 +75,15 @@ def _inject_save_figures(source: str, save_figures: bool) -> str:
 
 
 def discover_notebooks(only: list[str]) -> list[Path]:
+    encoder=os.environ.get("EMBEDDER","uni").lower()
+    if encoder not in ("uni","uni2","virchow2"):raise ValueError("EMBEDDER must be uni, uni2 or virchow2")
     found: list[Path] = []
     for rel in _ORDER:
-        path = _HERE / rel
-        if path.is_file():
-            found.append(path)
-    extra = sorted(
-        p
-        for p in _HERE.rglob("Pred_visual*.ipynb")
-        if p not in found and not p.name.endswith("_uni2.ipynb") and p.name not in {
-            "Pred_visual_prostate_patient1.ipynb",
-            "Pred_visual_prostate_patient2.ipynb",
-        }
-    )
-    found.extend(extra)
+        base=_HERE/rel
+        suffixes=["_uni2_A2", "_uni2"] if encoder=="uni2" else ["_"+encoder]
+        for suffix in suffixes:
+            path=base.with_name(base.stem+suffix+base.suffix)
+            if path.is_file():found.append(path);break
     if not only:
         return found
     keys = [k.strip().lower() for k in only if k.strip()]

@@ -209,13 +209,19 @@ class ProstateCohort(ExternalCohort):
         }
 
 
+from Hist2Pheno_pkg.external_validation import virchow2_overrides, uni_overrides
+
 def cohort_for(embedder: str = "uni") -> ProstateCohort:
     extra = {}
     tag = str(embedder).lower()
-    if tag == "uni2":
+    if tag == "uni":
+        extra = uni_overrides(_REPO)
+    elif tag == "uni2":
         extra = uni2_overrides(_REPO)
+    elif tag == "virchow2":
+        extra = virchow2_overrides(_REPO)
     elif tag != "uni":
-        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
+        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni, uni2 or virchow2")
     return ProstateCohort(
         name="Prostate",
         data_root=_REPO / "data" / "Visium" / "Prostate",
@@ -257,7 +263,7 @@ cmd_plot = COHORT.cmd_plot
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0].lower() in {"uni", "uni2"}:
+    if argv and argv[0].lower() in {"uni", "uni2", "virchow2"}:
         use_embedder(argv.pop(0).lower())
     return COHORT.main(argv)
 

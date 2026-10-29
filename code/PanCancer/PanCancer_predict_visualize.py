@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Predict pan-cancer L1/L12/L2 on every section and write 4×3 spatial+ROC panels.
 
-Uses ``data/PanCancer/result_all_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt``.
+2026.10.29: selected --embedder defaults to its own A2 best checkpoint/artifact.
+Legacy paths below are historical examples; outputs default to pred_<embedder>_deployment.
 
 Outputs under ``data/PanCancer/pred_all_spatial/``:
 
@@ -128,8 +129,12 @@ def _native_series(obs: pd.DataFrame, native_col: str) -> pd.Series:
     raise KeyError(f"no native column among {list(obs.columns)}")
 
 
-def _stardist_uni2_dir(h5ad_path: Path) -> Path | None:
+def _stardist_uni2_dir(h5ad_path: Path, embedder="uni2") -> Path | None:
     """All-nuclei UNI2 tokens, not the GT crop directory."""
+    if embedder in ("uni","virchow2"):
+        from embedding_backend import embedding_dir
+        try:return embedding_dir(h5ad_path,{},embedder,stardist=True)
+        except FileNotFoundError:return None
     parent = Path(h5ad_path).parent
     sample = parent.name
     rel = Path("ImgEmbeddings_all_stardist") / "sc_pth_14_14"
@@ -142,18 +147,12 @@ def _stardist_uni2_dir(h5ad_path: Path) -> Path | None:
 def _feature_matrix(h5ad_path: Path, adata, row_idx, *, embedder: str, uni2_cache_dir: Path | None, uni2_dir: Path | None = None):
     """Rows of ``row_idx``. UNI2 drops rows with no finite token and returns that mask."""
     row_idx = np.asarray(row_idx, dtype=np.int64)
-    if embedder == "uni":
-        recorded=adata.uns.get("embedding_dir")
-        if recorded:
-            from embedding_alignment import align_tokens
-            aligned=align_tokens(h5ad_path,adata,recorded,uni2_cache_dir or Path(h5ad_path).parent/".aligned_cache")
-            present=finite_rows(aligned,row_idx)
-            return np.asarray(aligned[row_idx[present]],dtype=np.float32),present
-        if adata.uns.get("feature_authority")!="h5ad":
-            raise ValueError("UNI h5ad has no embedding_dir: record the current token directory, or explicitly set uns['feature_authority']='h5ad' for a standalone feature matrix")
-        values=np.asarray(adata_X_to_dense(adata.X)[row_idx],dtype=np.float32)
-        pp.finite_matrix(values)
-        return values,np.ones(len(row_idx),dtype=bool)
+    if embedder in ("uni","virchow2"):
+        from embedding_backend import aligned
+        if uni2_cache_dir is None:raise ValueError("virchow2 requires a cache directory")
+        matrix=aligned(h5ad_path,adata,uni2_cache_dir,embedder,directory=uni2_dir)
+        present=finite_rows(matrix,row_idx)
+        return np.array(matrix[row_idx[present]],dtype=np.float32,copy=True),present
     if embedder != "uni2":
         raise ValueError("embedder must be uni or uni2")
     if uni2_cache_dir is None:
@@ -213,7 +212,7 @@ def load_matched(h5ad_path: Path, native_col: str, classes: dict[str, list[str]]
     }
 
 
-def load_stardist_all(path: Path, *, embedder: str = "uni", uni2_cache_dir: Path | None = None, uni2_dir: Path | None = None) -> dict | None:
+def load_stardist_all(path: Path, *, embedder: str = "uni", uni2_cache_dir: Path | None = None, uni2_dir: Path | None = None, min_prob: float = 0.) -> dict | None:
     import anndata as ad
 
     path = resolve_repo_path(path)
@@ -221,13 +220,19 @@ def load_stardist_all(path: Path, *, embedder: str = "uni", uni2_cache_dir: Path
         return None
     adata = ad.read_h5ad(path)
     row_idx = np.arange(int(adata.n_obs), dtype=np.int64)
+    if not np.isfinite(min_prob) or not 0<=min_prob<=1:raise ValueError("Probability cutoff must be in [0,1]")
+    if min_prob>0:
+        if "probability" not in adata.obs:raise ValueError("Probability cutoff requested but feature h5ad has no probability column; rebuild from current StarDist CSV")
+        values=np.asarray(adata.obs["probability"],dtype=float)
+        if not np.isfinite(values).all():raise ValueError("Non-finite StarDist probabilities")
+        row_idx=row_idx[values>=min_prob]
     X, present = _feature_matrix(
         path, adata, row_idx, embedder=embedder, uni2_cache_dir=uni2_cache_dir, uni2_dir=uni2_dir
     )
     if len(X) == 0:
         return None
-    xy = _spatial_xy(adata)[present]
-    names = adata.obs_names.to_numpy()[present]
+    xy = _spatial_xy(adata)[row_idx[present]]
+    names = adata.obs_names.to_numpy()[row_idx[present]]
     return {"X": X, "xy": xy, "obs_names": names, "n": int(len(names))}
 
 
@@ -391,29 +396,26 @@ def _token_stamp(h5ad, cache_dir):
 def _prediction_source(h5ad,star_path,model,classes,embedder,cache_dir,star_tokens,*,identity,scaler):
     h5ad,star_path=resolve_repo_path(h5ad),resolve_repo_path(star_path)
     tokens=[]
-    if embedder=="uni2":
+    if embedder in ("uni","uni2","virchow2"):
         if h5ad==star_path and star_tokens is not None:tokens.append(star_tokens)
         else:
             import anndata as ad
             from PanCancer_train_validate_cv_UNIlabel import _uni2_embedding_dir
             data=ad.read_h5ad(h5ad,backed="r")
-            try:tokens.append(_uni2_embedding_dir(h5ad,data.uns))
+            try:
+                if embedder in ("uni","virchow2"):
+                    from embedding_backend import embedding_dir
+                    tokens.append(embedding_dir(h5ad,data.uns,embedder))
+                else:tokens.append(_uni2_embedding_dir(h5ad,data.uns))
             finally:data.file.close()
         if star_tokens is not None and str(star_tokens) not in set(map(str,tokens)):tokens.append(star_tokens)
-    if embedder=="uni":
-        import anndata as ad
-        for path in set((h5ad,star_path)):
-            if path.is_file():
-                data=ad.read_h5ad(path,backed="r")
-                try:
-                    recorded=data.uns.get("embedding_dir")
-                    if recorded:tokens.append(Path(recorded))
-                finally:data.file.close()
     optional=[]
-    if embedder=="uni2":
+    if embedder in ("uni","uni2","virchow2"):
         parent=star_path.parent;sample=parent.name
-        rel=Path("ImgEmbeddings_all_stardist")/"sc_pth_14_14"
-        optional=[parent/f"{sample}_project_all_UNI2"/rel,parent/"project_all_UNI2"/rel]
+        patch=16 if embedder=="uni" else 14
+        rel=Path("ImgEmbeddings_all_stardist")/f"sc_pth_{patch}_{patch}"
+        project={"uni":"UNI","uni2":"UNI2","virchow2":"Virchow2"}[embedder]
+        optional=[parent/f"{sample}_project_all_{project}"/rel,parent/f"project_all_{project}"/rel]
     files=[h5ad,star_path]
     import anndata as ad
     for file in set((h5ad,star_path)):
@@ -423,11 +425,15 @@ def _prediction_source(h5ad,star_path,model,classes,embedder,cache_dir,star_toke
             finally:header.file.close()
     index_source=getattr(model,"evaluation_index_path",None)
     if index_source:files.append(index_source)
+    if embedder in ("uni","uni2","virchow2"):
+        from embedding_backend import validate_tokens
+        for directory in tokens:validate_tokens(model,directory,embedder)
     data_inputs=pp.capture_inputs(files,tokens,cache_dir,optional_tokens=optional)
     checkpoint=getattr(model,"checkpoint_source_path",None)
     if checkpoint:files.extend([checkpoint,str(checkpoint)+".artifact.pt"])
     return {"inputs":pp.capture_inputs(files,tokens,cache_dir,optional_tokens=optional),"data_inputs":data_inputs,"identity":identity,
         "model":pp.model_descriptor(model,scaler,classes),"embedder":embedder,
+        "stardist_prob_min":float(os.environ.get("STAR_PROB_MIN","0")),
         "implementation":pp.implementations(),"predict_implementation":pp.sha256(Path(__file__)),
         "coordinate_unit":getattr(model,"inference_coordinate_unit",None),
         "mpp":getattr(model,"inference_mpp",None) or os.environ.get("HIST2PHENO_INFERENCE_MPP"),"scope":getattr(model,"evaluation_scope",None)}
@@ -445,7 +451,7 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     h5ad = resolve_repo_path(rec.h5ad)
     star_path = stardist_all_h5ad_for_matched(h5ad)
     star_out = pred_root / "stardist_all" / str(dataset) / str(sample) / f"{sample}_all_stardist_pred.h5ad"
-    uni2_star_ready = _stardist_uni2_dir(star_path) if embedder == "uni2" else None
+    uni2_star_ready = _stardist_uni2_dir(star_path,embedder) if embedder in ("uni","uni2","virchow2") else None
     # A finished matched-cell run must not hide a later StarDist UNI2 extract.
     # 2026.10.26, content-bound completion / 新增 token、覆盖 token、丢失输出均重算
     identity={"section_id":str(section_id),"dataset":str(dataset),"sample":str(sample),"native_col":str(rec.native_col)}
@@ -482,8 +488,8 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     star_pred = None
     xy_star = None
     star = None
-    uni2_star = uni2_star_ready if embedder == "uni2" else None
-    if embedder == "uni2" and uni2_star is None:
+    uni2_star = uni2_star_ready if embedder in ("uni","uni2","virchow2") else None
+    if embedder in ("uni","uni2","virchow2") and uni2_star is None:
         print(f"  {section_id}: no StarDist UNI2 tokens; skip all-nuclei map", flush=True)
     elif star_path.is_file() or embedder == "uni":
         star = load_stardist_all(
@@ -570,8 +576,8 @@ def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_ro
     panel_path = out_dir / f"{sample}_panel_4x3.png"
     # 2026.10.26, incomplete lung also uses verified manifests / 换模型或无图模式均正确处理
     star_path = Path(rec.stardist_all)
-    uni2_star = _stardist_uni2_dir(star_path) if embedder == "uni2" else None
-    if embedder == "uni2" and uni2_star is None:
+    uni2_star = _stardist_uni2_dir(star_path,embedder) if embedder in ("uni","uni2","virchow2") else None
+    if embedder in ("uni","uni2","virchow2") and uni2_star is None:
         print(f"  LungIncomplete::{sample}: no StarDist UNI2 tokens", flush=True)
         return None
     model.evaluation_scope="unlabeled_deployment_not_oof"
@@ -642,8 +648,10 @@ def process_incomplete(rec, *, model, scaler, device, classes, palettes, pred_ro
 def predict_unlabeled_file(rec,dest,*,model,scaler,device,classes,embedder,cache_dir,force=False):
     import anndata as ad
     dest=Path(dest);feature=resolve_repo_path(rec.stardist_all)
-    directory=_stardist_uni2_dir(feature) if embedder=="uni2" else None
-    if embedder=="uni2" and directory is None:raise FileNotFoundError("No current UNI2 StarDist tokens")
+    minimum=float(os.environ.get("STAR_PROB_MIN","0"))
+    if not np.isfinite(minimum) or not 0<=minimum<=1:raise ValueError("STAR_PROB_MIN must be in [0,1]")
+    directory=_stardist_uni2_dir(feature,embedder) if embedder in ("uni","uni2","virchow2") else None
+    if embedder in ("uni","uni2","virchow2") and directory is None:raise FileNotFoundError("No current UNI2 StarDist tokens")
     model.evaluation_scope="unlabeled_deployment_not_oof"
     identity={"section_id":str(rec.section_id),"dataset":str(rec.dataset),"sample":str(rec.sample),"native_col":None}
     marker=dest.with_suffix(".pipeline.json");probfile=dest.with_name(str(rec.sample)+"_l2_probs.npz")
@@ -652,7 +660,7 @@ def predict_unlabeled_file(rec,dest,*,model,scaler,device,classes,embedder,cache
         stamp=pp.fingerprint(source)
         if not force and pp.complete(marker,stamp,[dest,probfile]):return
         pp.atomic_json(marker,{"version":pp.VERSION,"state":"running","stamp":stamp,"outputs":{}})
-        data=load_stardist_all(feature,embedder=embedder,uni2_cache_dir=cache_dir,uni2_dir=directory)
+        data=load_stardist_all(feature,embedder=embedder,uni2_cache_dir=cache_dir,uni2_dir=directory,min_prob=minimum)
         if data is None:raise ValueError("No valid unlabeled cells")
         rows=pp.row_signature(data["obs_names"],data["xy"])
         got=predict_block(model,scaler,data["X"],data["xy"],device,use_spatial=True,spatial_k=None)
@@ -661,7 +669,7 @@ def predict_unlabeled_file(rec,dest,*,model,scaler,device,classes,embedder,cache
             obs[col]=np.asarray(classes[head])[got["pred"][head]]
         result=ad.AnnData(obs=obs);result.obsm["spatial_HE"]=data["xy"]
         result.uns.update(pipeline_run_id=stamp,row_identity_sha256=rows,classes=classes,
-                          checkpoint_sha256=model.checkpoint_weight_sha256)
+                          checkpoint_sha256=model.checkpoint_weight_sha256,stardist_prob_min=minimum)
         if _prediction_stamp(feature,feature,model,classes,embedder,cache_dir,directory,identity=identity,scaler=scaler)!=stamp:
             raise RuntimeError("Unlabeled inputs changed during inference")
         pp.atomic_h5ad(result,dest)
@@ -672,8 +680,8 @@ def predict_unlabeled_file(rec,dest,*,model,scaler,device,classes,embedder,cache
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", type=Path, default=DEFAULT_DATA_ROOT)
-    p.add_argument("--pred-root", type=Path, default=DEFAULT_PRED_ROOT)
-    p.add_argument("--checkpoint", type=Path, default=DEFAULT_CKPT)
+    p.add_argument("--pred-root", type=Path, default=None)
+    p.add_argument("--checkpoint", type=Path, default=None)
     p.add_argument("--index-csv", type=Path, default=None)
     p.add_argument("--datasets", nargs="*", default=None)
     p.add_argument(
@@ -712,7 +720,7 @@ def parse_args(argv=None):
         action="store_true",
         help="fit scaler only on the sections being predicted (for smoke; do not reuse as production)",
     )
-    p.add_argument("--embedder", choices=("uni", "uni2"), default="uni")
+    p.add_argument("--embedder", choices=("uni", "uni2", "virchow2"), default="uni")
     p.add_argument("--coordinates-unit",choices=("pixel","um"),default=os.environ.get("HIST2PHENO_INFERENCE_COORDINATES_UNIT","pixel"))
     p.add_argument("--inference-mpp",type=float,default=None)
     p.add_argument("--deployment",action="store_true",help="Use one selected checkpoint for all sections; these are NOT OOF metrics")
@@ -723,6 +731,15 @@ def parse_args(argv=None):
         p.error("--inference-mpp must be finite and positive")
     if args.coordinates_unit=="um" and args.inference_mpp not in (None,1.):
         p.error("Coordinates already in um must not be scaled by another mpp")
+    return args
+
+
+def resolve_encoder_defaults(args):
+    # 2026.10.29, selected encoder defaults to its own A2 artifact, never legacy UNI.
+    from external_validation import uni_overrides, uni2_overrides, virchow2_overrides
+    loaders={"uni":uni_overrides,"uni2":uni2_overrides,"virchow2":virchow2_overrides}
+    if args.checkpoint is None:args.checkpoint=loaders[args.embedder](_REPO_ROOT)["checkpoint"]
+    if args.pred_root is None:args.pred_root=args.data_root/f"pred_{args.embedder}_deployment"
     return args
 
 
@@ -806,9 +823,11 @@ def _main(args) -> int:
         index = index.head(int(args.max_sections)).copy()
     print(f"  sections: {len(index)}", flush=True)
 
-    uni2_cache_dir = args.data_root / "uni2_aligned"
+    uni2_cache_dir = args.data_root / (args.embedder+"_aligned")
     # Exact training transform; implicit global/scaler refitting is disabled.
     scaler = checkpoint_scaler(ckpt)
+    from embedding_backend import validate_model
+    validate_model(model,scaler,args.embedder)
     meta = read_artifact(ckpt,required=True)["metadata"]
     if meta.get("head_classes") and all(meta["head_classes"].values()):
         classes = meta["head_classes"]

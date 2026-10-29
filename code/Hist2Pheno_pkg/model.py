@@ -1925,7 +1925,9 @@ def train_and_save_model_from_split(
         result.get("train_global_indices", np.arange(len(result["y_train_encoded"]))),
         result.get("val_global_indices", np.arange(len(result["y_test_encoded"]))),
         result["y_train_encoded"], result["y_test_encoded"],
-        {"hce":[hce_w1,hce_w2,hce_w12,hce_w_l12head,hce_w_l3,hce_w_l4],
+        {"embedder":result.get("_cv_source",{}).get("embedder"),
+         "embedding_protocol":result.get("_cv_source",{}).get("embedding_protocol"),
+         "hce":[hce_w1,hce_w2,hce_w12,hce_w_l12head,hce_w_l3,hce_w_l4],
          "implementation":digest(*[file_digest(Path(__file__).parent/name) for name in ("model.py","base.py","hierarchy_loss.py","spatial_context.py","paired_initialization.py")]),
          "epochs":max_epochs,"patience":patience,"hidden":list(hidden_dims),"dropout":dropout,
          "lr":lr,"weight_decay":weight_decay,"val_selection":val_selection_metric,
@@ -2036,7 +2038,9 @@ def train_and_save_model_from_split(
         result=result,
     )
 
-    meta = {"initialization":result.get("initialization"),
+    meta = {"embedder":result.get("_cv_source",{}).get("embedder"),
+            "embedding_protocol":result.get("_cv_source",{}).get("embedding_protocol"),
+            "initialization":result.get("initialization"),
             "training_seed":result.get("_cv_source",{}).get("seed"),
             "split_seed":result.get("_cv_source",{}).get("split_seed"),
             "loss_weights":{"l1_ce":hce_w1,"l2_ce":hce_w2,"l2_to_l1_nll":hce_w12,"l12_ce":hce_w_l12head},

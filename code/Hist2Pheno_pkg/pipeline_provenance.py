@@ -65,7 +65,7 @@ def file_record(path,cache_dir=None):
 def implementations():
     names=('pipeline_provenance.py','external_consistency.py','external_validation.py',
            'model.py','base.py','plot.py','spatial_context.py','checkpoint_artifact.py',
-           'embedding_alignment.py','embedding_store.py','../PanCancer/PanCancer_train_validate_cv_UNIlabel.py')
+           'embedding_alignment.py','embedding_backend.py','embedding_store.py','../PanCancer/PanCancer_train_validate_cv_UNIlabel.py')
     return {name:sha256(_PKG/name) for name in names if (_PKG/name).is_file()}
 
 
@@ -93,7 +93,7 @@ def mapping_descriptor():
 
 
 def checkpoint_family(metadata):
-    keys=('training_seed','split_seed','loss_weights','data_fingerprint','fold_mode',
+    keys=('embedder','embedding_protocol','training_seed','split_seed','loss_weights','data_fingerprint','fold_mode',
           'spatial_config','spatial_mode','hierarchy_config','hierarchy_maps','head_classes')
     return fingerprint({k:metadata.get(k) for k in keys},(metadata.get('initialization') or {}).get('method'))
 

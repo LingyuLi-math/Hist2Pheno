@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn finished External_val UNI2 .pth stores into embeddings.h5.
+"""Convert verified External_val legacy stores to standard embeddings.h5ad.
 
 Does not run the image encoder. Each .pth file is moved into
 previous_embeddings/ after embeddings.h5 and a completed manifest exist.
@@ -123,71 +123,24 @@ def _drop_stale_hdf5_marker(emb: Path) -> None:
 
 
 def _seal(emb: Path, contract: dict, cache: Path) -> None:
-    _drop_stale_hdf5_marker(emb)
-    short = feature_manifest(emb, cache, allow_active=True)
-    record = dict(contract)
-    record.update(
-        state="completed",
-        version=pp.VERSION,
-        storage_format="pth",
-        tokens=short,
-        n_saved=int(short["count"]),
-    )
-    pp.atomic_json(emb / "embedding_manifest.json", record)
+    # Historical sealing entry retained, intentionally disabled / 禁止补造当前来源。
+    raise RuntimeError("Cannot certify legacy tokens from a current contract; provide a verified original extraction manifest or re-extract")
 
 
 def _stamp_extractor(emb: Path, extractor_sha: str) -> None:
-    marker = emb / "embedding_manifest.json"
-    record = json.loads(marker.read_text())
-    if record.get("extractor_sha256") == extractor_sha:
-        return
-    record["extractor_sha256"] = extractor_sha
-    pp.atomic_json(marker, record)
+    # No SHA rewriting, even for format-only conversions / 保留真实历史提取 SHA。
+    if extraction_metadata(emb).get("extractor_sha256")!=extractor_sha:
+        raise RuntimeError("Do not overwrite historical extractor SHA; use reviewed compatibility or re-extract")
 
 
 def convert_one(emb: Path, contract: dict | None, cache: Path, extractor_sha: str) -> str:
-    emb = emb.resolve()
-    meta = extraction_metadata(emb)
-    has_h5 = (emb / FILENAME).is_file()
-    has_pth = emb.is_dir() and _has_pth(emb)
-    if (
-        meta.get("state") == "completed"
-        and meta.get("storage_format") == "hdf5"
-        and has_h5
-        and not has_pth
-    ):
-        _stamp_extractor(emb, extractor_sha)
-        feature_manifest(emb, cache)
-        return "already"
-    if has_h5 and has_pth:
-        raise RuntimeError(f"mixed .pth and {FILENAME}: {emb}")
-    if has_h5 and not has_pth:
-        _seal_existing_hdf5(emb, contract, cache)
-        _stamp_extractor(emb, extractor_sha)
-        feature_manifest(emb, cache)
-        return "sealed"
-    if not has_pth:
-        raise RuntimeError(f"no .pth to convert: {emb}")
-    if meta.get("state") == "completed" and meta.get("method") == "UNI2" and not uses_hdf5(emb):
-        try:
-            migrate_pth(emb, archive_pth=True)
-        except RuntimeError as exc:
-            if contract is None or "Tokens changed" not in str(exc):
-                raise
-            _seal(emb, contract, cache)
-            migrate_pth(emb, archive_pth=True)
-    else:
-        if contract is None:
-            raise RuntimeError(f"no source manifest to seal: {emb}")
-        _seal(emb, contract, cache)
-        migrate_pth(emb, archive_pth=True)
-    _stamp_extractor(emb, extractor_sha)
-    feature_manifest(emb, cache)
-    if _has_pth(emb) or not (emb / FILENAME).is_file():
-        raise RuntimeError(f"conversion did not archive .pth: {emb}")
-    done = extraction_metadata(emb)
-    if done.get("state") != "completed" or done.get("storage_format") != "hdf5":
-        raise RuntimeError(f"manifest is not a completed hdf5 store: {emb}")
+    # 2026.10.29: current image/CSV/weight facts cannot certify historical vectors.
+    from embedding_store import storage_format
+    emb=emb.resolve()
+    feature_manifest(emb,cache)  # Requires original completed, current-source-valid manifest.
+    if storage_format(emb)=="h5ad":return "already"
+    migrate_pth(emb,archive_pth=True)
+    feature_manifest(emb,cache)
     return "converted"
 
 
@@ -216,37 +169,14 @@ def _cohorts():
 
 
 def _seal_existing_hdf5(emb: Path, contract: dict | None, cache: Path) -> None:
-    """A finished embeddings.h5 left behind a writing marker and has no .pth left."""
-    import h5py
-
-    path = emb / FILENAME
-    with h5py.File(path, "r") as handle:
-        if not handle.attrs.get("complete"):
-            raise RuntimeError(f"embeddings.h5 is not complete: {emb}")
-    if contract is None:
-        raise RuntimeError(f"no source manifest to seal: {emb}")
-    tokens = feature_manifest(emb, cache, allow_active=True)
-    record = dict(contract)
-    record.update(
-        state="completed",
-        version=pp.VERSION,
-        storage_format="hdf5",
-        storage_dtype="float32",
-        tokens=tokens,
-        n_saved=int(tokens["count"]),
-    )
-    pp.atomic_json(emb / "embedding_manifest.json", record)
+    raise RuntimeError("Incomplete stores cannot be resealed from current sources; restore a verified transaction or re-extract")
 
 
 def _needs_work(emb: Path) -> bool:
-    if not emb.is_dir():
-        return False
-    meta = extraction_metadata(emb)
-    has_h5 = (emb / FILENAME).is_file()
-    has_pth = _has_pth(emb)
-    if meta.get("state") == "completed" and meta.get("storage_format") == "hdf5" and has_h5 and not has_pth:
-        return False
-    return has_pth or has_h5
+    from embedding_store import storage_format
+    if not emb.is_dir():return False
+    if storage_format(emb)=="h5ad":return False
+    return _has_pth(emb) or (emb/"embeddings.h5").is_file()
 
 
 def _job_record(name, sample, emb, he, csv, scale, scale_image, cache, seal: bool):
@@ -409,21 +339,8 @@ def _verify_cohort(name: str, sample: str) -> None:
 
 
 def run_job(payload: dict) -> str:
-    emb = Path(payload["emb"])
-    cache = Path(payload["cache"])
-    extractor_sha = payload["extractor_sha"]
-    contract = None
-    if payload["seal"]:
-        contract = _contract(
-            Path(payload["he"]),
-            Path(payload["csv"]),
-            payload["scale"],
-            payload["scale_image"],
-            _encoder(cache),
-            extractor_sha,
-            cache,
-        )
-    return convert_one(emb, contract, cache, extractor_sha)
+    # Conversion consumes the original verified contract, never current facts.
+    return convert_one(Path(payload["emb"]),None,Path(payload["cache"]),payload["extractor_sha"])
 
 
 def main(argv: list[str] | None = None) -> int:

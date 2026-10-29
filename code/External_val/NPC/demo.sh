@@ -73,8 +73,8 @@ Usage: bash code/External_val/NPC/demo.sh {dry-run|features|h5ad|predict|probs|p
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/Visium/NPC/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
-  data/Visium/NPC/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/Visium/NPC/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+  data/Visium/NPC/pred_uni_A2/{sample}/{sample}_stardist_pred.h5ad
+  data/Visium/NPC/pred_uni_A2/{sample}/{sample}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/NPC/Pred_visual_npc.ipynb

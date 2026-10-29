@@ -98,8 +98,8 @@ CUDA_DEVICE=0               GPU
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/Visium/Prostate/project_all_UNI/{Patient_1__H1_2}/ImgEmbeddings_all_stardist/sc_pth_16_16/
-  data/Visium/Prostate/pred_pancancer_section/{Patient_1__H1_2}/{Patient_1__H1_2}_stardist_pred.h5ad
-  data/Visium/Prostate/pred_pancancer_section/{Patient_1__H1_2}/{Patient_1__H1_2}_l2_probs.npz
+  data/Visium/Prostate/pred_uni_A2/{Patient_1__H1_2}/{Patient_1__H1_2}_stardist_pred.h5ad
+  data/Visium/Prostate/pred_uni_A2/{Patient_1__H1_2}/{Patient_1__H1_2}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebooks: code/External_val/Prostate/Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb

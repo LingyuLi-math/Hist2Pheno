@@ -149,6 +149,12 @@ def _uni2_pred_root() -> Path:
 
 
 def _ckpt(embedder: str) -> Path:
+    if embedder=="uni":
+        from external_validation import uni_overrides
+        return uni_overrides(_REPO)["checkpoint"]
+    if embedder=="virchow2":
+        from external_validation import virchow2_overrides
+        return virchow2_overrides(_REPO)["checkpoint"]
     if embedder == "uni2":
         return _uni2_ckpt()
     if embedder != "uni":
@@ -158,7 +164,13 @@ def _ckpt(embedder: str) -> Path:
 
 def _cohort(name: str, embedder: str = "uni") -> Cohort:
     key = name.strip()
-    if embedder == "uni2":
+    if embedder=="uni":
+        from external_validation import uni_overrides, prediction_dirname
+        pred=_REPO/"data/PanCancer"/prediction_dirname(uni_overrides(_REPO)["pred_dirname"])/"unlabel"/key
+    elif embedder=="virchow2":
+        from external_validation import virchow2_overrides, prediction_dirname
+        pred=_REPO/"data/PanCancer"/prediction_dirname(virchow2_overrides(_REPO)["pred_dirname"])/"unlabel"/key
+    elif embedder == "uni2":
         pred = _uni2_pred_root() / key
     elif key == "Lung_Incomplete":
         pred = _prob_folder(LUNG_LEGACY)
@@ -234,6 +246,7 @@ def _matched_h5ad(sample: str) -> Path:
 
 
 def _lung_ranks_path(embedder: str = "uni") -> Path:
+    if embedder in ("uni","virchow2"):return _cohort("Lung_Incomplete",embedder).pred_parent/"ranks_matched.csv"
     if embedder == "uni2":
         return _uni2_pred_root() / "Lung_Incomplete" / "ranks_matched.csv"
     return LUNG_RANKS
@@ -287,7 +300,7 @@ def _legacy_rank_lung_incomplete(
                 "final_CT",
                 classes,
                 embedder=embedder,
-                uni2_cache_dir=UNI2_CACHE if embedder == "uni2" else None,
+                uni2_cache_dir=UNI2_CACHE if embedder in ("uni","uni2","virchow2") else None,
             )
         except FileNotFoundError as exc:
             print(f"  rank {sample}: {exc}", flush=True)
@@ -341,7 +354,10 @@ def _rank_source(embedder):
         if not h.is_file():continue
         files.append(h);a=ad.read_h5ad(h,backed="r")
         try:
-            if embedder=="uni2":tokens.append(_uni2_embedding_dir(h,a.uns))
+            if embedder in ("uni","virchow2"):
+                from embedding_backend import embedding_dir
+                tokens.append(embedding_dir(h,a.uns,embedder))
+            elif embedder=="uni2":tokens.append(_uni2_embedding_dir(h,a.uns))
             elif a.uns.get("embedding_dir"):tokens.append(Path(a.uns["embedding_dir"]))
         finally:a.file.close()
     return {"inputs":pp.capture_inputs(files,tokens,UNI2_CACHE),"embedder":embedder,
@@ -821,7 +837,7 @@ def _load_model(cuda_device: str, allow_cpu: bool, embedder: str = "uni"):
     model = load_model_for_predict(
         str(_REPO),
         "PanCancer",
-        "project_all_UNI2" if embedder == "uni2" else "project_all_UNI",
+        "project_all_Virchow2" if embedder=="virchow2" else ("project_all_UNI2" if embedder == "uni2" else "project_all_UNI"),
         checkpoint_path=str(ckpt),
         device=device,
         hidden_dims=None,
@@ -829,6 +845,8 @@ def _load_model(cuda_device: str, allow_cpu: bool, embedder: str = "uni"):
     )
     from checkpoint_artifact import checkpoint_scaler
     scaler = checkpoint_scaler(ckpt)
+    from embedding_backend import validate_model
+    validate_model(model,scaler,embedder)
     return model, scaler, device
 
 
@@ -886,7 +904,7 @@ def _legacy_cmd_predict(
         star = load_stardist_all(
             feat,
             embedder=embedder,
-            uni2_cache_dir=UNI2_CACHE if embedder == "uni2" else None,
+            uni2_cache_dir=UNI2_CACHE if embedder in ("uni","uni2","virchow2") else None,
             uni2_dir=uni2_dir,
         )
         if star is None:
@@ -940,7 +958,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sample", default="", help="one sample id")
     p.add_argument("--all", action="store_true", help="use every unlabeled slide, not the viz subset")
     p.add_argument("--force", action="store_true")
-    p.add_argument("--embedder", choices=("uni", "uni2"), default="uni")
+    p.add_argument("--embedder", choices=("uni", "uni2", "virchow2"), default="uni")
     p.add_argument("--cuda-device", default=os.environ.get("CUDA_DEVICE", "0"))
     p.add_argument("--allow-cpu", action="store_true")
     p.add_argument("--save", action="store_true", help="write 300 dpi PNGs under pred_unlabel/figures")

@@ -401,10 +401,14 @@ def load_section_arrays(
                     cache_path, keep_idx=idx, y=y, y_l1=y_l1, y_l12=y_l12, xy=xy, n_raw=n_raw, version_stamp=stamp
                 )
         X_uni2 = None
-        if embedder == "uni2":
+        if embedder in ("uni","uni2","virchow2"):
             if uni2_cache_dir is None:
                 raise ValueError("uni2 embedder requires uni2_cache_dir")
-            X_uni2 = _aligned_uni2_matrix(h5ad_path, adata, uni2_cache_dir)
+            if embedder in ("uni","virchow2"):
+                from embedding_backend import aligned
+                X_uni2=aligned(h5ad_path,adata,uni2_cache_dir,embedder)
+            else:
+                X_uni2 = _aligned_uni2_matrix(h5ad_path, adata, uni2_cache_dir)
             present = finite_rows(X_uni2, idx)
             n_miss = int((~present).sum())
             if n_miss:
@@ -490,8 +494,18 @@ def prepare_pooled_cv_data(
     datasets = []
     n_obs = {}
     gi = 0
+    encoder_protocol = None
     for rec_i, rec in enumerate(ok.itertuples(index=False)):
         cache_path = cache_path_for(rec.section_id, cache_dir) if cache_dir is not None else None
+        if embedder in ("uni","uni2","virchow2"):
+            import anndata as ad
+            from embedding_backend import embedding_dir, protocol
+            header=ad.read_h5ad(rec.h5ad,backed="r")
+            try:current_protocol=protocol(embedding_dir(Path(rec.h5ad),header.uns,embedder))
+            finally:header.file.close()
+            if encoder_protocol is not None and current_protocol!=encoder_protocol:
+                raise ValueError("Training sections use different encoder weights/preprocessing")
+            encoder_protocol=current_protocol
         arr = load_section_arrays(
             Path(rec.h5ad),
             native_col=rec.native_col,
@@ -545,6 +559,8 @@ def prepare_pooled_cv_data(
     )
     del X, y, y1, y12, groups, xy
     gc.collect()
+    cv["embedder"] = embedder
+    cv["embedding_protocol"] = encoder_protocol
     cv["cell_id_f"] = np.concatenate(cell_id_parts)[cv["mask"]]
     cv = _reencode_fixed(cv, classes)
     g2s = {i: s for i, s in enumerate(sample_names)}
@@ -721,7 +737,7 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         group_splitter=ctx.group_splitter,
         fold_of=fold_of,
         embedder=ctx.embedder,
-        uni2_cache_dir=ctx.data_root / "uni2_aligned",
+        uni2_cache_dir=ctx.data_root / (ctx.embedder+"_aligned"),
     )
     if is_cell_stratified_splitter(ctx.group_splitter):
         cell_plan = summarize_cell_stratified_folds(
@@ -970,9 +986,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--inner-val-fraction",type=float,default=0.2)
     p.add_argument(
         "--embedder",
-        choices=("uni", "uni2"),
+        choices=("uni", "uni2", "virchow2"),
         default="uni",
-        help="uni reads h5ad.X (1024-d). uni2 rematches project_all_UNI2/sc_pth_14_14 (1536-d) onto the same cells.",
+        help="uni reads h5ad.X (1024-d). uni2 rematches UNI2 (1536-d); virchow2 rematches project_all_Virchow2/sc_pth_14_14 (1280-d).",
     )
     return p.parse_args(argv)
 

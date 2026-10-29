@@ -2,10 +2,10 @@
 # Virchow2, patch_size=14, one 14 px token per nucleus (1280-d).
 # Same slides, scales, and patch_size=14 as run_uni2_patch14.sh.
 # Writes project_all_Virchow2 / sc_pth_14_14.
-# Does not read or delete project_all_UNI or project_all_Virchow2.
+# Does not write project_all_UNI or project_all_UNI2.
 #
 # Run from the repo root. The last argument is the physical GPU. SeededNTM is activated inside.
-# A cohort whose sc_pth_14_14/ already has .pth files is skipped.
+# A section is skipped only when its completed source and requested extraction protocol match.
 #
 #####################################################
 # 2026.10.26 LLY - gt for brca
@@ -57,7 +57,7 @@ if [[ ! "${GPU}" =~ ^[0-9]+$ ]]; then
 fi
 export CUDA_VISIBLE_DEVICES="${GPU}"
 
-REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
+REPO="${HIST2PHENO_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 mkdir -p "${REPO}/code/log"
 LOG="${REPO}/code/log/virchow2_patch14_${COHORT}_${COORD}_gpu${GPU}.log"
 # Screen and code/log stay the same stream. Append so a rerun keeps the earlier run.
@@ -83,23 +83,21 @@ trap finish_log EXIT
 echo "=== Virchow2 patch_size=14 ${COHORT} ${COORD} gpu=${GPU} start $(date '+%Y-%m-%d %H:%M:%S') ==="
 echo "log: ${LOG}"
 
-CONDA_BASE="${CONDA_BASE:-/opt/anaconda3}"
-if [[ ! -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
-  echo "ERROR: conda.sh not found: ${CONDA_BASE}/etc/profile.d/conda.sh" >&2
-  exit 1
+# 2026.10.29, already activated environments can be reused / 支持现有环境及测试环境。
+if [[ "${HIST2PHENO_SKIP_CONDA:-0}" != "1" && "${CONDA_DEFAULT_ENV:-}" != "SeededNTM" ]]; then
+  CONDA_BASE="${CONDA_BASE:-/opt/anaconda3}"
+  if [[ ! -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]]; then
+    echo "ERROR: conda.sh not found: ${CONDA_BASE}/etc/profile.d/conda.sh; activate SeededNTM first" >&2
+    exit 1
+  fi
+  source "${CONDA_BASE}/etc/profile.d/conda.sh"
+  set +u
+  conda activate SeededNTM
+  set -u
 fi
-# shellcheck disable=SC1091
-source "${CONDA_BASE}/etc/profile.d/conda.sh"
-# SeededNTM's activate.d script reads unset binutils vars. nounset must be off here.
-set +u
-conda activate SeededNTM
-set -u
 hash -r
-PYTHON="$(command -v python)"
-if [[ ! -x "${PYTHON}" ]]; then
-  echo "ERROR: python not found after conda activate SeededNTM" >&2
-  exit 1
-fi
+PYTHON="${PYTHON:-$(command -v python)}"
+if [[ ! -x "${PYTHON}" ]]; then echo "ERROR: python not found" >&2; exit 1; fi
 
 PATCH_SIZE=14
 METHOD=Virchow2
@@ -130,7 +128,11 @@ run_one() {
     # 2026.10.28: old .pth count/log check is replaced by completed provenance.
     # A crashed extract leaves .pth files and a log with no "Feature extraction time:".
     local n
-    if n="$("${PYTHON}" "${REPO}/code/check_embeddings.py" "${pth_dir}")"; then
+    local -a verify=("${pth_dir}" --method "${METHOD}" --patch-size "${PATCH_SIZE}"
+      --image "${he}" --positions "${position}" --scale-image "${scale_image}" --scale "${scale:-0.5}")
+    if [[ -n "${VIRCHOW2_WEIGHTS:-}" ]]; then verify+=(--encoder-weights "${VIRCHOW2_WEIGHTS}"); fi
+    if [[ -n "${VIRCHOW2_REVISION:-}" ]]; then verify+=(--encoder-revision "${VIRCHOW2_REVISION}"); fi
+    if n="$("${PYTHON}" "${REPO}/code/check_embeddings.py" "${verify[@]}")"; then
       echo "SKIP done (${n} embeddings): ${pth_dir#${REPO}/}"
       SKIP=$((SKIP + 1))
       return 0
@@ -149,10 +151,9 @@ run_one() {
     --output_img "${out_root}/sc_pth_${PATCH_SIZE}_${PATCH_SIZE}_image"
     --output_pth "${pth_dir}"
     --logging "${out_root}/"
+    --embedding-storage h5ad
+    --scale "${scale:-0.5}"
   )
-  if [[ "${scale_image}" == "True" ]]; then
-    args+=(--scale "${scale}")
-  fi
   if [[ "${save_png}" != "1" ]]; then
     args+=(--no_save_patch_images)
   else
@@ -261,7 +262,8 @@ case "${COHORT}" in
     mapfile -t ROWS < <("${PYTHON}" - <<'PY'
 import sys
 from pathlib import Path
-repo = Path("/home/lingyu/ssd2/Python/Hist2Pheno")
+import os
+repo = Path(os.environ["REPO"])
 sys.path.insert(0, str(repo / "code" / "CODEX_hcc"))
 from match_codex_cells_with_pixel import list_aligned_annotated_regions
 df = list_aligned_annotated_regions()

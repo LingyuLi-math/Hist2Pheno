@@ -67,10 +67,14 @@ def feature_manifest(directory, cache_dir, *, allow_active=False):
         try:state=json.loads(extraction.read_text()).get("state")
         except (OSError,ValueError):state="invalid"
         if state!="completed":raise RuntimeError(f"Embedding extraction is not complete: {directory}")
-    from embedding_store import uses_hdf5,descriptor
+    from embedding_store import uses_hdf5,descriptor,storage_format,LEGACY_FILENAME,FILENAME
     if uses_hdf5(directory):
         if not allow_active and any(directory.glob("*.pth")):
             raise RuntimeError("Mixed active .pth and HDF5 stores; archive legacy files or explicitly choose pth")
+        if not allow_active:
+            inactive = LEGACY_FILENAME if storage_format(directory)=='h5ad' else FILENAME
+            if (directory/inactive).exists():
+                raise RuntimeError('Mixed active h5ad and legacy HDF5 stores; archive the inactive generation')
         result=descriptor(directory,cache_dir)
         if not allow_active:_validate_extraction_contract(directory,cache_dir,result)
         return result
@@ -144,11 +148,14 @@ def completed_run(marker, stamp, root, required=()):
 def _validate_extraction_contract(directory,cache_dir,short):
     extraction=Path(directory)/"embedding_manifest.json"
     contract=json.loads(extraction.read_text())
+    # 2026.10.29: this known partial merge included source relabeling; all consumers fail closed.
+    if contract.get('extractor_sha256')=='eef1f45b84f6b1f1aa27d1edfa4d83cfae45e2d3bcd09552e6d3b89436b3d9f7':
+        raise RuntimeError("Known partial h5ad migration provenance cannot be certified; re-run current extraction")
     if contract.get('tokens')!=short:
         raise RuntimeError(f"Tokens changed after completed extraction: {directory}; rerun extraction")
     from pipeline_provenance import file_record
     weight=contract.get('encoder_weights')
-    if contract.get('method') in ('UNI','UNI2') and not weight:
+    if contract.get('method') in ('UNI','UNI2','Virchow2') and not weight:
         raise RuntimeError("Embedding manifest has no encoder weight fingerprint; rerun extraction")
     records=list(contract.get('inputs',{}).values())+([weight] if weight else [])
     for record in records:

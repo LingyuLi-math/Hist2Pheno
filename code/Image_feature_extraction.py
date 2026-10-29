@@ -444,6 +444,11 @@ def embed_patch_subtensors(
         return subtensors_list[1:]
     if method == "Virchow2":
         lay = model(p_image)
+        # 2026.10.29, reject pooled/wrong-token outputs / 防止错误维度被静默保存。
+        if lay.ndim!=3 or lay.shape[0]!=1 or lay.shape[-1]!=1280 or lay.shape[1]<=5:
+            raise ValueError(f"Unexpected Virchow2 output {tuple(lay.shape)}; expected (1,5+patch_tokens,1280)")
+        expected=(p_image.shape[-2]//14)*(p_image.shape[-1]//14)
+        if lay.shape[1]-5!=expected:raise ValueError("Virchow2 token count does not match the actual crop")
         subtensors = lay[:, 5:]
         return torch.split(subtensors, 1, dim=1)
     if method == "UNI":
@@ -734,7 +739,9 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
 
     # Add HIPT to path
     sys.path.append("./FineST")
-    from HIPT.HIPT_4K import vision_transformer as vits
+    # 2026.10.29, lazy HIPT import / Virchow2 不依赖 HIPT 源码或包。
+    if method == "HIPT":
+        from HIPT.HIPT_4K import vision_transformer as vits
 
     ######################################################################
     # HIPT-vit_256(): 
@@ -823,19 +830,44 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
         # 14 px / 7 µm crop through. The published card is 224 px. This forward
         # still drops the class token and four registers (lay[:, 5:]) and
         # keeps every remaining 1280-d token. A 14 px crop is one token.
-        if patch_size % 14 != 0:
-            logger.warning(
-                "Virchow2 ViT patch is 14; patch_size=%s is not a multiple of 14",
-                patch_size,
-            )
+        if patch_size < 14 or patch_size % 14 != 0:
+            raise ValueError(f"Virchow2 patch_size must be a positive multiple of 14, got {patch_size}")
+        # 2026.10.29, freeze actual Virchow2 weights / 记录并加载同一份真实权重。
+        from huggingface_hub import hf_hub_download
+        revision = os.environ.get("VIRCHOW2_REVISION", "main")
+        requested_revision = revision
+        weight_file = os.environ.get("VIRCHOW2_WEIGHTS", "").strip()
+        if not weight_file:
+            try:
+                weight_file = hf_hub_download("paige-ai/Virchow2", filename="model.safetensors", revision=revision)
+            except Exception as exc:
+                # Only a missing filename may fall back; auth/network failures must surface.
+                if type(exc).__name__ not in ("EntryNotFoundError", "RemoteEntryNotFoundError"):
+                    raise
+                weight_file = hf_hub_download("paige-ai/Virchow2", filename="pytorch_model.bin", revision=revision)
+        if not os.path.isfile(weight_file):raise FileNotFoundError(weight_file)
+        _parts = _PipelinePath(weight_file).parts
+        if "snapshots" in _parts:
+            revision = _parts[_parts.index("snapshots")+1]
+        config_file = hf_hub_download("paige-ai/Virchow2", filename="config.json", revision=revision)
+        _encoder_record = _pp.file_record(weight_file, _embedding_root/".provenance")
+        _encoder_protocol = {"architecture":"paige-ai/Virchow2", "revision":revision,"requested_revision":requested_revision,
+            "config_sha256":_pp.sha256(config_file), "timm_version":getattr(timm,"__version__","unknown"),
+            "token_selection":"patch_tokens_after_cls_and_four_registers", "normalization":"imagenet",
+            "dynamic_img_size":True, "patch_size":int(patch_size)}
         model = timm.create_model(
-            "hf-hub:paige-ai/Virchow2",
-            pretrained=True,
-            mlp_layer=SwiGLUPacked,
-            act_layer=torch.nn.SiLU,
-            ## 2026.10.29 Virchow2 now accepts the same 14 px crop as UNI2
-            dynamic_img_size=True,    
+            f"hf-hub:paige-ai/Virchow2@{revision}", pretrained=False,
+            mlp_layer=SwiGLUPacked, act_layer=torch.nn.SiLU,
+            dynamic_img_size=True,
         )
+        if weight_file.endswith(".safetensors"):
+            from safetensors.torch import load_file
+            state_dict=load_file(weight_file)
+        else:
+            state_dict=torch.load(weight_file,map_location="cpu",weights_only=True)
+            if isinstance(state_dict,dict) and "state_dict" in state_dict:state_dict=state_dict["state_dict"]
+        model.load_state_dict(state_dict,strict=True)
+        del state_dict
         model.to(device)
         model = model.eval()
 
@@ -876,12 +908,19 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
             "vit_large_patch16_224.dinov2.uni_mass100k"
         )
         os.makedirs(local_dir, exist_ok=True)  # create directory if it does not exist
-        weight_file = hf_hub_download(
-            repo_id="MahmoodLab/UNI",
-            filename="pytorch_model.bin",
-            local_dir=local_dir,
-            force_download=False    # True: download even if already in cache
-        )
+        # 2026.10.29, UNI shares the verified h5ad/A2 pipeline / 独立 UNI 权重与协议。
+        requested_revision=os.environ.get("UNI_REVISION","main")
+        weight_file=os.environ.get("UNI_WEIGHTS","").strip()
+        if not weight_file:
+            weight_file = hf_hub_download(
+                repo_id="MahmoodLab/UNI", filename="pytorch_model.bin",
+                local_dir=local_dir, force_download=False, revision=requested_revision,
+            )
+        if not os.path.isfile(weight_file):raise FileNotFoundError(weight_file)
+        _encoder_protocol={"architecture":"vit_large_patch16_224", "hf_repo":"MahmoodLab/UNI",
+            "requested_revision":requested_revision,"timm_version":getattr(timm,"__version__","unknown"),
+            "patch_size":int(patch_size),"token_selection":"class_token",
+            "normalization":"imagenet","dynamic_img_size":True}
 
         model = timm.create_model(
             "vit_large_patch16_224", 
@@ -892,7 +931,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
             dynamic_img_size=True
         )
         _encoder_record=_pp.file_record(weight_file,_embedding_root/".provenance")
-        model.load_state_dict(torch.load(weight_file, map_location="cpu"), strict=True)
+        model.load_state_dict(torch.load(weight_file, map_location="cpu",weights_only=True), strict=True)
 
         def eval_transforms():
             mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
@@ -963,7 +1002,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
             logger.error(error_msg)
             raise ImportError(error_msg)
 
-        if patch_size % 14 != 0:
+        if patch_size < 14 or patch_size % 14 != 0:
             logger.warning(
                 "UNI2 ViT patch is 14; patch_size=%s is not a multiple of 14",
                 patch_size,
@@ -1006,6 +1045,13 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
         )
         _encoder_record=_pp.file_record(weight_file,_embedding_root/".provenance")
         model.load_state_dict(torch.load(weight_file, map_location="cpu"), strict=True)
+
+        # 2026.10.29, new UNI2 training also freezes the embedding protocol.
+        _encoder_protocol={"architecture":"vit_giant_patch14_224", "reg_tokens":8,
+            "depth":24,"num_heads":24,"embed_dim":1536,"mlp":"SwiGLUPacked",
+            "patch_size":int(patch_size),"token_selection":"class_token",
+            "normalization":"imagenet","dynamic_img_size":True,
+            "timm_version":getattr(timm,"__version__","unknown")}
 
         def eval_transforms():
             mean, std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
@@ -1182,9 +1228,13 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
         _archive.mkdir(parents=True,exist_ok=True)
         _pipeline_shutil.move(str(_embedding_root/"embeddings.h5"),str(_archive/"embeddings.h5"))
     if _pp.sha256(__file__)!=_extractor_implementation_sha:raise RuntimeError("Extraction code changed during run")
+    _weight=locals().get("weight_file")
+    _encoder=locals().get("_encoder_record") or (_pp.file_record(_weight,_embedding_root/".provenance") if _weight else None)
+    _protocol=locals().get("_encoder_protocol",{})
     if _writer is not None:_writer.commit({"prefix":dataset,"method":method,"patch_size":patch_size,
         "inputs":_source_inputs,"extractor_sha256":_extractor_implementation_sha,
-        "scale_image":bool(scale_image),"scale":float(scale),"coordinate_system":"original_image_pixels"})
+        "scale_image":bool(scale_image),"scale":float(scale),"coordinate_system":"original_image_pixels",
+        "encoder_weights":_encoder,"encoder_protocol":_protocol})
     _manifest=_pp.feature_manifest(_embedding_root,_embedding_root/".provenance",allow_active=True)
     _weight=locals().get("weight_file")
     _encoder=locals().get("_encoder_record") or (_pp.file_record(_weight,_embedding_root/".provenance") if _weight else None)
@@ -1192,7 +1242,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
         raise RuntimeError("Encoder weights changed during extraction")
     _pp.atomic_json(_extraction_marker,{"state":"completed","version":_pp.VERSION,
         "inputs":_source_inputs,"method":method,"patch_size":patch_size,"storage_format":_storage,
-        "scale_image":bool(scale_image),"scale":float(scale),"encoder_weights":_encoder,
+        "scale_image":bool(scale_image),"scale":float(scale),"encoder_weights":_encoder,"encoder_protocol":_protocol,
         "extractor_sha256":_extractor_implementation_sha,"runtime":{"torch":torch.__version__,"numpy":np.__version__},"tokens":_manifest,"n_saved":n_saved})
     end_time = time.time()
     execution_time = end_time - start_time

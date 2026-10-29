@@ -87,8 +87,8 @@ predict-ready: h5ad + predict for slides that already have UNI (see predict_read
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/Visium/HCC/nature_data/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
-  data/Visium/HCC/nature_data/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/Visium/HCC/nature_data/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+  data/Visium/HCC/nature_data/pred_uni_A2/{sample}/{sample}_stardist_pred.h5ad
+  data/Visium/HCC/nature_data/pred_uni_A2/{sample}/{sample}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/HCC_nature/Pred_visual_hcc_nature.ipynb

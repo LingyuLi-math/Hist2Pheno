@@ -86,8 +86,8 @@ CUDA_DEVICE=0               GPU
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/Visium/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
-  data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/Visium/BRCA/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+  data/Visium/BRCA/pred_uni_A2/{sample}/{sample}_stardist_pred.h5ad
+  data/Visium/BRCA/pred_uni_A2/{sample}/{sample}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/BRCA/Pred_visual_brca.ipynb

@@ -81,8 +81,8 @@ Usage: MPP_UM=<µm/px> bash code/External_val/HCC/demo.sh {dry-run|features|h5ad
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/Visium/HCC/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
-  data/Visium/HCC/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/Visium/HCC/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+  data/Visium/HCC/pred_uni_A2/{sample}/{sample}_stardist_pred.h5ad
+  data/Visium/HCC/pred_uni_A2/{sample}/{sample}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebook: code/External_val/HCC/Pred_visual_hcc.ipynb

@@ -9,7 +9,7 @@
 
 ## 2026.10.15 Predict with new model  
 # 用批次脚本按顺序跑 20 本 绘图 notebook（IPython + 无界面 Agg），不改源文件。
-# 默认 SAVE_FIGURES=1，300 dpi PNG 写到各队列的 pred_pancancer_section/figures/。
+# 默认 SAVE_FIGURES=1，300 dpi PNG 写到各队列的 pred_uni_A2/figures/。
 # cd /home/lingyu/ssd2/Python/Hist2Pheno
 # conda activate SeededNTM
 # screen -S extval_nb
@@ -43,10 +43,11 @@ usage() {
   cat <<EOF
 Usage: bash code/External_val/demo.sh notebooks
 
-Runs Pred_visual_*.ipynb sequentially (IPython + Agg). Source notebooks are
+Runs the selected encoder A2 notebooks sequentially (IPython + Agg). Source notebooks are
 not rewritten. Default SAVE_FIGURES=1 writes 300 dpi PNGs under each cohort
-pred_pancancer_section/figures/.
+pred_uni_A2/figures/.
 
+EMBEDDER=uni          uni | uni2 | virchow2 (A2 defaults)
 ONLY=BRCA,CRC          subset by path substring
 SAVE_FIGURES=0         display-only (no PNG)
 STOP_ON_ERROR=1        halt at the first failure

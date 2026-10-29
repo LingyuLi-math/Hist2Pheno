@@ -83,10 +83,14 @@ def simple_cohort(name: str, repo: Path | None = None, embedder: str = "uni") ->
     root = Path(repo) if repo is not None else Path(__file__).resolve().parents[2]
     tag = str(embedder).lower()
     extra: dict = {}
-    if tag == "uni2":
+    if tag == "uni":
+        extra = uni_overrides(root)
+    elif tag == "uni2":
         extra = uni2_overrides(root)
+    elif tag == "virchow2":
+        extra = virchow2_overrides(root)
     elif tag != "uni":
-        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni or uni2")
+        raise SystemExit(f"unknown embedder {embedder!r}. Choose uni, uni2 or virchow2")
     return ExternalCohort(
         name=str(display),
         data_root=root / rel,
@@ -155,6 +159,24 @@ def uni2_overrides(repo: Path) -> dict:
         "checkpoint": checkpoint,
         "project_tag": "project_all_UNI2",
     }
+def uni_overrides(repo: Path) -> dict:
+    # 2026.10.29, UNI A2 never falls back to result_all_spatial / UNI 独立 A2。
+    root=Path(repo)
+    ckpt=Path(os.environ.get("UNI_CKPT",str(root/"data/PanCancer/result_uni_A2/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt")))
+    if not ckpt.is_absolute():ckpt=root/ckpt
+    return {"patch_size":16,"method":"UNI","embedding_dirname":"project_all_UNI",
+            "pred_dirname":os.environ.get("UNI_PRED_DIRNAME","pred_uni_A2"),
+            "checkpoint":ckpt,"project_tag":"project_all_UNI"}
+
+def virchow2_overrides(repo: Path) -> dict:
+    # 2026.10.29, never fall back to UNI2 weights / Virchow2 使用独立训练产物。
+    root=Path(repo)
+    ckpt=Path(os.environ.get("VIRCHOW2_CKPT",str(root/"data/PanCancer/result_virchow2_A2/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt")))
+    if not ckpt.is_absolute():ckpt=root/ckpt
+    return {"patch_size":14,"method":"Virchow2","embedding_dirname":"project_all_Virchow2",
+            "pred_dirname":os.environ.get("VIRCHOW2_PRED_DIRNAME","pred_virchow2_A2"),
+            "checkpoint":ckpt,"project_tag":"project_all_Virchow2"}
+
 _SCALER_REL = Path("data/PanCancer/result_all_spatial/scaler.joblib")
 
 
@@ -275,19 +297,16 @@ class ExternalCohort:
     project_tag: str = "project_all_UNI"
     method: str = "UNI"
     embedding_dirname: str = "project_all_UNI"
-    pred_dirname: str = "pred_pancancer_section"
+    pred_dirname: str = "pred_uni_A2"
 
     def __post_init__(self) -> None:
         self.data_root = Path(self.data_root)
         self.repo = Path(self.repo)
         if self.checkpoint is None:
-            self.checkpoint = self.repo / _CKPT_REL
+            self.checkpoint = uni_overrides(self.repo)["checkpoint"] if self.method=="UNI" else self.repo / _CKPT_REL
         if self.scaler is None:
-            # UNI2 (and any later embedder) keeps its scaler inside the checkpoint artifact.
-            if self.method == "UNI":
-                self.scaler = self.repo / _SCALER_REL
-            else:
-                self.scaler = Path(str(self.checkpoint) + ".artifact.pt")
+            # All encoders load their own train-fitted scaler from the selected artifact.
+            self.scaler = Path(str(self.checkpoint) + ".artifact.pt")
         code = Path(__file__).resolve().parent.parent
         for folder in (code, code / "Hist2Pheno_pkg"):
             text = str(folder)
@@ -471,13 +490,13 @@ class ExternalCohort:
             n_rows = n_csv_rows(paths["csv"])
             have = n_pth(paths["emb"])
             # 2026.10.28, replace 90% heuristic with exact extraction source/token manifest
-            storage=os.environ.get("HIST2PHENO_EMBEDDING_STORAGE","hdf5" if self.method in ("UNI","UNI2") else "pth")
-            if storage not in ("hdf5","pth"):raise ValueError("HIST2PHENO_EMBEDDING_STORAGE must be hdf5 or pth")
-            from embedding_store import uses_hdf5,migrate_pth
-            if not force and storage=="hdf5" and not uses_hdf5(paths["emb"]) and _import_sibling("external_consistency").extraction_complete(self,sample):
+            storage=os.environ.get("HIST2PHENO_EMBEDDING_STORAGE","h5ad")
+            if storage not in ("h5ad","pth"):raise ValueError("HIST2PHENO_EMBEDDING_STORAGE must be h5ad or pth")
+            from embedding_store import storage_format,migrate_pth
+            if not force and storage=="h5ad" and storage_format(paths["emb"])!="h5ad" and _import_sibling("external_consistency").extraction_complete(self,sample):
                 migrate_pth(paths["emb"],archive_pth=True)
-            if not force and _import_sibling("external_consistency").extraction_complete(self,sample) and (storage=="hdf5")==uses_hdf5(paths["emb"]):
-                print(f"[features] skip {sample}: {have:,} .pth already (FORCE=1 to redo)", flush=True)
+            if not force and _import_sibling("external_consistency").extraction_complete(self,sample) and storage==storage_format(paths["emb"]):
+                print(f"[features] skip {sample}: {have:,} embeddings already (FORCE=1 to redo)", flush=True)
                 continue
             paths["emb"].mkdir(parents=True, exist_ok=True)
             paths["log"].mkdir(parents=True, exist_ok=True)
@@ -618,6 +637,8 @@ class ExternalCohort:
         scaler = _import_sibling("checkpoint_artifact").checkpoint_scaler(self.checkpoint)
         saved=model.checkpoint_metadata.get("head_classes")
         if saved and all(saved.values()):classes=saved
+        from embedding_backend import validate_model
+        validate_model(model,scaler,{"UNI":"uni","UNI2":"uni2","Virchow2":"virchow2"}.get(self.method,"uni"))
         return model, scaler, classes
 
     # 2026.10.24, physical geometry is per slide / 外部图像不沿用训练图像的像素尺寸
@@ -1188,12 +1209,12 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0].upper() not in _SIMPLE_COHORTS:
         raise SystemExit(
             "usage: python code/Hist2Pheno_pkg/external_validation.py "
-            f"{{{known}}} [uni|uni2] {{dry-run|features|h5ad|predict|probs|plot}}\n"
+            f"{{{known}}} [uni|uni2|virchow2] {{dry-run|features|h5ad|predict|probs|plot}}\n"
             "BRCA / Prostate / BRCA_ST: use code/External_val/<cohort>/*_external.py"
         )
     name = argv.pop(0)
     embedder = "uni"
-    if argv and argv[0].lower() in {"uni", "uni2"}:
+    if argv and argv[0].lower() in {"uni", "uni2", "virchow2"}:
         embedder = argv.pop(0).lower()
     return simple_cohort(name, embedder=embedder).main(argv)
 

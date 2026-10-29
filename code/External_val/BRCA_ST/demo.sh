@@ -77,8 +77,8 @@ Usage: bash code/External_val/BRCA_ST/demo.sh {dry-run|features|h5ad|predict|pro
 Checkpoint: data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
 Outputs:
   data/ST/BRCA/project_all_UNI/{sample}/ImgEmbeddings_all_stardist/sc_pth_16_16/
-  data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_stardist_pred.h5ad
-  data/ST/BRCA/pred_pancancer_section/{sample}/{sample}_l2_probs.npz
+  data/ST/BRCA/pred_uni_A2/{sample}/{sample}_stardist_pred.h5ad
+  data/ST/BRCA/pred_uni_A2/{sample}/{sample}_l2_probs.npz
 Figures are drawn in the notebook (SAVE_FIGURES=False by default).
 
 Notebooks: code/External_val/BRCA_ST/Pred_visual_brca_st_{A,B,C,D,E,F,G,H}.ipynb
