@@ -469,7 +469,7 @@ def embed_patch_subtensors(
 
 # 2026.10.28, serialize extraction writers / 同一 embedding 目录禁止两个提取进程交叉写
 
-def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,output_img,output_pth,logging_folder,scale=DEFAULT_SCALE,save_patch_images=True,embedding_storage=None,embedding_dtype="float32",embedding_chunk_rows=1024,embedding_compression="lzf"):
+def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,output_img,output_pth,logging_folder,scale=DEFAULT_SCALE,save_patch_images=False,embedding_storage=None,embedding_dtype="float32",embedding_chunk_rows=1024,embedding_compression="lzf"):
     import sys
     from pathlib import Path
     package=Path(__file__).resolve().parent/"Hist2Pheno_pkg"
@@ -491,7 +491,7 @@ def main(dataset,position_path,rawimage_path,scale_image,method,patch_size,outpu
 def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale_image: bool, 
          method: str, patch_size: int, output_img: str, output_pth: str, 
          logging_folder: str, scale: float = DEFAULT_SCALE,
-         save_patch_images: bool = True, *, _writer=None, _storage="pth"):
+         save_patch_images: bool = False, *, _writer=None, _storage="pth"):
     """
     Extract image features from spatial transcriptomics data.
     
@@ -552,6 +552,7 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
     scale : float, optional
         Image scaling factor when scale_image=True (default: 0.5)
     save_patch_images : bool, optional
+        Default False. PNG crops are written only when explicitly enabled.
         Write PNG crops under output_img (default True). Set False for large
         Xenium CRC P1/P5 WSIs so only .pth embeddings are stored.
         
@@ -630,6 +631,13 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
     # Set device
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     logger.info(f"Using device: {device}")
+    # 2026.10.29, explicit output contract / 默认不写 PNG、不写单核 .pth。
+    logger.info(f"Output contract: storage={_storage}; save_patch_images={bool(save_patch_images)}")
+    if _writer is not None:
+        logger.info(f"H5AD target: {_embedding_root/'embeddings.h5ad'}; published only after this section completes")
+        logger.info("Progress names identify cells; no per-nucleus .pth files are written in h5ad mode")
+    if save_patch_images:logger.info(f"PNG debug crops explicitly enabled: {output_img}")
+    else:logger.info("PNG crops disabled; existing images/legacy archives are not deleted")
 
     # Load tissue position file
     # Note: When scale_image=True and position file is .parquet format,
@@ -1176,7 +1184,8 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                     )
                 saved_name = patch_base_name + ".pth"
                 if i % step == 0:
-                    logger.info(f"saved_name: {i}, {saved_name}")
+                    if _writer is None:logger.info(f"saved_pth: {i}, {saved_name}")
+                    else:logger.info(f"h5ad_append: input_row={i}, cell={patch_base_name}")
                 if any(not torch.isfinite(value).all() for value in subtensors_list):
                     raise ValueError("Encoder produced NaN/Inf; extraction remains incomplete")
                 if _writer is None:
@@ -1199,7 +1208,8 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
                 )
                 saved_name = f"{stem}.pth"
                 if i % step == 0:
-                    logger.info(f"saved_name: {i}, {saved_name}")
+                    if _writer is None:logger.info(f"saved_pth: {i}, {saved_name}")
+                    else:logger.info(f"h5ad_append: input_row={i}, cell={stem}")
                 if any(not torch.isfinite(value).all() for value in subtensors_list):
                     raise ValueError("Encoder produced NaN/Inf; extraction remains incomplete")
                 if _writer is None:
@@ -1244,6 +1254,8 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
         "inputs":_source_inputs,"method":method,"patch_size":patch_size,"storage_format":_storage,
         "scale_image":bool(scale_image),"scale":float(scale),"encoder_weights":_encoder,"encoder_protocol":_protocol,
         "extractor_sha256":_extractor_implementation_sha,"runtime":{"torch":torch.__version__,"numpy":np.__version__},"tokens":_manifest,"n_saved":n_saved})
+    if _writer is not None:
+        logger.info(f"Published completed h5ad: {_embedding_root/'embeddings.h5ad'}; cells={n_saved}; per-cell .pth written=0")
     end_time = time.time()
     execution_time = end_time - start_time
     logger.info(
@@ -1270,11 +1282,12 @@ if __name__ == '__main__':
     parser.add_argument('--logging', required=True, help='Logging folder path')
     parser.add_argument('--scale', type=float, default=DEFAULT_SCALE, 
                        help=f'Image scale factor (default: {DEFAULT_SCALE})')
-    parser.add_argument(
-        '--no_save_patch_images',
-        action='store_true',
-        help='Do not write PNG crops under --output_img; embed in memory and save in the selected format (default: h5ad).',
-    )
+    png_options = parser.add_mutually_exclusive_group()
+    png_options.add_argument('--save_patch_images', dest='save_patch_images', action='store_true',
+                             help='Explicit debug option: write PNG crops (default: disabled).')
+    png_options.add_argument('--no_save_patch_images', dest='save_patch_images', action='store_false',
+                             help='Do not write PNG crops (default).')
+    parser.set_defaults(save_patch_images=False)
     args = parser.parse_args()
 
     # Convert string to boolean for scale_image
@@ -1292,7 +1305,7 @@ if __name__ == '__main__':
         args.output_pth, 
         args.logging,
         args.scale,
-        save_patch_images=not args.no_save_patch_images,
+        save_patch_images=args.save_patch_images,
         embedding_storage=args.embedding_storage,embedding_dtype=args.embedding_dtype,
         embedding_chunk_rows=args.embedding_chunk_rows,embedding_compression=args.embedding_compression,
     )

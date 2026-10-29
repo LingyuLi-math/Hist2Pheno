@@ -25,7 +25,7 @@
 # 2026.10.26 LLY - stardist for brca
 #####################################################
 # stardist — every segmented nucleus → ImgEmbeddings_all_stardist/sc_pth_14_14
-# SAVE_PATCH_IMAGES=0 skips the PNG crops.
+# PNG crops are disabled by default; SAVE_PATCH_IMAGES=1 explicitly enables debugging.
 #   cd /home/lingyu/ssd2/Python/Hist2Pheno
 #   CUDA_DEVICE=0
 #   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh lung stardist "${CUDA_DEVICE}"
@@ -37,6 +37,11 @@
 #   SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gbm stardist "${CUDA_DEVICE}"
 
 set -euo pipefail
+
+# 2026.10.29, PNG is opt-in for every cohort / 所有队列默认只保存 h5ad。
+SAVE_PATCH_IMAGES="${SAVE_PATCH_IMAGES:-0}"
+if [[ ! "${SAVE_PATCH_IMAGES}" =~ ^[01]$ ]]; then echo "SAVE_PATCH_IMAGES must be 0 or 1" >&2; exit 1; fi
+
 
 if [[ $# -ne 3 ]]; then
   echo "Usage: $0 <lung|brca|crc|hcc|pdac|gist|gbm> <gt|stardist> <gpu>" >&2
@@ -124,6 +129,7 @@ run_one() {
     --output_img "${out_root}/sc_pth_${PATCH_SIZE}_${PATCH_SIZE}_image"
     --output_pth "${pth_dir}"
     --logging "${out_root}/"
+    --embedding-storage h5ad
   )
   if [[ "${scale_image}" == "True" ]]; then
     args+=(--scale "${scale}")
@@ -131,9 +137,12 @@ run_one() {
   if [[ "${save_png}" != "1" ]]; then
     args+=(--no_save_patch_images)
   else
+    args+=(--save_patch_images)
     mkdir -p "${out_root}/sc_pth_${PATCH_SIZE}_${PATCH_SIZE}_image"
   fi
   echo "RUN ${dataset}"
+  echo "  storage:  h5ad; PNG debug crops=${save_png}"
+  echo "  final:    ${pth_dir}/embeddings.h5ad (published at section completion)"
   echo "  HE:       ${he#${REPO}/}"
   echo "  position: ${position#${REPO}/}"
   echo "  output:   ${pth_dir#${REPO}/}"
@@ -170,7 +179,7 @@ case "${COHORT}" in
         sub="ImgEmbeddings_all_stardist"
       fi
       run_one "${sample}" "${pos}" "${he_tifs[0]}" True "${SCALE}" \
-        "${case_dir}/${sample}_project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+        "${case_dir}/${sample}_project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-0}"
     done
     ;;
   brca)
@@ -192,7 +201,7 @@ case "${COHORT}" in
         sub="ImgEmbeddings_all_stardist"
       fi
       run_one "sc_${sample}" "${pos}" "${he}" True "${SCALE}" \
-        "${BRCA}/Cases/${sample}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+        "${BRCA}/Cases/${sample}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-0}"
     done
     ;;
   crc)
@@ -214,10 +223,7 @@ case "${COHORT}" in
         pos="${CRC}/StarDist_Segment/${key}/${key}_Float_prob0.01_nms_0.3.csv"
         sub="ImgEmbeddings_all_stardist"
       fi
-      save="${SAVE_PATCH_IMAGES:-}"
-      if [[ -z "${save}" ]]; then
-        if [[ "${sample}" == "P2CRC" ]]; then save=1; else save=0; fi
-      fi
+      save="${SAVE_PATCH_IMAGES:-0}"
       run_one "sc_${sample}" "${pos}" "${he}" True "${SCALE}" \
         "${CRC}/Cases/${sample}/project_all_UNI2/${sub}" "${save}"
     done
@@ -257,7 +263,7 @@ PY
         sub="ImgEmbeddings_all_stardist"
       fi
       run_one "${dataset}" "${pos}" "${he}" False "" \
-        "${S4769}/HE/${he_key}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+        "${S4769}/HE/${he_key}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-0}"
     done
     ;;
   pdac|gist)
@@ -294,7 +300,7 @@ PY
         sub="ImgEmbeddings_all_stardist"
       fi
       run_one "sc_${acq}" "${pos}" "${he}" False "" \
-        "${S1167}/${acq}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+        "${S1167}/${acq}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-0}"
     done
     ;;
   gbm)
@@ -314,7 +320,7 @@ PY
         sub="ImgEmbeddings_all_stardist"
       fi
       run_one "sc_${sample}" "${pos}" "${he}" False "" \
-        "${GBM}/Cases/${sample}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-1}"
+        "${GBM}/Cases/${sample}/project_all_UNI2/${sub}" "${SAVE_PATCH_IMAGES:-0}"
     done
     ;;
   *)

@@ -15,7 +15,7 @@ LEGACY_SCHEMA='hist2pheno-embeddings-v1'
 PREVIOUS_EXTRACTOR_SHA='1c8abd777833ee2e1433045de4a8d98aae0d4ed404f62c6819285b2dcdeb1c22'
 # Only reviewed pre-relabeling UNI/UNI2 extractors are compatible; the 2026.10.29 partial merge must be re-extracted.
 BASELINE_EXTRACTOR_SHA='11d6296c57318eb5592eefd3a6161ff29e196005b7b7b94570ea8b79e7396497'
-DELIVERED_EXTRACTOR_SHA='bea817c0cd05331b2044486ea393bfac73b81c2c75f1a710f4d04ae7d9dd7b9d'
+DELIVERED_EXTRACTOR_SHA='91292155896abd9d612b9ee3509c4487553d48be4804585a5a361f5655775d1c'
 
 
 def extraction_metadata(directory):
@@ -53,6 +53,8 @@ def available(directory):
 
 
 def compatible_extractor(meta,current_sha):
+    # This reviewed change only disables debug PNG defaults/logs; vector computation is unchanged.
+    if current_sha==DELIVERED_EXTRACTOR_SHA and meta.get('extractor_sha256')=='bea817c0cd05331b2044486ea393bfac73b81c2c75f1a710f4d04ae7d9dd7b9d':return True
     return meta.get('extractor_sha256')==current_sha or (
         current_sha==DELIVERED_EXTRACTOR_SHA and meta.get('method') in ('UNI','UNI2') and meta.get('extractor_sha256') in (BASELINE_EXTRACTOR_SHA,PREVIOUS_EXTRACTOR_SHA))
 
