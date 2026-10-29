@@ -26,3 +26,20 @@ CUDA_DEVICE=0 bash code/External_val/Lung_Incomplete/demo.sh predict
 
 Open `Pred_visual_lung_incomplete.ipynb`. HE is `{sample}-HE.tif` next to the
 feature h5ad.
+
+## UNI2 A2
+
+`demo_uni2.sh` scores the paired_v2 A2 weight (fold 1, spatial k=8 mean, no gate):
+
+`data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt`
+
+Predictions go to `data/PanCancer/pred_uni2_A2_bestmlp_paired_v2_seed42/unlabel/Lung_Incomplete/`.
+This does not rewrite `pred_all_spatial/incomplete_lung/`.
+
+```bash
+CUDA_DEVICE=0 bash code/External_val/Lung_Incomplete/demo_uni2.sh predict
+```
+
+Open `Pred_visual_lung_incomplete_uni2_A2.ipynb`. It uses the same 20-slide
+order as the UNI notebook (top 5 matched L2 AUROC first) and reads the A2
+prediction directory.

@@ -457,18 +457,19 @@ bash code/External_val/demo.sh notebooks
 
 ### UNI2 on the same external slides
 
-The UNI commands above stay on `pred_pancancer_section/`. UNI2 uses `patch_size=14` and writes `project_all_UNI2/` plus `pred_uni2_*_paired_v2_seed42/`. Where `demo_uni2.sh` exists as a forwarder, it loads the paired_v2 A3 weight. A2 is the sibling script `demo_uni2_A2.sh`. Notebooks are `Pred_visual_*_uni2_A3.ipynb` and `Pred_visual_*_uni2_A2.ipynb` (NPC, HCC_unlabel, and PDAC_unlabel already had both; BRCA, BRCA_ST, HCC Nature, and Prostate gained the A3 copies). `features` skips a slide once `.pth` files reach 90% of the StarDist CSV. Do not pass `FORCE=1` to redo only the missing slides, and do not start A2 and A3 `features` together: they share `project_all_UNI2`.
+The UNI commands above stay on `pred_pancancer_section/`. UNI2 uses `patch_size=14` and writes `project_all_UNI2/` plus `pred_uni2_*_paired_v2_seed42/`. `demo_uni2.sh` loads the paired_v2 A2 weight (fold 1, k=8 mean, no gate). `demo_uni2_A3.sh` loads the paired_v2 A3 weight (fold 0, k=8 mean with gate). Notebooks are `Pred_visual_*_uni2_A2.ipynb` and `Pred_visual_*_uni2_A3.ipynb`. Lung Incomplete’s A2 notebook is [`Pred_visual_lung_incomplete_uni2_A2.ipynb`](code/External_val/Lung_Incomplete/Pred_visual_lung_incomplete_uni2_A2.ipynb). A finished slide is skipped when `embedding_manifest.json` is completed for the current extractor. Do not start two `features` jobs on the same `project_all_UNI2` tree.
 
 | Cohort | UNI2 tokens | Predict |
 |--------|-------------|---------|
 | NPC | both slides done | A3 and A2, including `STAR_PROB_MIN=0.40` |
 | Visium BRCA | 3/3 done | A3 predictions are in `pred_uni2_A3_bestmlp_paired_v2_seed42/` |
-| Visium HCC | 5/7; still need `P5_T`, `P7_T` | `demo_uni2.sh` still targets the removed morning checkpoint for predict |
-| HCC Nature | 2/17; still need `L-8003_HE` through `L-8017_1_HE.ome` | `demo_uni2.sh` → A3; ready slides use `predict_ready_uni2.sh` |
-| HER2ST | 24/36; still need `HE_BT23567_D2` onward (12 slides) | `demo_uni2.sh` → A3 |
-| Prostate | 4/35; still need `Patient_1__H2_2` onward (31 slides) | `demo_uni2.sh` → A3 |
-| Visium CRC | the one P2 slide has no tokens | `demo_uni2.sh` still targets the removed morning checkpoint for predict |
-| Lung Incomplete, HCC rest, PDAC Incomplete | h5ads exist; no `sc_pth_14_14` | `demo_uni2.sh` does not extract tokens |
+| Visium HCC | 5/7; still need `P5_T`, `P7_T` | `demo_uni2.sh` loads paired_v2 A2 |
+| HCC Nature | 2/17; still need `L-8003_HE` through `L-8017_1_HE.ome` | `demo_uni2.sh` → A2; A3 is `demo_uni2_A3.sh`. Ready slides: `predict_ready_uni2.sh` (A3) and `predict_ready_uni2_A2.sh` |
+| HER2ST | 24/36; still need `HE_BT23567_D2` onward (12 slides) | `demo_uni2.sh` → A2; A3 is `demo_uni2_A3.sh` |
+| Prostate | 4/35; still need `Patient_1__H2_2` onward (31 slides) | `demo_uni2.sh` → A2; A3 is `demo_uni2_A3.sh` |
+| Visium CRC | the one P2 slide has no tokens | `demo_uni2.sh` loads paired_v2 A2 |
+| Lung Incomplete | `{sample}_project_all_UNI2/.../sc_pth_14_14` | `demo_uni2.sh` (A2). Notebook: `Pred_visual_lung_incomplete_uni2_A2.ipynb` |
+| HCC rest, PDAC Incomplete | UNI h5ads exist; UNI2 tokens under `project_all_UNI2` | `demo_uni2.sh` predicts with A2 and does not extract |
 
 ```bash
 MPP_UM=0.5 CUDA_DEVICE=0 bash code/External_val/HCC/demo_uni2.sh features

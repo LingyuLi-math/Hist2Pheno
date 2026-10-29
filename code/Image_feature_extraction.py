@@ -29,7 +29,9 @@
 ##            cell_data.csv: x_centroid, y_centroid in µm; X_pix_HE,Y_pix_HE on HE grid
 ##            X_pix_HE,Y_pix_HE = x_centroid / 0.2125, y_centroid / 0.2125
 ##            scale_image=True, scale=0.2125/0.5=0.425
-
+## 2026.10.29 LLY add Virchow2 and UNI2
+##            cd /home/lingyu/ssd2/Python/Hist2Pheno
+##            SAVE_PATCH_IMAGES=0 bash code/Hist2Pheno_pkg/run_virchow2_patch14.sh lung stardist 0
 
 import os
 import sys
@@ -817,11 +819,22 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
         # from size '3 x patch_size x patch_size' to size '1 x 1280' (14*14)
         ######################################################################
         # Virchow2, need to specify MLP layer and activation function for proper init
+        # Same nucleus crop as UNI2: no Resize(224). dynamic_img_size lets a
+        # 14 px / 7 µm crop through. The published card is 224 px. This forward
+        # still drops the class token and four registers (lay[:, 5:]) and
+        # keeps every remaining 1280-d token. A 14 px crop is one token.
+        if patch_size % 14 != 0:
+            logger.warning(
+                "Virchow2 ViT patch is 14; patch_size=%s is not a multiple of 14",
+                patch_size,
+            )
         model = timm.create_model(
-            "hf-hub:paige-ai/Virchow2", 
-            pretrained=True, 
-            mlp_layer=SwiGLUPacked, 
-            act_layer=torch.nn.SiLU
+            "hf-hub:paige-ai/Virchow2",
+            pretrained=True,
+            mlp_layer=SwiGLUPacked,
+            act_layer=torch.nn.SiLU,
+            ## 2026.10.29 Virchow2 now accepts the same 14 px crop as UNI2
+            dynamic_img_size=True,    
         )
         model.to(device)
         model = model.eval()

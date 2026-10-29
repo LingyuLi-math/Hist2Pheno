@@ -103,7 +103,7 @@ Unlabeled leftovers from the **seven training cohorts** (StarDist-all UNI alread
 
 | Folder | Data | Slides | What is plotted |
 |--------|------|--------|-----------------|
-| [`Lung_Incomplete`](Lung_Incomplete/README.md) | Xenium `Incomplete_Cases` | 20 (preds already in `pred_all_spatial/incomplete_lung/`) | all 20; top 5 L2 AUROC first |
+| [`Lung_Incomplete`](Lung_Incomplete/README.md) | Xenium `Incomplete_Cases` | 20 (UNI preds in `pred_all_spatial/incomplete_lung/`) | all 20; top 5 L2 AUROC first. UNI2 A2: `Pred_visual_lung_incomplete_uni2_A2.ipynb` |
 | [`HCC_unlabel`](HCC_unlabel/README.md) | CODEX HCC rest (not Visium `HCC/`) | 8 | 5 largest |
 | [`PDAC_unlabel`](PDAC_unlabel/README.md) | CODEX PDAC Incomplete_Cases | 195 | 5 largest |
 
