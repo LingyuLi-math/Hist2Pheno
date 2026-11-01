@@ -22,14 +22,27 @@ def extraction_metadata(directory):
     try:return json.loads((Path(directory)/'embedding_manifest.json').read_text())
     except (OSError,ValueError):return {}
 
+## 2026.11.01, find the directory of the embeddings.h5ad or embeddings.h5
+def _published_store(directory, fmt):
+    p=Path(directory)
+    if fmt=='h5ad':return (p/FILENAME).is_file()
+    if fmt=='hdf5':return (p/LEGACY_FILENAME).is_file()
+    if fmt=='pth':return any(p.glob('*.pth'))
+    return False
+
 
 def storage_format(directory):
-    """Resolve the manifest-selected generation; never merge multiple formats."""
+    """Resolve the manifest-selected generation; never merge multiple formats.
+
+    A killed run leaves ``state=writing`` and ``storage_format=h5ad`` before
+    ``embeddings.h5ad`` exists. That marker must not hide a published
+    ``embeddings.h5``.
+    """
     p=Path(directory)
     if p.is_file():
         return 'h5ad' if p.suffix=='.h5ad' else ('hdf5' if p.suffix in ('.h5','.hdf5') else 'pth')
     selected=extraction_metadata(p).get('storage_format')
-    if selected in ('h5ad','hdf5','pth'):return selected
+    if selected in ('h5ad','hdf5','pth') and _published_store(p, selected):return selected
     if (p/FILENAME).is_file():return 'h5ad'
     if (p/LEGACY_FILENAME).is_file():return 'hdf5'
     return 'pth'
@@ -46,10 +59,16 @@ def uses_hdf5(directory):
     """Compatibility name: True for h5ad and previous custom HDF5 stores."""
     return storage_format(directory) in ('h5ad','hdf5')
 
-
+## 2026.11.01, LLY - Adjust to save embedding to embeddings.h5ad
 def available(directory):
+    """A usable store is embeddings.h5ad or the older embeddings.h5. Per-cell .pth files are not a store.
+
+    A ``writing`` manifest whose file was never published is not a store.
+    """
     p=Path(directory)
-    return uses_hdf5(p) or (p.is_dir() and (any(p.glob('*.pth')) or extraction_metadata(p).get('state')=='writing'))
+    if uses_hdf5(p) and hdf5_path(p).is_file():return True
+    meta=extraction_metadata(p)
+    return meta.get('state')=='writing' and _published_store(p, meta.get('storage_format'))
 
 
 def compatible_extractor(meta,current_sha):

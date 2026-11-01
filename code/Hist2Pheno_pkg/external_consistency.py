@@ -139,11 +139,25 @@ def extraction_source(cohort,sample):
         'he':pp.file_record(p['he'],cache),'method':cohort.method,
         'extractor':pp.file_record(cohort.feature_script,cache)}
 
+## 2026.11.01, check for the h5ad and json files
+def _completed_manifest(directory):
+    """Live manifest, or the last completed one if a killed run left ``writing``."""
+    directory=Path(directory)
+    marker=directory/"embedding_manifest.json"
+    old=json.loads(marker.read_text())
+    if old.get("state")!="writing":return old
+    selected=old.get("storage_format")
+    published={"h5ad":directory/"embeddings.h5ad","hdf5":directory/"embeddings.h5"}.get(selected)
+    saved=directory/"embedding_manifest.completed.json"
+    if published is not None and not published.is_file() and saved.is_file():
+        return json.loads(saved.read_text())
+    return old
+
 
 def extraction_complete(cohort,sample):
     p=cohort.sample_paths(sample);marker=p['emb']/"embedding_manifest.json"
     try:
-        old=json.loads(marker.read_text());source=extraction_source(cohort,sample)
+        old=_completed_manifest(p['emb']);source=extraction_source(cohort,sample)
         if cohort.method in ('UNI','Virchow2') and not old.get('encoder_protocol'):return False
         if old.get('state')!='completed' or old.get('version')!=pp.VERSION:return False
         if old.get('method')!=cohort.method or old.get('patch_size')!=cohort.patch_size:return False

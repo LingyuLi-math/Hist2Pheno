@@ -25,11 +25,16 @@ def embedding_dir(h5ad_path,uns,embedder,*,stardist=False):
         candidates.append(Path(swapped))
     candidates += [parent/f'{sample}_project_all_{method}'/rel,parent/f'project_all_{method}'/rel]
     for directory in dict.fromkeys(candidates):
-        if available(directory):
-            meta=extraction_metadata(directory)
-            if meta.get('method')!=method:
-                raise ValueError(f'{embedder} requested but token manifest is {meta.get("method")}: {directory}')
-            return directory
+        if not available(directory):
+            continue
+        meta=extraction_metadata(directory)
+        found=meta.get('method')
+        # 2026.11.01, leftover *.pth without a manifest are not a current extract
+        if found is None:
+            continue
+        if found!=method:
+            raise ValueError(f'{embedder} requested but token manifest is {found}: {directory}')
+        return directory
     raise FileNotFoundError(f'No {method} embeddings for {h5ad_path}; looked at {candidates}')
 
 

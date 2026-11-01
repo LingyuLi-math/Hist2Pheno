@@ -2,6 +2,7 @@
 ########################################################
 # 2026.10.29, Virchow2 A2 / 独立特征、权重、scaler；默认不启用 gate。
 # bash code/PanCancer/train_virchow2_A2.sh --datasets Lung
+# bash code/PanCancer/train_virchow2_A2.sh
 # Only choose datasets whose Virchow2 GT embeddings have been extracted.
 ########################################################
 set -euo pipefail

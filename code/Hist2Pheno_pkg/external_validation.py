@@ -258,10 +258,13 @@ def n_csv_rows(csv_path: Path) -> int:
         return max(sum(1 for _ in handle) - 1, 0)
 
 
+## 2026.11.01, check for the pth files
 def n_pth(emb_dir: Path) -> int:
     # 2026.10.28, legacy name retained; count rows for HDF5
-    from embedding_store import uses_hdf5,EmbeddingTable
-    if uses_hdf5(emb_dir):return len(EmbeddingTable(emb_dir,validate=False))
+    from embedding_store import uses_hdf5,EmbeddingTable,hdf5_path
+    if uses_hdf5(emb_dir):
+        if not hdf5_path(emb_dir).is_file():return 0
+        return len(EmbeddingTable(emb_dir,validate=False))
     if not emb_dir.is_dir():
         return 0
     return sum(1 for p in emb_dir.glob("*.pth"))

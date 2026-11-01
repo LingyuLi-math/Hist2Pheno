@@ -490,7 +490,7 @@ def process_section(rec, *, model, scaler, device, classes, palettes, pred_root:
     star = None
     uni2_star = uni2_star_ready if embedder in ("uni","uni2","virchow2") else None
     if embedder in ("uni","uni2","virchow2") and uni2_star is None:
-        print(f"  {section_id}: no StarDist UNI2 tokens; skip all-nuclei map", flush=True)
+        print(f"  {section_id}: no current {embedder} StarDist tokens; skip all-nuclei map", flush=True)
     elif star_path.is_file() or embedder == "uni":
         star = load_stardist_all(
             star_path, embedder=embedder, uni2_cache_dir=uni2_cache_dir, uni2_dir=uni2_star

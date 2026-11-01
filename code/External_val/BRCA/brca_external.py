@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """BRCA external validation. Pipeline: Hist2Pheno_pkg.external_validation.
 
-Three HE + StarDist slides under ``data/Visium/BRCA``:
+HE + StarDist slides under ``data/Visium/BRCA``:
 
 1. ``GSM7782699_tissue_image`` — OME TIFF (~0.548 µm/px), no Visium JSON.
 2. ``200715_BC_SA2_C_D_V19F24-113.B1-Spot000001`` — pathology JPEG from
    SpatialVDJ Zenodo raw images; Visium ID ``V10F24-113_B1``.
 3. ``200219_BC_SA3_V19T26-031_CE_V4-Spot000001`` — same cohort;
    Visium ID ``V19T26-031_D1``.
+4. ``V1_Breast_Cancer_Block_A_Section_1_image`` — 10x public fullres TIFF.
+   It has no OME ``PhysicalSize``. Space Ranger outs are
+   ``10x_data/spatial``, and this TIFF is that fullres image.
 
 The two Zenodo JPEGs are **not** Space Ranger fullres. They are ~3.333× larger
 than ``outs/spatial`` fullres (inferred from ``tissue_hires`` /
@@ -16,7 +19,9 @@ than ``outs/spatial`` fullres (inferred from ``tissue_hires`` /
     (65 / spot_diameter_fullres) / (HE_width / SR_fullres_width)
 
 Do **not** use raw ``65 / spot_diameter_fullres`` on these JPEGs (that is the
-SR-fullres scale ≈ 0.57 µm/px). GSM keeps OME ``PhysicalSize``.
+SR-fullres scale ≈ 0.57 µm/px). When the HE is the Space Ranger fullres image
+the ratio is 1 and the same formula is the fullres scale. GSM keeps OME
+``PhysicalSize``.
 """
 
 from __future__ import annotations
@@ -88,6 +93,11 @@ def load_stardist_to_visium(
 
 STARDIST_TO_VISIUM = load_stardist_to_visium()
 
+# 10x public slide: the StarDist TIFF is Space Ranger fullres, not an OME scan.
+_PUBLIC_10X_SPATIAL = {
+    "V1_Breast_Cancer_Block_A_Section_1_image": DATA_ROOT / "10x_data" / "spatial",
+}
+
 
 def visium_spatial_dir(visium_id: str) -> Path:
     """``…/spaceranger_output/{VisiumID}/outs/spatial`` (or legacy ``spatial``)."""
@@ -136,20 +146,35 @@ def he_over_sr_fullres_ratio(
             f"{he_path.name}: HE/SR scale differs in x/y "
             f"({ratio_w:.4f} vs {ratio_h:.4f})"
         )
-    if ratio_w < 1.01:
+    if ratio_w < 0.98:
         raise RuntimeError(
-            f"{he_path.name}: HE is not larger than SR fullres "
+            f"{he_path.name}: HE is smaller than SR fullres "
             f"(ratio={ratio_w:.4f}); check image pairing"
         )
     return float(ratio_w), float(sr_w), float(sr_h)
 
-
-def mpp_from_visium_he(
-    he_path: Path,
-    visium_id: str,
-) -> tuple[float, str, dict]:
-    """µm/px on the StarDist HE JPEG, corrected for HE vs SR fullres scale."""
+## 2026.11.01, check for public 10x spatial, add local json check for Zenodo raw images,
+def spatial_for_sample(sample: str) -> tuple[str, Path] | None:
+    """``(label, spatial dir)`` with ``scalefactors_json.json``, or None."""
+    local = _PUBLIC_10X_SPATIAL.get(sample)
+    if local is not None and (local / "scalefactors_json.json").is_file():
+        return sample, local
+    visium_id = STARDIST_TO_VISIUM.get(sample)
+    if visium_id is None:
+        return None
     spatial = visium_spatial_dir(visium_id)
+    if (spatial / "scalefactors_json.json").is_file():
+        return visium_id, spatial
+    return None
+
+
+## 2026.11.01, adjust the pathway
+def mpp_from_spatial(
+    he_path: Path,
+    spatial: Path,
+    label: str,
+) -> tuple[float, str, dict]:
+    """µm/px on the StarDist HE. Divide by HE/SR when the scan is larger than fullres."""
     sf_path = spatial / "scalefactors_json.json"
     hires_path = spatial / "tissue_hires_image.png"
     if not sf_path.is_file():
@@ -165,7 +190,7 @@ def mpp_from_visium_he(
     ratio, sr_w, sr_h = he_over_sr_fullres_ratio(he_path, sf_path, hires_path)
     mpp_he = mpp_sr / ratio
     meta = {
-        "visium_id": visium_id,
+        "visium_id": label,
         "mpp_sr_fullres": mpp_sr,
         "he_over_sr_fullres": ratio,
         "sr_fullres_wh": [sr_w, sr_h],
@@ -173,27 +198,34 @@ def mpp_from_visium_he(
         "scalefactors": str(sf_path),
     }
     source = (
-        f"Visium {visium_id}: "
+        f"Visium {label}: "
         f"({_VISIUM_SPOT_DIAMETER_UM:.0f}/spot_diameter_fullres={diam_px:.4f}) "
         f"/ HE÷SR={ratio:.4f}"
     )
     return float(mpp_he), source, meta
 
+## 2026.11.01, add local json check for Zenodo raw images
+def mpp_from_visium_he(
+    he_path: Path,
+    visium_id: str,
+) -> tuple[float, str, dict]:
+    """µm/px on a Zenodo pathology JPEG, corrected for HE vs SR fullres scale."""
+    return mpp_from_spatial(he_path, visium_spatial_dir(visium_id), visium_id)
+
 
 def mpp_for(sample: str, he_path: Path) -> tuple[float, str, dict]:
     """Return ``(µm/px, source label, extra meta)`` for one BRCA sample."""
-    visium_id = STARDIST_TO_VISIUM.get(sample)
-    if visium_id is not None:
-        mpp, source, meta = mpp_from_visium_he(he_path, visium_id)
-        return mpp, source, meta
+    found = spatial_for_sample(sample)
+    if found is not None:
+        label, spatial = found
+        return mpp_from_spatial(he_path, spatial, label)
     if he_path.suffix.lower() in {".tif", ".tiff"}:
         mpp_x, mpp_y = ome_um_per_px(he_path)
         if abs(mpp_x - mpp_y) > 1e-3:
             raise RuntimeError(f"{sample} anisotropic pixel size {mpp_x} vs {mpp_y}")
         return float(mpp_x), "OME PhysicalSize", {}
     raise RuntimeError(
-        f"{sample}: no Visium ID in Breast_Cancer_Visium_samples.xlsx and "
-        f"HE is not an OME TIFF ({he_path})"
+        f"{sample}: no Visium scalefactors and HE is not an OME TIFF ({he_path})"
     )
 
 
@@ -216,9 +248,9 @@ class BrcaCohort(ExternalCohort):
             "pred": self.pred_root / sample / f"{sample}_stardist_pred.h5ad",
             "log": self.uni_root / sample / "logs",
         }
-        visium_id = STARDIST_TO_VISIUM.get(sample)
-        if visium_id is not None:
-            spatial = visium_spatial_dir(visium_id)
+        found = spatial_for_sample(sample)
+        if found is not None:
+            _label, spatial = found
             out["visium"] = spatial
             out["scalefactors"] = spatial / "scalefactors_json.json"
             out["tissue_positions"] = spatial / "tissue_positions_list.csv"

@@ -617,6 +617,14 @@ def _main_extraction(dataset: str, position_path: str, rawimage_path: str, scale
     _embedding_root=_PipelinePath(output_pth)
     _embedding_root.mkdir(parents=True,exist_ok=True)
     _extraction_marker=_embedding_root/"embedding_manifest.json"
+    
+    ## 2026.11.01, check for the extraction marker
+    if _extraction_marker.is_file():
+        try:_previous=json.loads(_extraction_marker.read_text())
+        except (OSError,ValueError):_previous={}
+        if _previous.get("state")=="completed":
+            _pp.atomic_json(_embedding_root/"embedding_manifest.completed.json",_previous)
+    
     _pp.atomic_json(_extraction_marker,{"state":"writing","version":_pp.VERSION,"storage_format":_storage})
     _extractor_implementation_sha=_pp.sha256(__file__)
     _source_inputs={"image":_pp.file_record(rawimage_path,_embedding_root/".provenance"),"positions":_pp.file_record(position_path,_embedding_root/".provenance")}

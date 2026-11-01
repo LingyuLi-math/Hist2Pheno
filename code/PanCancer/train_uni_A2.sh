@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 ########################################################
 # 2026.10.29, UNI A2 / 独立特征、权重、scaler；默认不启用 gate。
-# bash code/PanCancer/train_uni_A2.sh --datasets Lung
+# bash code/PanCancer/train_uni_A2.sh section train
+# bash code/PanCancer/train_uni_A2.sh 
 # Only choose datasets whose UNI GT embeddings have been extracted.
 ########################################################
 set -euo pipefail

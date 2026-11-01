@@ -4931,9 +4931,12 @@ def load_hist_embeddings(
     ``ESCCAI_SELECTIVE_LEGACY_PROBES=1`` to restore lattice probes. Sample size:
     ``ESCCAI_SELECTIVE_PREFLIGHT_MAX`` (default 512).
     """
-    # 2026.10.28, transparent section-store reader / 保留旧 .pth 接口，HDF5 不构造全量向量字典
+    # 2026.11.01, train and predict read embeddings.h5ad / 旧的逐核 .pth 不再作为输入
     from embedding_store import uses_hdf5,EmbeddingTable
     if uses_hdf5(embedding_dir):return EmbeddingTable(embedding_dir,validate=True)
+    raise FileNotFoundError(
+        f"No embeddings.h5ad in {embedding_dir}. Re-extract with Image_feature_extraction.py; per-cell .pth files are not read."
+    )
     embedding_dir = Path(embedding_dir)
     pth_cap = int(os.environ.get("ESCCAI_EMBEDDING_PTH_CAP", "400000"))
 
@@ -6405,6 +6408,9 @@ def first_pth_tensor(dir_path):
         if not len(table):
             raise FileNotFoundError("Empty embedding store")
         return torch.from_numpy(table.read_rows([0]))
+    raise FileNotFoundError(
+        f"No embeddings.h5ad in {dir_path}. Re-extract; per-cell .pth files are not read."
+    )
     hist_embedding_dir = Path(dir_path)
     pth_files = list(hist_embedding_dir.glob("*.pth"))
     if not pth_files:

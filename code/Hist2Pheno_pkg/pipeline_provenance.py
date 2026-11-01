@@ -231,6 +231,14 @@ def read_verified_prediction(path):
     return ad.read_h5ad(path)
 
 
+def _completed_extract(directory):
+    """True only for a finished embedding_manifest.json. Leftover *.pth are not an extract."""
+    path=Path(directory)/'embedding_manifest.json'
+    if not path.is_file():return False
+    try:return json.loads(path.read_text()).get('state')=='completed'
+    except (OSError,ValueError):return False
+
+
 def capture_inputs(files=(),tokens=(),cache_dir=None,optional_tokens=()):
     records=[file_record(p,cache_dir) if Path(p).is_file() else {'path':str(Path(p).resolve()),'missing':True} for p in files]
     def token_record(p):
@@ -242,8 +250,10 @@ def capture_inputs(files=(),tokens=(),cache_dir=None,optional_tokens=()):
     for directory in optional_tokens:
         directory=Path(directory).resolve()
         if str(directory) in known:continue
-        if __import__('embedding_store').available(directory):token_records.append(token_record(directory))
-        else:token_records.append({'directory':str(directory),'missing':True})
+        # 2026.11.01, optional StarDist stores may be legacy *.pth with no manifest
+        if _completed_extract(directory) and __import__('embedding_store').available(directory):
+            token_records.append(token_record(directory))
+        else:token_records.append({'directory':str(directory),'missing':True,'require_completed_manifest':True})
     return {'files':records,'tokens':token_records,'mapping':mapping_descriptor()}
 
 
@@ -256,7 +266,10 @@ def inputs_current(record,cache_dir):
             elif file_record(value['path'],cache_dir)!=value:return False
         for value in record['tokens']:
             if value.get('missing'):
-                if __import__('embedding_store').available(value['directory']):return False
+                directory=value['directory']
+                if value.get('require_completed_manifest'):
+                    if _completed_extract(directory):return False
+                elif __import__('embedding_store').available(directory):return False
             else:
                 current=feature_manifest(value['directory'],cache_dir)
                 current['extraction_sha256']=file_record(Path(value['directory'])/'embedding_manifest.json',cache_dir)['sha256']
