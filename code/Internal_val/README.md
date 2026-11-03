@@ -1,24 +1,28 @@
-# Internal validation (fold 0, pretrained pan-cancer model)
+# Internal validation (UNI2 A2 best model, fold 0)
 
 `code/Xenium_lung/Data_process_visual_xenium_all.ipynb` and
 `code/CODEX_hcc/Data_process_visual_*.ipynb` / `CODEX_pdac/...` show
 **single-dataset** Hist2Pheno models.
 
-This folder is the other column: the joint **cross-section** checkpoint
-`D_emph_L2_spatial_pancancer` applied to the **fold-0 hold-out** of the
-same seven training cohorts (Lung, BRCA, CRC, HCC, PDAC, GIST, GBM).
-A section that is in fold 0 was not used to fit `best_mlp_gpu.pt`.
+This folder is the joint **UNI2 A2** weight
+`result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/.../best_mlp_gpu.pt`
+on the seven training cohorts. That file is the fold-1 checkpoint, so the
+notebooks do not show fold 1. They show fold 0. Fold 0 is the only other
+split that still contains every cohort (BRCA `rep1`, CRC `P1CRC`, GBM
+`P174511_Initial`).
 
-Predict is already done. `data/PanCancer/pred_all_spatial/` has all 182
-fold-0 sections (`matched_pred.h5ad`, `panel_4x3.png`, StarDist ROC).
-`demo.sh predict` only fills gaps (`--skip-existing`).
+Predictions for all 896 sections are in
+`data/PanCancer/pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/`
+(`matched_pred.h5ad`, StarDist-all, per-section ROC). The run skipped panel
+PNGs. Notebooks draw GT versus prediction from the matched h5ad.
+`demo.sh predict` only fills gaps (`--skip-existing`) and does not draw panels.
 
 | dataset | fold 0 | notebook draws |
 |---------|--------|----------------|
-| Lung | 5 | all 5 |
+| Lung | 5 (`VUILD107MA` first) | all 5 |
 | BRCA | 1 (`rep1`) | 1 |
-| CRC | 1 (`P2CRC`) | 1 |
-| HCC | 8 | 4 (includes Fig. 2c `kqr-83230`) |
+| CRC | 1 (`P1CRC`) | 1 |
+| HCC | 8 | 4 largest |
 | PDAC | 56 | top 5 by L2 AUROC |
 | GIST | 110 | 4 largest |
 | GBM | 1 (`P174511_Initial`) | 1 |
@@ -30,13 +34,11 @@ conda activate SeededNTM
 bash code/Internal_val/demo.sh status
 bash code/Internal_val/demo.sh fold0
 
-# only if a fold-0 panel is missing
+# only if a fold-0 matched_pred.h5ad is missing
 CUDA_DEVICE=1 bash code/Internal_val/demo.sh predict
-
-# notebooks (optional; they do not rewrite the .ipynb)
-ONLY=HCC bash code/Internal_val/demo.sh notebooks
 ```
 
-Open `Pred_visual_{lung,brca,crc,hcc,pdac,gist,gbm}.ipynb`. Each shows
-the existing 4×3 panel (GT / pred / ROC / StarDist-all) plus GT vs
-predicted composition. `Pred_visual_fold0.ipynb` is the inventory.
+Open `Pred_visual_{lung,brca,crc,hcc,pdac,gist,gbm}.ipynb`.
+`Pred_visual_fold0.ipynb` is the inventory of this fold.
+The lung notebook crops VUILD107MA for Extended Data Fig. 7.
+That section is in this fold-0 set.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-## Internal validation of the pan-cancer cross-section checkpoint on fold 0.
-##
-## Per-dataset models (Lung / HCC / PDAC individual notebooks) are a different
-## tree. This folder only uses
-##   data/PanCancer/result_all_spatial/.../D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
-## Predictions are already in data/PanCancer/pred_all_spatial/ (182 fold-0
-## sections). `predict` is skip-existing and should be a no-op.
+## Internal validation of the UNI2 A2 best model.
+## best_mlp_gpu.pt is the fold-1 checkpoint, so the gallery is fold 0.
+## Predictions already cover all 896 training sections in
+## pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/.
+## `fold0` below lists the fold-0 sections.
+## `predict` is skip-existing and should be a no-op. It does not write the
+## 4x3 panel PNGs (the deployment run used --skip-figures).
 ##
 ##   bash code/Internal_val/demo.sh status
 ##   bash code/Internal_val/demo.sh fold0
@@ -41,9 +41,9 @@ usage() {
   cat <<EOF
 Usage: bash code/Internal_val/demo.sh {status|fold0|predict|notebooks}
 
-  status     fold-0 counts and whether pred/panel files exist
-  fold0      print fold-0 sample ids + the notebook viz subset
-  predict    pan-cancer checkpoint on fold 0 only (--skip-existing)
+  status     UNI2 A2 fold-0 counts and whether pred files exist
+  fold0      print fold-0 ids + the notebook viz subset
+  predict    UNI2 A2 best_mlp on fold 0 only (--skip-existing, no new panels)
   notebooks  run Pred_visual_*.ipynb (does not rewrite the .ipynb)
 
 ONLY=Lung,HCC     subset notebooks / status
@@ -66,11 +66,18 @@ case "${STEP}" in
     "${PYTHON}" -u code/Internal_val/internal_val.py fold0 ${ONLY:+--dataset "${ONLY%%,*}"}
     ;;
   predict)
+    UNI2="${REPO}/data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42"
     PRED_CMD=(
       "${PYTHON}" -u code/PanCancer/PanCancer_predict_visualize.py
+      --embedder uni2
+      --checkpoint "${UNI2}/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt"
+      --pred-root "${REPO}/data/PanCancer/pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment"
       --cuda-device "${CUDA_DEVICE}"
       --fold 0
+      --spatial-k 8
+      --deployment
       --skip-existing
+      --skip-figures
     )
     if [[ -n "${ONLY:-}" ]]; then
       IFS=',' read -r -a _ds <<< "${ONLY}"

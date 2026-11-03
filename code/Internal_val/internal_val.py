@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
-"""Fold-0 internal validation of the pan-cancer cross-section checkpoint.
+"""Fold-0 view of the UNI2 A2 best model.
 
-``Data_process_visual_xenium_all.ipynb`` and the CODEX ``Data_process_visual_*``
-notebooks show **per-dataset** models. This module points at the joint
-pretrained weights:
-
-  data/PanCancer/result_all_spatial/cross_dataset_cv/D_emph_L2_spatial_pancancer/best_mlp_gpu.pt
-
-Predictions already live under ``data/PanCancer/pred_all_spatial/`` (896
-sections, including all 182 fold-0 hold-outs). Notebooks only *display* a
-subset. PDAC (56 fold-0) shows the top 5 by L2 AUROC. GIST (110) keeps 4
-largest slides. HCC fold 0 is 8 and we show 4 (always including Fig. 2c
-``kqr-83230``) plus a paper top-5 set.
+``best_mlp_gpu.pt`` is a copy of ``hce_group_fold_1.pt``. That checkpoint's
+own validation sections are fold 1, so these notebooks do not show fold 1.
+They show fold 0. Deployment predictions for all 896 training sections are in
+``pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/``.
+PDAC (56) shows the top 5 by matched-cell L2 AUROC. GIST (110) keeps the
+4 largest slides. HCC fold 0 is 8 and we show the 4 largest.
 """
 
 from __future__ import annotations
@@ -33,18 +28,25 @@ for _p in (_PKG, _PAN, Path(__file__).resolve().parent):
 from plotting_palettes import get_palette  # noqa: E402
 
 DATASETS = ("Lung", "BRCA", "CRC", "HCC", "PDAC", "GIST", "GBM")
+# best_mlp_gpu.pt is hce_group_fold_1.pt, so the gallery is the other complete fold.
 FOLD = 0
-PRED_ROOT = _REPO / "data" / "PanCancer" / "pred_all_spatial" / "oof"
+_UNI2 = "result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42"
+PRED_ROOT = (
+    _REPO
+    / "data"
+    / "PanCancer"
+    / "pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment"
+)
 CKPT = (
     _REPO
     / "data"
     / "PanCancer"
-    / "result_all_spatial"
+    / _UNI2
     / "cross_dataset_cv"
-    / "D_emph_L2_spatial_pancancer"
-    / "hce_group_fold_0.pt"
+    / "A2_adjacent_spatial_k8mean"
+    / "best_mlp_gpu.pt"
 )
-FOLD_PLAN = _REPO / "data" / "PanCancer" / "result_all_spatial" / "fold_plan.csv"
+FOLD_PLAN = _REPO / "data" / "PanCancer" / _UNI2 / "fold_plan.csv"
 METRICS = PRED_ROOT / "metrics_per_section.csv"
 FIG_DIR = PRED_ROOT / "internal_val_figures"
 
@@ -58,12 +60,11 @@ VIZ_N = {
     "GIST": 4,
     "GBM": 1,
 }
-# Always keep these if they are in fold 0 (used in Fig. 2 / the lung notebook).
+# Kept first when they belong to FOLD.
 PINNED = {
-    "Lung": ("VUILD107MA", "VUHD113"),
+    "Lung": ("VUILD107MA",),
     "BRCA": ("rep1",),
-    "CRC": ("P2CRC",),
-    "HCC": ("kqr-83230_aligned_3bba12d6",),
+    "CRC": ("P1CRC",),
     "GBM": ("P174511_Initial",),
 }
 
@@ -95,7 +96,7 @@ def pred_paths(dataset: str, sample: str) -> dict[str, Path]:
         / dataset
         / sample
         / f"{sample}_all_stardist_pred.h5ad",
-        "roc": PRED_ROOT / "gt_matched_roc" / f"{dataset}__{sample}",
+        "roc": PRED_ROOT / "stardist_roc" / f"{dataset}__{sample}",
     }
 
 
@@ -117,7 +118,7 @@ def coverage(dataset: str | None = None) -> pd.DataFrame:
 
 
 def viz_samples(dataset: str) -> list[str]:
-    """Largest fold-0 slides, plus PINNED, capped at VIZ_N[dataset]."""
+    """Largest fold slides, plus PINNED, capped at VIZ_N[dataset]."""
     tab = fold0_table(dataset)
     if tab.empty:
         return []
@@ -147,7 +148,7 @@ def rank_fold0(
     dataset: str | None = None,
     metric: str = "macro_auc_L2_cells",
 ) -> pd.DataFrame:
-    """Fold-0 ranks. ``rank_ds`` is within the cohort; ``rank_all`` is among 182."""
+    """Fold ranks. ``rank_ds`` is within the cohort; ``rank_all`` is among every section in this fold."""
     all_m = metrics_fold0()
     if all_m.empty or metric not in all_m.columns:
         return pd.DataFrame()
@@ -174,8 +175,8 @@ def rank_label(dataset: str, sample: str, metric: str = "macro_auc_L2_cells") ->
     r = hit.iloc[0]
     return (
         f"{sample}  L2 AUROC={float(r[metric]):.3f}  "
-        f"#{int(r.rank_ds)}/{int(r.n_ds)} {dataset} fold 0  "
-        f"(#{int(r.rank_all)}/{int(r.n_all)} all fold 0)"
+        f"#{int(r.rank_ds)}/{int(r.n_ds)} {dataset} fold {FOLD}  "
+        f"(#{int(r.rank_all)}/{int(r.n_all)} all fold {FOLD})"
     )
 
 
@@ -196,14 +197,16 @@ def export_paper_sections(
     *,
     head: str = "L2",
     metric: str = "macro_auc_L2_cells",
+    dpi: int = 300,
+    composition_fmt: str = "png",
 ) -> Path:
-    """Write 300 dpi GT/pred + composition and copy the 4×3 panel for paper."""
+    """Write GT/pred PNGs and composition figures, and copy the 4×3 panel."""
     import shutil
 
     import matplotlib.pyplot as plt
 
     ranks = rank_fold0(dataset, metric)
-    out_dir = FIG_DIR / f"{dataset}_fold0_top{len(samples)}"
+    out_dir = FIG_DIR / f"{dataset}_fold{FOLD}_top{len(samples)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     for i, sample in enumerate(samples, 1):
@@ -218,18 +221,15 @@ def export_paper_sections(
         fig = plot_spatial_gt_pred(dataset, sample, head, save=False)
         fig.savefig(
             out_dir / f"{stem}_spatial_{head}_gt_pred.png",
-            dpi=300,
+            dpi=dpi,
             bbox_inches="tight",
             facecolor="white",
         )
         plt.close(fig)
         fig = plot_composition(dataset, sample, head, save=False)
-        fig.savefig(
-            out_dir / f"{stem}_composition_{head}.png",
-            dpi=300,
-            bbox_inches="tight",
-            facecolor="white",
-        )
+        comp = out_dir / f"{stem}_composition_{head}.{composition_fmt}"
+        _save_figure(fig, comp, dpi=dpi)
+        print(comp)
         plt.close(fig)
         if len(hit):
             rows.append(hit.iloc[0].to_dict())
@@ -258,6 +258,19 @@ def composition(dataset: str, sample: str, head: str = "L2") -> pd.DataFrame:
     )
 
 
+def _save_figure(fig, path: Path, *, dpi: int = 300) -> None:
+    import matplotlib as mpl
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".pdf":
+        mpl.rcParams["pdf.fonttype"] = 42
+        mpl.rcParams["ps.fonttype"] = 42
+        fig.savefig(path, bbox_inches="tight", facecolor="white")
+    else:
+        fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor="white")
+
+
 def plot_composition(
     dataset: str,
     sample: str,
@@ -266,9 +279,13 @@ def plot_composition(
     ax=None,
     save: bool = False,
     title: str | None = None,
+    dpi: int = 300,
+    fmt: str = "png",
 ):
     import matplotlib.pyplot as plt
 
+    if fmt not in ("png", "pdf"):
+        raise ValueError("fmt must be png or pdf")
     frac = composition(dataset, sample, head)
     created = ax is None
     if created:
@@ -287,9 +304,8 @@ def plot_composition(
     ax.legend(frameon=False, fontsize=7)
     fig.tight_layout()
     if save:
-        FIG_DIR.mkdir(parents=True, exist_ok=True)
-        out = FIG_DIR / f"{dataset}__{sample}_composition_{head}.png"
-        fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+        out = FIG_DIR / f"{dataset}__{sample}_composition_{head}.{fmt}"
+        _save_figure(fig, out, dpi=dpi)
         print(out)
     return fig
 
@@ -301,6 +317,7 @@ def plot_spatial_gt_pred(
     *,
     save: bool = False,
     title: str | None = None,
+    dpi: int = 300,
 ):
     import anndata as ad
     import matplotlib.pyplot as plt
@@ -354,9 +371,8 @@ def plot_spatial_gt_pred(
     fig.suptitle(title or rank_label(dataset, sample), fontsize=9, y=1.02)
     fig.tight_layout()
     if save:
-        FIG_DIR.mkdir(parents=True, exist_ok=True)
         out = FIG_DIR / f"{dataset}__{sample}_spatial_{head}_gt_pred.png"
-        fig.savefig(out, dpi=300, bbox_inches="tight", facecolor="white")
+        _save_figure(fig, out, dpi=dpi)
         print(out)
     return fig
 
@@ -547,7 +563,7 @@ def cmd_status(dataset: str | None = None) -> None:
     cov = coverage(dataset)
     print(f"checkpoint  {'yes' if CKPT.is_file() else 'NO'}  {CKPT}")
     print(f"pred root   {PRED_ROOT}")
-    print(f"fold 0      {len(cov)} sections")
+    print(f"fold {FOLD}      {len(cov)} sections")
     if cov.empty:
         return
     g = cov.groupby("dataset").agg(
@@ -560,7 +576,7 @@ def cmd_status(dataset: str | None = None) -> None:
     if len(missing):
         print("missing pred:", ", ".join(f"{r.dataset}::{r.sample}" for r in missing.itertuples()))
     else:
-        print("all fold-0 matched_pred.h5ad present — no GPU repredict needed")
+        print(f"all fold-{FOLD} matched_pred.h5ad present — no GPU repredict needed")
 
 
 def main(argv: list[str] | None = None) -> int:

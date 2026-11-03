@@ -30,6 +30,8 @@ __all__ = [
     "plot_gt_pred_spatial",
     "plot_auroc_gt_pred_composition",
     "plot_stardist_tier_roc",
+    "load_stardist_polys",
+    "plot_stardist_roi_boundary",
 ]
 
 PRED_OBS_COLS = {
@@ -748,3 +750,92 @@ def plot_stardist_tier_roc(
         Path(auroc_csv).parent.mkdir(parents=True, exist_ok=True)
         auc_df.to_csv(auroc_csv, index=False)
     return fig, auc_df
+
+
+def load_stardist_polys(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load a StarDist ``polys_prob*.pckl``.
+
+    ``coord`` is ``(n, 2, n_rays)`` with axis 0 = y and axis 1 = x.
+    ``points`` is ``(n, 2)`` as ``(y, x)``. Both are H&E pixels.
+    """
+    import pickle
+
+    with Path(path).open("rb") as handle:
+        packed = pickle.load(handle)
+    coord = np.asarray(packed["coord"])
+    points = np.asarray(packed["points"], dtype=np.float64)
+    if coord.ndim != 3 or coord.shape[1] != 2 or points.shape != (coord.shape[0], 2):
+        raise ValueError(f"{path} polys have unexpected shapes {coord.shape}, {points.shape}")
+    return coord, points
+
+
+def plot_stardist_roi_boundary(
+    crop: np.ndarray,
+    coord: np.ndarray,
+    points: np.ndarray,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    *,
+    px_per_um: float,
+    scale_um: float = 20.0,
+    outline: str = "#3DDC00",
+    center: str = "#F0A202",
+    fig_w: float = 7.2,
+    dpi: float = 120,
+    point_s: float = 4.0,
+    linewidth: float = 0.45,
+    save_path: str | Path | None = None,
+    save_dpi: int = 300,
+):
+    """H&E crop with StarDist boundaries and centers. Returns ``(fig, n_inside)``."""
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PolyCollection
+
+    cy = points[:, 0]
+    cx = points[:, 1]
+    inside = (cx >= x0) & (cx < x1) & (cy >= y0) & (cy < y1)
+    n_in = int(inside.sum())
+    height, width = crop.shape[:2]
+    fig_h = fig_w * height / max(width, 1)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=dpi, facecolor="white")
+    ax.imshow(crop)
+    if n_in:
+        poly_x = coord[inside, 1, :] - x0
+        poly_y = coord[inside, 0, :] - y0
+        verts = np.stack([poly_x, poly_y], axis=-1)
+        verts = np.concatenate([verts, verts[:, :1, :]], axis=1)
+        ax.add_collection(PolyCollection(
+            verts,
+            facecolors="none",
+            edgecolors=outline,
+            linewidths=linewidth,
+            zorder=3,
+        ))
+        ax.scatter(
+            cx[inside] - x0,
+            cy[inside] - y0,
+            s=point_s,
+            c=center,
+            linewidths=0,
+            zorder=4,
+        )
+    bar = int(round(scale_um * px_per_um))
+    yb = height - 36
+    ax.plot([28, 28 + bar], [yb, yb], color="white", lw=2.4, solid_capstyle="butt", zorder=5)
+    ax.text(28, yb - 10, f"{scale_um:.0f} µm", color="white", fontsize=8, va="bottom", ha="left", zorder=5)
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)
+    ax.set_axis_off()
+    fig.tight_layout(pad=0.15)
+    if save_path is not None:
+        import matplotlib as mpl
+
+        mpl.rcParams["pdf.fonttype"] = 42
+        mpl.rcParams["ps.fonttype"] = 42
+        dest = Path(save_path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(dest.with_suffix(".png"), dpi=save_dpi, bbox_inches="tight", facecolor="white")
+        fig.savefig(dest.with_suffix(".pdf"), bbox_inches="tight", facecolor="white")
+    return fig, n_in
