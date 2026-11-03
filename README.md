@@ -54,8 +54,8 @@ flowchart LR
 | CODEX GBM ([Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0)) | [`code/CODEX_gbm/`](code/CODEX_gbm/) | Initial `P174511` + Recurrent `P179161` | three-head (16 L2 subcluster / 9 L12 SN / 5 L1 cell_type) | `codex_gbm` | train + Pred |
 | Pan-cancer joint (7 public cohorts; ESCC omitted) | [`code/PanCancer/`](code/PanCancer/) | ~5.5M kept cells / 896 CV sections | three-head (20 L2 / 8 L12 / 5 L1) | `pancancer` | joint train + Pred |
 | Internal validation, fold 0 (same 7 cohorts) | [`code/Internal_val/`](code/Internal_val/) | 182 held-out sections | predicted L1 / L12 / L2 vs native GT | `pancancer` | predict + notebooks |
-| External validation, no GT (NPC, Visium BRCA / CRC / HCC / HCC Nature, HER2ST, prostate) | [`code/External_val/`](code/External_val/) | NPC 2; BRCA 3; CRC 1; HCC 7; HCC Nature 17; HER2ST 36; prostate 35 | predicted L1 / L12 / L2 from the section-CV checkpoint | `pancancer` | predict + TLS / SRI / TNI |
-| Unlabeled leftovers (Lung Incomplete, HCC rest, PDAC Incomplete) | [`Lung_Incomplete`](code/External_val/Lung_Incomplete/) · [`HCC_unlabel`](code/External_val/HCC_unlabel/) · [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) | 20 + 8 + 195 | predicted L1 / L12 / L2; no niches | `pancancer` | predict + notebooks |
+| External validation, no GT (NPC, Visium BRCA / CRC / HCC / HCC Nature, HER2ST, prostate) | [`code/External_val/`](code/External_val/) | NPC 2; BRCA 3; CRC 1; HCC 7; HCC Nature 17; HER2ST 36; prostate 35 | predicted L1 / L12 / L2 from the UNI2 A2 `best_mlp` | `pancancer` | predict + TLS / SRI / TNI |
+| Unlabeled leftovers (Lung Incomplete, HCC rest, PDAC Incomplete) | [`Lung_Incomplete`](code/External_val/Lung_Incomplete/) · [`HCC_unlabel`](code/External_val/HCC_unlabel/) · [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) | 20 + 8 + 195 | predicted L1 / L12 / L2 from the UNI2 A2 `best_mlp`; no niches | `pancancer` | predict + notebooks |
 
 Start from the dataset README, then follow that folder’s `demo.sh`. Joint 7-cohort training (remap native labels → pan-cancer L1/L12/L2, do not mix ESCC) lives in [`code/PanCancer/`](code/PanCancer/). Fold-0 maps of those same cohorts: [`code/Internal_val/`](code/Internal_val/). New-cancer and unlabeled leftover predict: [`code/External_val/`](code/External_val/).
 
@@ -336,7 +336,7 @@ Optional **cell-stratified** CV (`--group-splitter cell_stratified`) mixes cells
 | train log | `data/PanCancer/train.log` (`demo.sh` step 3) | `data/PanCancer/train_cell_stratified.log` (step 3b) |
 | predict | `data/PanCancer/pred_all_spatial/` + `predict.log` (step 4; **section-CV** checkpoint) | not the default predict path — pass `--checkpoint` and `--pred-root` |
 
-Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`4_Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb) keeps the published UNI `pred_all_spatial` sections. Its last section scores the three A2 `best_mlp` weights on every section in `section_index.csv` (896 sections; the sections used to train the weight are included) and writes `data/PanCancer/embedder_A2_compare/a2_deployment_sections.csv`, `a2_deployment_overall.csv`, `a2_deployment_by_cancer.csv`, and `a2_deployment_l2_by_cancer.pdf`. Pooled OOF, including UNI vs Virchow2 vs UNI2 at A2, stays in [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](code/PanCancer/2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb) (`a2_pooled_oof.csv`, `a2_fold_oof.csv`, `a2_fold_oof_l2.pdf` in the same directory). UNI2 train and predict are [`1_demo_train.sh`](code/PanCancer/1_demo_train.sh) and [`3_demo_pred.sh`](code/PanCancer/3_demo_pred.sh). UNI and Virchow2 A2 deployment are [`pred_uni_A2.sh`](code/PanCancer/pred_uni_A2.sh) and [`pred_virchow2_A2.sh`](code/PanCancer/pred_virchow2_A2.sh). [`demo.sh`](code/PanCancer/demo.sh) remains the published UNI dispatcher.
+Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`4_Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb) pools the ROC from the UNI2 A2 deployment, `pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/` (all 896 sections, including sections the weight saw in training). Its last section scores the three A2 `best_mlp` weights on those same sections and writes `data/PanCancer/embedder_A2_compare/a2_deployment_sections.csv`, `a2_deployment_overall.csv`, `a2_deployment_by_cancer.csv`, and `a2_deployment_l2_by_cancer.pdf`. Pooled OOF, including UNI vs Virchow2 vs UNI2 at A2, stays in [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](code/PanCancer/2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb) (`a2_pooled_oof.csv`, `a2_fold_oof.csv`, `a2_fold_oof_l2.pdf` in the same directory). UNI2 train and predict are [`1_demo_train.sh`](code/PanCancer/1_demo_train.sh) and [`3_demo_pred.sh`](code/PanCancer/3_demo_pred.sh). UNI and Virchow2 A2 deployment are [`pred_uni_A2.sh`](code/PanCancer/pred_uni_A2.sh) and [`pred_virchow2_A2.sh`](code/PanCancer/pred_virchow2_A2.sh). [`demo.sh`](code/PanCancer/demo.sh) remains the published UNI dispatcher. The published UNI `pred_all_spatial/` tree is the internal-validation fold-0 run below, not notebook 4.
 
 ```bash
 python -u code/PanCancer/prepare_pancancer_index.py
@@ -409,7 +409,7 @@ Open `Pred_visual_{lung,brca,crc,hcc,pdac,gist,gbm}.ipynb`. Each shows the exist
 
 ## External validation (new slides, no ground truth)
 
-[`code/External_val/`](code/External_val/) applies the **section-CV** checkpoint (`D_emph_L2_spatial_pancancer/best_mlp_gpu.pt`, not the cell-stratified run) to HE + StarDist nuclei that have no cell-type labels. The shared pipeline is [`Hist2Pheno_pkg/external_validation.py`](code/Hist2Pheno_pkg/external_validation.py). NPC, Visium CRC, Visium HCC, and HCC Nature are rows in `_SIMPLE_COHORTS`. Visium BRCA, HER2ST, and prostate keep their own scripts ([`brca_external.py`](code/External_val/BRCA/brca_external.py), [`brca_st_external.py`](code/External_val/BRCA_ST/brca_st_external.py), [`prostate_external.py`](code/External_val/Prostate/prostate_external.py)) because the sample id and µm/px are not one flat folder plus one HE suffix. Unlabeled leftovers from the seven training cohorts reuse existing StarDist-all UNI via [`unlabeled_external.py`](code/External_val/unlabeled_external.py) and **do not** compute TLS / SRI / TNI.
+[`code/External_val/`](code/External_val/) scores HE + StarDist nuclei that have no cell-type labels. The weight for the current figures is the UNI2 A2 `best_mlp` (fold 1, paired_v2, k=8 mean, no gate): `result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt`. `demo_uni2.sh` and `demo_uni2_A2.sh` load that file and write `pred_uni2_A2_bestmlp_paired_v2_seed42/`. UNI A2 and Virchow2 A2 are the other comparison weights (`pred_uni_A2/`, `pred_virchow2_A2/`). `pred_pancancer_section/` is the older published UNI section-CV run (`D_emph_L2_spatial_pancancer`), not this comparison. `demo_uni2_A3.sh` is the gated A3 weight and is not the comparison model. The shared pipeline is [`Hist2Pheno_pkg/external_validation.py`](code/Hist2Pheno_pkg/external_validation.py). NPC, Visium CRC, Visium HCC, and HCC Nature are rows in `_SIMPLE_COHORTS`. Visium BRCA, HER2ST, and prostate keep their own scripts ([`brca_external.py`](code/External_val/BRCA/brca_external.py), [`brca_st_external.py`](code/External_val/BRCA_ST/brca_st_external.py), [`prostate_external.py`](code/External_val/Prostate/prostate_external.py)) because the sample id and µm/px are not one flat folder plus one HE suffix. Unlabeled leftovers from the seven training cohorts go through [`unlabeled_external.py`](code/External_val/unlabeled_external.py) and **do not** compute TLS / SRI / TNI.
 
 `ome_um_per_px` reads OME `PhysicalSizeX` / `PhysicalSizeY` from the TIFF `ImageDescription` on every run. NPC (~0.465 µm/px), Visium BRCA (~0.548 µm/px), and Visium CRC (~0.274 µm/px, BigTIFF) are those measurements, then rescaled so a 16 px UNI crop is 8 µm. Visium HCC JPEGs have no OME block; `demo.sh` requires `MPP_UM` and defaults to **GPU 2** (`CUDA_DEVICE=2`). HCC Nature TIFFs (`data/Visium/HCC/nature_data/`) resolve µm/px per slide (OME ~0.501, Aperio `MPP`, or fallback 0.5). HER2ST JPEGs use the 200 µm spot pitch (~0.92 µm/px on patient A, ~0.69 µm/px on B–H). Prostate JPEGs use the HEST spot-spacing estimate (patient 1 ~0.57–0.69 µm/px, patient 2 ~0.34–0.35 µm/px). A 72, 96, or 300 dpi tag is not a pixel size.
 
@@ -423,15 +423,15 @@ Open `Pred_visual_{lung,brca,crc,hcc,pdac,gist,gbm}.ipynb`. Each shows the exist
 | HER2ST | 36 JPEGs (A1–H3) | 2.42M | 200 µm spot pitch | predicted |
 | Prostate | 35 JPEGs (patient 1: 7; patient 2: 28) | 7.43M | HEST spot spacing | predicted |
 
-Unlabeled leftovers (StarDist-all UNI already extracted; notebooks draw 3–5 slides unless noted; **no niches**):
+Unlabeled leftovers (no cell-type CSV; **no niches**). UNI2 A2 predictions are under `data/PanCancer/pred_uni2_A2_bestmlp_paired_v2_seed42/unlabel/`:
 
-| Folder | Data | Slides | Notebook |
-|--------|------|--------|----------|
-| [`Lung_Incomplete`](code/External_val/Lung_Incomplete/) | Xenium `Incomplete_Cases` | 20 (preds in `pred_all_spatial/incomplete_lung/`) | all 20; top 5 matched L2 AUROC first; TILD113LA / VUILD105MA1 ROI zooms |
-| [`HCC_unlabel`](code/External_val/HCC_unlabel/) | CODEX HCC rest (not Visium `HCC/`) | 8 | 5 largest |
-| [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) | CODEX PDAC Incomplete_Cases | 195 | 5 largest |
+| Folder | Data | Slides | UNI2 A2 preds | Notebook |
+|--------|------|--------|---------------|----------|
+| [`Lung_Incomplete`](code/External_val/Lung_Incomplete/) | Xenium `Incomplete_Cases` | 20 | 20/20 in `unlabel/Lung_Incomplete/` | all 20; top 5 matched L2 AUROC first; TILD113LA / VUILD105MA1 ROI zooms |
+| [`HCC_unlabel`](code/External_val/HCC_unlabel/) | CODEX HCC rest (not Visium `HCC/`) | 8 | 8/8 in `unlabel/HCC_unlabel/` | 5 largest |
+| [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) | CODEX PDAC Incomplete_Cases | 195 | 195/195 in `unlabel/PDAC_unlabel/` | [`Pred_visual_pdac_unlabel.ipynb`](code/External_val/PDAC_unlabel/Pred_visual_pdac_unlabel.ipynb) draws 9 cores (3 per coverslip); [`Pred_visual_pdac_unlabel_uni2_A2.ipynb`](code/External_val/PDAC_unlabel/Pred_visual_pdac_unlabel_uni2_A2.ipynb) draws the 5 largest |
 
-Outputs: `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/pred_pancancer_section/`, `data/Visium/HCC/nature_data/pred_pancancer_section/`, `data/ST/BRCA/pred_pancancer_section/`, and `data/PanCancer/pred_unlabel/` (HCC / PDAC unlabeled). Notebooks `Pred_visual_*.ipynb` show L1/L12/L2; new-cancer notebooks also draw TLS / SRI / TNI from L2 softmax (radius 55 µm). Saved panels are **300 dpi PNG**. HER2ST is one notebook per patient (`Pred_visual_brca_st_A.ipynb` … `H`); Prostate is split by series (`Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb`, `Pred_visual_prostate_patient2_{H1,H2,H3,V1,V2}.ipynb`). HCC Nature is **not** the seven Visium HCC JPEGs: 17 TIFFs from Jia *et al.*, *Nature* 2025 (TIMES). All 17 have `*_stardist_pred.h5ad`. [`Pred_visual_hcc_nature.ipynb`](code/External_val/HCC_nature/Pred_visual_hcc_nature.ipynb) adds an H&E-only AS / IF / TC analogue on the L-8012 Extended Data Fig. 1a zoom (do **not** claim a TIMES score). [`Pred_visual_hcc_nature_ready.ipynb`](code/External_val/HCC_nature/Pred_visual_hcc_nature_ready.ipynb) is the first five slides. This track is separate from Xenium BRCA training, Xenium CRC training, and CODEX HCC (s4769) training.
+Current UNI2 A2 outputs are `pred_uni2_A2_bestmlp_paired_v2_seed42/` under `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/`, `data/Visium/HCC/nature_data/`, `data/ST/BRCA/`, and `data/PanCancer/.../unlabel/{Lung_Incomplete,HCC_unlabel,PDAC_unlabel}/`. Older UNI section-CV outputs remain in `pred_pancancer_section/` and `data/PanCancer/pred_unlabel/`. Notebooks `Pred_visual_*_uni2_A2.ipynb` show L1/L12/L2 from the UNI2 A2 weight; new-cancer notebooks also draw TLS / SRI / TNI from L2 softmax (radius 55 µm). HER2ST is one notebook per patient (`Pred_visual_brca_st_A.ipynb` … `H`); Prostate is split by series (`Pred_visual_prostate_patient1_{H1,H2,V1}.ipynb`, `Pred_visual_prostate_patient2_{H1,H2,H3,V1,V2}.ipynb`). HCC Nature is **not** the seven Visium HCC JPEGs: 17 TIFFs from Jia *et al.*, *Nature* 2025 (TIMES). All 17 have a UNI2 A2 `*_stardist_pred.h5ad`. [`Pred_visual_hcc_nature_uni2_A2.ipynb`](code/External_val/HCC_nature/Pred_visual_hcc_nature_uni2_A2.ipynb) draws an H&E-only AS / IF / TC split on the L-8012 Extended Data Fig. 1a zoom; the dashed line follows that panel’s capsule (left arch, cleft, right arch), not a tumour-fraction box. Do **not** claim a TIMES score. This track is separate from Xenium BRCA training, Xenium CRC training, and CODEX HCC (s4769) training.
 
 ```bash
 bash code/External_val/NPC/demo.sh all
@@ -448,27 +448,29 @@ bash code/External_val/PDAC_unlabel/demo.sh status
 bash code/External_val/demo.sh notebooks
 ```
 
-### UNI2 on the same external slides
+### UNI2 A2 predictions on the external slides
 
-The UNI commands above stay on `pred_pancancer_section/`. UNI2 uses `patch_size=14` and writes `project_all_UNI2/` plus `pred_uni2_*_paired_v2_seed42/`. `demo_uni2.sh` loads the paired_v2 A2 weight (fold 1, k=8 mean, no gate). `demo_uni2_A3.sh` loads the paired_v2 A3 weight (fold 0, k=8 mean with gate). Notebooks are `Pred_visual_*_uni2_A2.ipynb` and `Pred_visual_*_uni2_A3.ipynb`. Lung Incomplete’s A2 notebook is [`Pred_visual_lung_incomplete_uni2_A2.ipynb`](code/External_val/Lung_Incomplete/Pred_visual_lung_incomplete_uni2_A2.ipynb). A finished slide is skipped when `embedding_manifest.json` is completed for the current extractor. Do not start two `features` jobs on the same `project_all_UNI2` tree.
+`demo_uni2.sh` loads the paired_v2 A2 weight (fold 1, k=8 mean, no gate) and writes `pred_uni2_A2_bestmlp_paired_v2_seed42/`. Tokens stay in `project_all_UNI2/` (`patch_size=14`). A finished slide is skipped when `embedding_manifest.json` is completed for the current extractor. Do not start two `features` jobs on the same `project_all_UNI2` tree. `Pred_visual_*_uni2_A3.ipynb` and `demo_uni2_A3.sh` are the gated A3 weight, not the comparison model.
 
-| Cohort | UNI2 tokens | Predict |
-|--------|-------------|---------|
-| NPC | both slides done | A3 and A2, including `STAR_PROB_MIN=0.40` |
-| Visium BRCA | 3/3 done | A3 predictions are in `pred_uni2_A3_bestmlp_paired_v2_seed42/` |
-| Visium HCC | 5/7; still need `P5_T`, `P7_T` | `demo_uni2.sh` loads paired_v2 A2 |
-| HCC Nature | 2/17; still need `L-8003_HE` through `L-8017_1_HE.ome` | `demo_uni2.sh` → A2; A3 is `demo_uni2_A3.sh`. Ready slides: `predict_ready_uni2.sh` (A3) and `predict_ready_uni2_A2.sh` |
-| HER2ST | 24/36; still need `HE_BT23567_D2` onward (12 slides) | `demo_uni2.sh` → A2; A3 is `demo_uni2_A3.sh` |
-| Prostate | 4/35; still need `Patient_1__H2_2` onward (31 slides) | `demo_uni2.sh` → A2; A3 is `demo_uni2_A3.sh` |
-| Visium CRC | the one P2 slide has no tokens | `demo_uni2.sh` loads paired_v2 A2 |
-| Lung Incomplete | `{sample}_project_all_UNI2/.../sc_pth_14_14` | `demo_uni2.sh` (A2). Notebook: `Pred_visual_lung_incomplete_uni2_A2.ipynb` |
-| HCC rest, PDAC Incomplete | UNI h5ads exist; UNI2 tokens under `project_all_UNI2` | `demo_uni2.sh` predicts with A2 and does not extract |
+Prediction files present under that A2 directory (2026-11-03):
+
+| Cohort | UNI2 A2 `*_stardist_pred.h5ad` |
+|--------|--------------------------------|
+| NPC | 2/2 |
+| Visium BRCA | 4/4 (three original slides plus `V1_Breast_Cancer_Block_A_Section_1`) |
+| Visium CRC | 1/1 |
+| Visium HCC | 7/7 (`MPP_UM=0.5`) |
+| HCC Nature | 17/17 |
+| HER2ST | 36/36 |
+| Prostate | 35/35 |
+| Lung Incomplete | 20/20 |
+| HCC rest | 8/8 |
+| PDAC Incomplete | 195/195 |
 
 ```bash
-MPP_UM=0.5 CUDA_DEVICE=0 bash code/External_val/HCC/demo_uni2.sh features
-CUDA_DEVICE=1 bash code/External_val/HCC_nature/demo_uni2.sh features
-CUDA_DEVICE=2 bash code/External_val/Prostate/demo_uni2.sh features
-CUDA_DEVICE=3 bash code/External_val/BRCA_ST/demo_uni2.sh features
+CUDA_DEVICE=0 bash code/External_val/NPC/demo_uni2.sh predict
+MPP_UM=0.5 CUDA_DEVICE=0 bash code/External_val/HCC/demo_uni2.sh predict
+CUDA_DEVICE=0 bash code/External_val/PDAC_unlabel/demo_uni2_A2.sh predict
 ```
 
 ## Data
@@ -486,8 +488,8 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 | CODEX ESCC | `data/CODEX/ESCC/` | in-house (`codex_meta_celltype_*.csv`); **not** in the pan-cancer ontology | NCRT remains the cohort path name |
 | Pan-cancer joint | `data/PanCancer/` | [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_pancancer` | Index / fold plans / section-CV + cell-stratified checkpoints / `pred_all_spatial/` (UNI). The A2 comparison weights are `result_uni_A2/`, `result_virchow2_A2/`, and `result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/`. Deployment preds are `pred_uni_A2_deployment/`, `pred_virchow2_A2_deployment/`, and `pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/`. Embeddings stay in cohort `embeddings.h5ad` files. See [`code/PanCancer/README.md`](code/PanCancer/README.md) |
 | Internal validation | `data/PanCancer/pred_all_spatial/` | native GT on matched nuclei | Fold-0 4×3 panels + composition. See [`code/Internal_val/README.md`](code/Internal_val/README.md) |
-| External validation | `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/`, `data/Visium/HCC/nature_data/`, and `data/ST/BRCA/` | none (StarDist only) | HE + `{sample}_Float_prob0.01_nms_0.3.csv`. UNI predictions in `pred_pancancer_section/`. The A2 comparison predictions are `pred_uni_A2/`, `pred_virchow2_A2/`, and `pred_uni2_A2_bestmlp_paired_v2_seed42/`. See [`code/External_val/README.md`](code/External_val/README.md) |
-| Unlabeled leftovers | `data/PanCancer/pred_all_spatial/incomplete_lung/` and `data/PanCancer/pred_unlabel/` | none (StarDist only) | Lung Incomplete / HCC rest / PDAC Incomplete_Cases. See [`Lung_Incomplete`](code/External_val/Lung_Incomplete/), [`HCC_unlabel`](code/External_val/HCC_unlabel/), [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) |
+| External validation | `data/Visium/{NPC,BRCA,CRC,HCC,Prostate}/`, `data/Visium/HCC/nature_data/`, and `data/ST/BRCA/` | none (StarDist only) | HE + `{sample}_Float_prob0.01_nms_0.3.csv`. Current figures use UNI2 A2 in `pred_uni2_A2_bestmlp_paired_v2_seed42/`. UNI A2 and Virchow2 A2 are `pred_uni_A2/` and `pred_virchow2_A2/`. `pred_pancancer_section/` is the older UNI section-CV run. See [`code/External_val/README.md`](code/External_val/README.md) |
+| Unlabeled leftovers | `data/PanCancer/pred_uni2_A2_bestmlp_paired_v2_seed42/unlabel/` | none (StarDist only) | Lung Incomplete 20, HCC rest 8, PDAC Incomplete_Cases 195, all scored with the UNI2 A2 `best_mlp`. [`Pred_visual_pdac_unlabel.ipynb`](code/External_val/PDAC_unlabel/Pred_visual_pdac_unlabel.ipynb) uses that weight. See [`Lung_Incomplete`](code/External_val/Lung_Incomplete/), [`HCC_unlabel`](code/External_val/HCC_unlabel/), [`PDAC_unlabel`](code/External_val/PDAC_unlabel/) |
 
 Unified mapping across the seven public cohorts in the workbook: [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) (`celltype_initial` for the inventory, `celltype_pancancer` for joint training, `celltype_fine` for the fine synonym list). CRC Flex Label1 is mapped onto the existing 20-class v1 L2 (no new heads). Joint-training cell counts: [`code/Hist2Pheno_pkg/dataset/L1_L12_L2_cell_counts_7datasets.ipynb`](code/Hist2Pheno_pkg/dataset/L1_L12_L2_cell_counts_7datasets.ipynb).
 
