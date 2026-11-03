@@ -440,9 +440,13 @@ def plot_roi_composition(
     obs = pred.obs.iloc[np.flatnonzero(in_roi)].copy()
     save_path = csv_path = None
     if save:
+        import matplotlib as mpl
+
+        mpl.rcParams["pdf.fonttype"] = 42
+        mpl.rcParams["ps.fonttype"] = 42
         fig_dir = COHORT.pred_root / "figures"  # 2026.10.28, live cutoff folder
         fig_dir.mkdir(parents=True, exist_ok=True)
-        save_path = fig_dir / f"{sample}_ROI_composition_L1_L12_L2.png"
+        save_path = fig_dir / f"{sample}_ROI_composition_L1_L12_L2.pdf"
         csv_path = fig_dir / f"{sample}_ROI_composition.csv"
     title = kwargs.pop("title", f"BRCA {sample}  QuPath ROI composition (pred)")
     fig, comp_df = plot_pred_composition_stacked(

@@ -18,8 +18,16 @@
 ##   bash code/External_val/NPC/demo_uni2.sh predict
 
 ## 2026.10.29: paired_v2 A2 best_mlp. The morning unsuffixed checkpoint was removed.
-##   bash code/External_val/NPC/demo_uni2.sh all    # use this to run all steps
+## This is the only NPC UNI2 A2 launcher. demo_uni2_A2.sh was the same weight
+## and the same project_all_UNI2 tree, with STAR_PROB_MIN defaulting to 0.40.
 ##
+##   bash code/External_val/NPC/demo_uni2.sh all    # features, h5ad, predict
+##   bash code/External_val/NPC/demo_uni2.sh predict
+##   STAR_PROB_MIN=0.40 bash code/External_val/NPC/demo_uni2.sh predict  # with _prob0.40 suffix
+##   CUDA_DEVICE=1 bash code/External_val/NPC/demo_uni2.sh predict  # use
+##
+## STAR_PROB_MIN=0 (default) writes pred_uni2_A2_bestmlp_paired_v2_seed42/.
+## STAR_PROB_MIN=0.40 writes the same name with a _prob0.40 suffix.
 ## One slide:  SAMPLE=20210809-C-AH4199551 bash code/External_val/NPC/demo_uni2.sh features
 ## Redo a finished step: FORCE=1
 ## GPU: CUDA_DEVICE=0 (default)

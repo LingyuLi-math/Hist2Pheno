@@ -6,7 +6,7 @@
 ## That file is fold 0 (best three-tier sum). Pooled OOF L2 macro AUROC was 0.8897.
 ## Spatial k=8 mean with gate. The checkpoint metadata supplies the neighbor config.
 ##
-## 2026.10.27 STAR_PROB_MIN=0.40, same valley cutoff as demo_uni2_A2.sh.
+## 2026.10.27 STAR_PROB_MIN=0.40, the valley cutoff. UNI2 A2 is demo_uni2.sh.
 ## 2026.10.28 the output folder follows STAR_PROB_MIN (0.40 -> ..._prob0.40).
 ## STAR_PROB_MIN=0 keeps the unsuffixed unfiltered tree.
 ##
