@@ -314,6 +314,36 @@ def export_codex_celltypes_on_he_jpg(
     return out_path
 
 
+## 2026.11.05 LLY add function to export he celltype png
+def export_he_celltype_png(
+    he_key: str,
+    alignment_df: pd.DataFrame,
+    base_dir: str | Path = DEFAULT_CODEX_HCC_DIR,
+    sample: str = S4769_SAMPLE,
+    *,
+    dpi: int = 300,
+    show: bool = True,
+    formats: tuple[str, ...] = ("png", "pdf"),
+) -> Path:
+    """Plot one MATCHED_HE cell-type map and save PNG and/or PDF."""
+    rows = alignment_df[alignment_df["MATCHED_HE"].astype(str).str.strip() == str(he_key).strip()]
+    if rows.empty:
+        raise KeyError(f"MATCHED_HE not in alignment table: {he_key}")
+    row = rows.iloc[0]
+    acq_id = str(row["CODEX_ACQUISITION_ID"]).strip()
+    label = str(row.get("CODEX_REGION_DISPLAY_LABEL", "")).strip()
+    cells = load_codex_cells(acq_id, sample, base_dir)
+    he_bg = get_he_rgb(he_key, sample, base_dir)
+    out_path = he_img_path(he_key, sample, base_dir).parent / "figures" / f"{he_key}_celltype_on_HE.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    label_txt = f" ({label})" if label else ""
+    title = f"{acq_id}{label_txt} cell types on HE\nMATCHED_HE={he_key}"
+    plot_codex_spatial(
+        cells, title, out_path, he_rgb_bg=he_bg, show=show, dpi=dpi, formats=formats,
+    )
+    return out_path
+
+
 def export_aligned_codex_celltypes_to_jpg(
     alignment_df: pd.DataFrame | None = None,
     sample: str = S4769_SAMPLE,
@@ -823,6 +853,7 @@ def plot_codex_spatial(
     save: bool = True,
     dpi: int = 200,
     point_size: float = 3,
+    formats: tuple[str, ...] | None = None,
 ) -> None:
     color_overrides = resolve_palette(
         cells_df["celltype"].unique(),
@@ -854,8 +885,19 @@ def plot_codex_spatial(
     ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", fontsize=8, markerscale=3, frameon=False)
     fig.tight_layout()
     if save:
-        fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
-        print(f"Saved: {save_path}")
+        targets = [Path(save_path)]
+        if formats:
+            stem = Path(save_path).with_suffix("")
+            targets = [stem.with_suffix("." + fmt.lower().lstrip(".")) for fmt in formats]
+        for dest in targets:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.suffix == ".pdf":
+                plt.rcParams["pdf.fonttype"] = 42
+                plt.rcParams["ps.fonttype"] = 42
+                fig.savefig(dest, bbox_inches="tight")
+            else:
+                fig.savefig(dest, dpi=dpi, bbox_inches="tight")
+            print(f"Saved: {dest}")
     if show:
         plt.show()
     else:

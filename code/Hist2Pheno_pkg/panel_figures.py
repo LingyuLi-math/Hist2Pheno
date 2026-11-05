@@ -32,6 +32,7 @@ __all__ = [
     "plot_stardist_tier_roc",
     "load_stardist_polys",
     "plot_stardist_roi_boundary",
+    "plot_annotated_roi_nuclei",
 ]
 
 PRED_OBS_COLS = {
@@ -839,3 +840,230 @@ def plot_stardist_roi_boundary(
         fig.savefig(dest.with_suffix(".png"), dpi=save_dpi, bbox_inches="tight", facecolor="white")
         fig.savefig(dest.with_suffix(".pdf"), bbox_inches="tight", facecolor="white")
     return fig, n_in
+
+## 2026.11.04 LLY add new function to plot annotated ROI nuclei
+def plot_annotated_roi_nuclei(
+    he: np.ndarray,
+    ann: pd.DataFrame,
+    xy: np.ndarray,
+    labels: np.ndarray,
+    palette: Mapping[str, Any],
+    *,
+    style: str = "dots",
+    polys_path: str | Path | None = None,
+    px_per_um: float,
+    pad_um: float = 80.0,
+    pad_x_um: float | None = None,
+    pad_top_um: float | None = None,
+    pad_bottom_um: float | None = None,
+    reach_um: float = 25.0,
+    dpi: int = 300,
+    he_keep: float = 0.85,
+    color_strength: float = 0.0,
+    marker_px: float = 40.0,
+    fill_linewidth: float = 0.35,
+    corner_label: str = "Hyperplastic AECs",
+    scale_um: float = 20.0,
+    save_dir: str | Path | None = None,
+    save_format: str = "png",   # 新增：可选 "png" 或 "pdf"
+    show: bool = True,
+) -> list:
+    """One crop per annotation instance.
+
+    ``style="dots"`` draws cell-type markers. ``style="fill"`` fills the
+    StarDist polygon of each nucleus. ``polys_path`` is required for ``fill``.
+    The corner label keeps the boxed 26 pt annotation. ``pad_x_um``,
+    ``pad_top_um``, and ``pad_bottom_um`` override the shared ``pad_um``.
+    Nucleus colors are the palette colors, drawn opaque.
+    ``color_strength`` is ignored so an older call still runs.
+
+    Parameters
+    ----------
+    save_format:
+        Output format. Can be "png" or "pdf".
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PolyCollection
+    from scipy.spatial import cKDTree
+
+    if style not in ("dots", "fill"):
+        raise ValueError("style must be 'dots' or 'fill'")
+
+    save_format = save_format.lower().lstrip(".")
+    if save_format not in {"png", "pdf"}:
+        raise ValueError("save_format must be 'png' or 'pdf'")
+
+    xy = np.asarray(xy, dtype=np.float64)
+    labels = np.asarray(labels, dtype=str)
+
+    poly_of = None
+    coord = None
+
+    if style == "fill":
+        if polys_path is None:
+            raise ValueError("style='fill' requires polys_path")
+        coord, points = load_stardist_polys(polys_path)
+        poly_xy = np.column_stack([points[:, 1], points[:, 0]])
+        _, poly_of = cKDTree(poly_xy).query(xy, k=1)
+
+    pad_x = int(round((pad_um if pad_x_um is None else pad_x_um) * px_per_um))
+    pad_top = int(round((pad_um if pad_top_um is None else pad_top_um) * px_per_um))
+    pad_bot = int(round((pad_um if pad_bottom_um is None else pad_bottom_um) * px_per_um))
+
+    reach = reach_um * px_per_um
+    point_s = (marker_px * 72 / dpi) ** 2
+
+    height, width = he.shape[:2]
+    suffix = "stardist_fill" if style == "fill" else "stardist_highlight"
+
+    if save_dir is not None:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+    figures = []
+
+    for name, group in ann.groupby("annotation_type_instance"):
+        pts_ann = group[["X_pix_HE", "Y_pix_HE"]].to_numpy(dtype=np.float64)
+
+        x0 = max(0, int(np.floor(pts_ann[:, 0].min()) - pad_x))
+        x1 = min(width, int(np.ceil(pts_ann[:, 0].max()) + pad_x))
+        y0 = max(0, int(np.floor(pts_ann[:, 1].min()) - pad_top))
+        y1 = min(height, int(np.ceil(pts_ann[:, 1].max()) + pad_bot))
+
+        crop = np.asarray(he[y0:y1, x0:x1])
+
+        fade = (
+            crop.astype(np.float32) * he_keep + 255 * (1 - he_keep)
+        ).clip(0, 255).astype(np.uint8)
+
+        inside = (
+            (xy[:, 0] >= x0)
+            & (xy[:, 0] < x1)
+            & (xy[:, 1] >= y0)
+            & (xy[:, 1] < y1)
+        )
+
+        dist, _ = cKDTree(pts_ann).query(
+            xy[inside],
+            distance_upper_bound=reach,
+        )
+
+        idx = np.flatnonzero(inside)[np.isfinite(dist)]
+
+        hgt, wid = fade.shape[:2]
+
+        fig = plt.figure(
+            figsize=(wid / dpi, hgt / dpi),
+            dpi=dpi,
+            facecolor="white",
+        )
+        ax = fig.add_axes([0, 0, 1, 1])
+
+        ax.imshow(fade)
+
+        lab = labels[idx]
+
+        if style == "dots":
+            pts = xy[idx]
+
+            for cls in palette:
+                mask = lab == cls
+                if not np.any(mask):
+                    continue
+
+                ax.scatter(
+                    pts[mask, 0] - x0,
+                    pts[mask, 1] - y0,
+                    s=point_s,
+                    c=[palette[cls][:3]],
+                    linewidths=0,
+                    zorder=3,
+                )
+
+        else:
+            sel = coord[poly_of[idx]]
+            verts = np.stack(
+                [sel[:, 1, :] - x0, sel[:, 0, :] - y0],
+                axis=-1,
+            )
+            verts = np.concatenate([verts, verts[:, :1, :]], axis=1)
+
+            for cls in palette:
+                mask = lab == cls
+                if not np.any(mask):
+                    continue
+
+                rgb = tuple(palette[cls][:3])
+
+                ax.add_collection(
+                    PolyCollection(
+                        verts[mask],
+                        facecolors=[(*rgb, 1.0)],
+                        edgecolors=[(*rgb, 1.0)],
+                        linewidths=fill_linewidth,
+                        antialiaseds=False,
+                        zorder=3,
+                    )
+                )
+
+        ax.set_xlim(0, wid)
+        ax.set_ylim(hgt, 0)
+
+        ax.plot(
+            [0, wid, wid, 0, 0],
+            [0, 0, hgt, hgt, 0],
+            color="black",
+            lw=1.4,
+            zorder=5,
+        )
+
+        ax.set_axis_off()
+
+        ax.text(
+            0.02,
+            0.08,
+            corner_label,
+            transform=ax.transAxes,
+            fontsize=26,
+            color="black",
+            va="bottom",
+            ha="left",
+            zorder=6,
+            bbox=dict(
+                boxstyle="square,pad=0.3",
+                fc="white",
+                ec="black",
+                lw=2.0,
+            ),
+        )
+
+        bar = int(round(scale_um * px_per_um))
+        ax.plot(
+            [16, 16 + bar],
+            [hgt - 18, hgt - 18],
+            color="black",
+            lw=3,
+            solid_capstyle="butt",
+            zorder=6,
+        )
+
+        if save_dir is not None:
+            out = save_dir / f"{name}_{suffix}.{save_format}"
+
+            fig.savefig(
+                out,
+                dpi=dpi,
+                facecolor="white",
+                format=save_format,
+            )
+
+            print(f"{name}: {len(idx)} nuclei on the annotation -> {out.name}")
+        else:
+            print(f"{name}: {len(idx)} nuclei on the annotation")
+
+        if show:
+            plt.show()
+
+        figures.append(fig)
+
+    return figures

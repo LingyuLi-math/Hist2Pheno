@@ -310,6 +310,104 @@ def plot_composition(
     return fig
 
 
+## 2026.11.05 LLY add function to plot proportion sankey
+def plot_proportion_sankey(
+    dataset: str,
+    sample: str,
+    head: str = "L2",
+    *,
+    save: bool = True,
+    dpi: int = 300,
+    figsize: tuple[float, float] = (11.6, 7.4),
+):
+    """Three stacked proportion columns linked by cell type.
+
+    Columns are Ground truth, Hist2Pheno on the matched cells, and Hist2Pheno
+    on every StarDist nucleus. Each band keeps that cell type's palette color.
+    """
+    import anndata as ad
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import PathPatch, Rectangle
+    from matplotlib.path import Path as MPath
+
+    paths = pred_paths(dataset, sample)
+    matched = ad.read_h5ad(paths["pred"])
+    if not paths["star"].is_file():
+        raise FileNotFoundError(paths["star"])
+    star = ad.read_h5ad(paths["star"])
+    series = (
+        ("Ground truth", matched.obs[OBS_GT[head]].astype(str).to_numpy()),
+        ("Hist2Pheno-match", matched.obs[OBS_PR[head]].astype(str).to_numpy()),
+        ("Hist2Pheno-WSI", star.obs[OBS_PR[head]].astype(str).to_numpy()),
+    )
+    palette = PALETTES[head]
+    seen = set(np.concatenate([lab for _, lab in series]))
+    names = [n for n in palette if n in seen]
+    names += sorted(seen - set(names))
+
+    def _weights(lab: np.ndarray) -> list[float]:
+        vc = pd.Series(lab).value_counts(normalize=True)
+        return [float(vc.get(n, 0.0)) for n in names]
+
+    def _stack(weights: list[float], y0: float = 0.03, y1: float = 0.94, gap: float = 0.007):
+        kept = [(n, w) for n, w in zip(names, weights) if w > 0]
+        usable = (y1 - y0) - gap * max(len(kept) - 1, 0)
+        total = sum(w for _, w in kept)
+        cursor = y1
+        out = {}
+        for n, w in kept:
+            height = usable * (w / total)
+            out[n] = (cursor - height, cursor)
+            cursor -= height + gap
+        return out
+
+    columns = [(title, _stack(_weights(lab))) for title, lab in series]
+    xs = ((0.06, 0.20), (0.43, 0.57), (0.80, 0.94))
+
+    def _ribbon(ax, x0, y0a, y0b, x1, y1a, y1b, color):
+        xm = (x0 + x1) / 2.0
+        path = MPath(
+            [
+                (x0, y0a), (xm, y0a), (xm, y1a), (x1, y1a),
+                (x1, y1b), (xm, y1b), (xm, y0b), (x0, y0b), (x0, y0a),
+            ],
+            [
+                MPath.MOVETO, MPath.CURVE4, MPath.CURVE4, MPath.CURVE4,
+                MPath.LINETO, MPath.CURVE4, MPath.CURVE4, MPath.CURVE4, MPath.CLOSEPOLY,
+            ],
+        )
+        ax.add_patch(PathPatch(path, facecolor=color, edgecolor="none", alpha=0.45, zorder=1))
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi, facecolor="white")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.06)
+    ax.axis("off")
+    ax.set_title(f"{sample}   {head} cell-type proportion", fontsize=12, pad=6)
+    for i in range(2):
+        for name in names:
+            if name not in columns[i][1] or name not in columns[i + 1][1]:
+                continue
+            ya, yb = columns[i][1][name]
+            ya2, yb2 = columns[i + 1][1][name]
+            color = palette.get(name, (0.55, 0.55, 0.55, 1.0))[:3]
+            _ribbon(ax, xs[i][1], ya, yb, xs[i + 1][0], ya2, yb2, color)
+    for (x0, x1), (title, box) in zip(xs, columns):
+        ax.text((x0 + x1) / 2, 0.985, title, ha="center", va="bottom", fontsize=11, color="#222")
+        for name, (ya, yb) in box.items():
+            color = palette.get(name, (0.55, 0.55, 0.55, 1.0))[:3]
+            ax.add_patch(Rectangle((x0, ya), x1 - x0, yb - ya, facecolor=color, edgecolor="white", linewidth=0.6, zorder=3))
+            if yb - ya < 0.028:
+                continue
+            red, green, blue = color
+            ink = "white" if 0.2126 * red + 0.7152 * green + 0.0722 * blue < 0.55 else "black"
+            ax.text((x0 + x1) / 2, (ya + yb) / 2, name.replace("_", " "), ha="center", va="center", fontsize=7, color=ink, zorder=4)
+    if save:
+        out = FIG_DIR / f"{dataset}__{sample}_proportion_sankey_{head}.pdf"
+        _save_figure(fig, out, dpi=dpi)
+        print(out)
+    return fig
+
+
 def plot_spatial_gt_pred(
     dataset: str,
     sample: str,
@@ -392,12 +490,50 @@ def _scatter_classes(ax, xy, labels, palette, s: float) -> list[str]:
             c=[palette[name][:3]],
             linewidths=0,
             rasterized=True,
+            zorder=2,
         )
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
     return names
 
+#############################################
+# 2026.11.05 LLY add HE image background function
+#############################################
+def _he_background(he_image: str | Path) -> tuple[np.ndarray, tuple[float, float, float, float]]:
+    """H&E array plus ``imshow`` extent in ``spatial_HE`` pixels.
+
+    ``VUILD107MA-HE_lowres.jpg`` is not a uniform shrink of the TIFF
+    (2514×2457 versus 19966×20710), so stretching it onto the slide shifts
+    the tissue. Sample ``VUILD107MA-HE.tif`` on a uniform stride instead.
+    ``X_pix_HE`` / ``Y_pix_HE`` in the coordinate table are these TIFF pixels.
+    """
+    path = Path(he_image)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    if path.suffix.lower() in {".tif", ".tiff"}:
+        import tifffile
+
+        with tifffile.TiffFile(path) as tif:
+            shape = tif.pages[0].shape
+        height, width = int(shape[0]), int(shape[1])
+        step = max(1, int(np.ceil(max(height, width) / 2500)))
+        image = np.asarray(tifffile.memmap(path)[::step, ::step])
+        n_r, n_c = image.shape[:2]
+        # Coordinate x hits TIFF column x, the same frame as X_pix_HE.
+        extent = (
+            -0.5 * step,
+            (n_c - 0.5) * step,
+            (n_r - 0.5) * step,
+            -0.5 * step,
+        )
+        return image, extent
+    from PIL import Image
+
+    image = np.asarray(Image.open(path))
+    height, width = image.shape[:2]
+    return image, (-0.5, width - 0.5, height - 0.5, -0.5)
+#############################################
 
 def save_celltype_and_roc(
     dataset: str,
@@ -409,12 +545,15 @@ def save_celltype_and_roc(
     roc_figsize: tuple[float, float] = (4.0, 4.0),
     bar_figsize: tuple[float, float] | None = None,
     point_s: float = 0.45,
+    he_image: str | Path | None = None,
+    he_alpha: float = 0.8,
 ) -> dict[str, Path]:
     """Cell-type maps as a 300 dpi PNG; ROC in the pooled StarDist style as PDF.
 
     Written next to the existing 4x3 panel. ROC uses ``plot_multiclass_roc_curves``
     with ``pan_organ='pancancer'`` and a per-class AUROC bar, same as
-    ``plot_pooled_stardist_tier_rocs``.
+    ``plot_pooled_stardist_tier_rocs``. ``he_image`` draws that H&E under the
+    maps. ``he_alpha`` is its opacity (1 keeps the slide, lower fades it toward white).
     """
     import anndata as ad
     import matplotlib.pyplot as plt
@@ -441,6 +580,10 @@ def save_celltype_and_roc(
                 point_s * 0.4,
             ),
         )
+    ## 2026.11.05 LLY add HE image background function
+    he_bg = None if he_image is None else _he_background(he_image)
+    if he_bg is not None and not 0.0 <= float(he_alpha) <= 1.0:
+        raise ValueError("he_alpha must be between 0 and 1")
 
     def _render(rows, figsize, stem):
         n_leg = max(len(PALETTES[h]) for h in heads)
@@ -457,6 +600,19 @@ def save_celltype_and_roc(
         for i, (row_name, row_xy, labs, s) in enumerate(rows):
             for j, head in enumerate(heads):
                 ax = axes[i, j]
+
+                ## 2026.11.05 LLY add HE image background function
+                if he_bg is not None:
+                    image, extent = he_bg
+                    ax.imshow(
+                        image,
+                        extent=extent,
+                        alpha=float(he_alpha),
+                        zorder=0,
+                        interpolation="bilinear",
+                    )
+                    ax.set_facecolor("white")
+                    
                 names = _scatter_classes(ax, row_xy, labs[head], PALETTES[head], s)
                 seen[head].update(names)
                 if j == 0:
@@ -472,6 +628,8 @@ def save_celltype_and_roc(
             for j in range(3):
                 axes[i, j].set_xlim(*xlim)
                 axes[i, j].set_ylim(*ylim)
+                axes[i, j].set_xticks([])
+                axes[i, j].set_yticks([])
         for j, head in enumerate(heads):
             axL = axes[-1, j]
             axL.axis("off")
