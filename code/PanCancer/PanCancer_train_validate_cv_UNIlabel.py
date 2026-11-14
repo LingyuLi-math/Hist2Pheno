@@ -643,6 +643,7 @@ class PooledCtx:
     train_balance_sampler: bool = False
     train_balance_sampler_mode: str = "hierarchical_l1_l12_l2"
     class_weight_mode: str = "balanced"
+    l2_focal_gamma: float = 0.0
     hierarchy_options: dict = field(default_factory=lambda: vars(HierarchyConfig()))
     spatial_options: dict = field(default_factory=dict)
     patient_map: Path | None = None
@@ -832,6 +833,7 @@ def step_train(ctx: PooledCtx) -> None:
         val_selection_metric=ctx.val_selection_metric,
         cv_selection_metric=ctx.cv_selection_metric,
         class_weight_mode=ctx.class_weight_mode,
+        l2_focal_gamma=ctx.l2_focal_gamma,
         use_spatial_context=ctx.use_spatial_context,
         spatial_k=ctx.spatial_k,
         spatial_mode=ctx.spatial_mode,
@@ -968,10 +970,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     # 2026.10.24, independent ablation switches / 每一项均可独立关闭
     p.add_argument("--class-weight-mode",choices=("none","balanced","class_balanced"),default=None)
+    p.add_argument(
+        "--l2-focal-gamma",
+        type=float,
+        default=0.0,
+        help="Focal γ on L2 CE (0 = plain CE). Use with --train-balance-sampler.",
+    )
     p.add_argument("--hierarchy", choices=("adjacent","legacy"), default="adjacent")
     for name, default in vars(HierarchyConfig()).items():
         p.add_argument("--"+name.replace("_","-"),type=float,default=default)
     p.add_argument("--legacy-l2-l1-weight",type=float,default=2.0)
+    p.add_argument("--l12-ce-weight",type=float,default=1.0,help="Scalar on direct CE(L12). L1/L2 CE stay class-weighted at weight 1.")
     p.add_argument("--spatial-radii-um",type=float,nargs="*",default=[])
     p.add_argument("--spatial-mpp",type=float,default=None)
     p.add_argument("--spatial-coordinates-um",action="store_true")
@@ -1026,9 +1035,11 @@ def main(argv: list[str] | None = None) -> int:
         gate=args.spatial_gate,geometry=args.spatial_geometry,cache_dir=str(args.context_cache_dir),chunk_size=args.context_chunk_size))
     ctx = PooledCtx(
         class_weight_mode=args.class_weight_mode or ("none" if train_balance else "balanced"),
+        l2_focal_gamma=args.l2_focal_gamma,
         hierarchy_options=vars(HierarchyConfig(**{k:getattr(args,k) for k in vars(HierarchyConfig())})) if args.hierarchy=="adjacent" else {},
         spatial_options=spatial_options, patient_map=args.patient_map, mpp_map=args.mpp_map,
         inner_val_fraction=args.inner_val_fraction, embedder=args.embedder, hce_w12=args.legacy_l2_l1_weight,
+        hce_w_l12head=args.l12_ce_weight,
         data_root=args.data_root.expanduser().resolve(),
         save_result=save_result,
         ablation_tag=ablation_tag,
@@ -1066,6 +1077,7 @@ def main(argv: list[str] | None = None) -> int:
         + (f" ({ctx.train_balance_sampler_mode})" if ctx.train_balance_sampler else ""),
         flush=True,
     )
+    print(f"  l2_focal:   {ctx.l2_focal_gamma}", flush=True)
     print("=" * 60, flush=True)
     try:
         if "index" in steps:

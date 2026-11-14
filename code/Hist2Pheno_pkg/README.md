@@ -4,6 +4,92 @@ Shared, dataset-neutral modeling, transformation, and plotting code for Hist2Phe
 Dataset directories such as `CODEX_hcc/` and `Xenium_lung/` remain responsible
 for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
+## 2026-11-11 Per-nucleus cell-type confidence
+
+[`prediction_confidence.py`](prediction_confidence.py) scores the L2 softmax
+that `external_validation.cmd_predict` already writes
+(`{sample}_l2_probs.npz`). It does **not** retrain the MLP. Spatial maps
+currently `argmax` that vector. Morphologically similar types (B vs Plasma vs
+T, CD4 vs CD8) keep a low peak, so they vanish from the winner map even when
+the mass on the parent class (L12 `B_Plasma` / `T_cell`) is real. The module
+adds a per-nucleus, per-type confidence instead of depending only on a larger
+encoder.
+
+Two layers, both model-agnostic:
+
+1. **Softmax diagnostics** (no labels). Max probability, margin to the
+   runner-up, normalized entropy, and a collapse to a coarser label when the
+   top two classes sit in one similarity family (`B_cell`+`Plasma` →
+   `B_Plasma`; CD4/CD8/Treg → `T_cell`). Weak peaks become `low_confidence`.
+2. **Conformal presence** in the sense of Jin et al., bioRxiv
+   2026.03.01.708850
+   ([UTOPIA](https://github.com/kaitianjin/UTOPIA)). Pan-cancer OOF cells
+   (`oof_predictions.npz`) are the calibration set. For each class `c` the
+   null is “`c` is absent”. Nuclei whose `P(c)` exceeds the OOF false-positive
+   scores get a small conformal p-value. **Confidence** is the UTOPIA
+   log-stretch of that *raw* p. **Presence** is a calibrated FPR gate:
+   `P(c)` above the `(1-α)` quantile of OOF cells that are not class `c`
+   (`--fdr 0.10` → 90th percentile of the null). Whole-slide BH on ~1e5
+   nuclei is stored as `p_adj` but is not the map threshold: UTOPIA BH is
+   per histology cluster, and OOF softmax false positives already reach ~1,
+   so `p_adj <= 0.10` is almost always empty on an NPC WSI.
+
+External slides such as NPC have no nucleus GT. Calibration must come from
+the training OOF, not from the test slide (UTOPIA’s out-of-subject setting).
+Coarser targets (`B_Plasma`, `lymphoid`) are usually more confident than
+B vs T at 7–8 µm, which is the same granularity result in that paper.
+
+This is output-side quantification. If almost every nucleus has `P(B)` below
+the OOF-null 90th percentile, the FPR gate stays empty — that is the model
+saying it is not sure, not a cell2location-style abundance correction.
+Training-side balance (focal loss, hierarchical sampler) is a separate lever.
+
+Add `code/Hist2Pheno_pkg` to `PYTHONPATH`. Use the SeededNTM interpreter.
+
+```python
+from pathlib import Path
+from prediction_confidence import (
+    annotate_nuclei,
+    attach_to_obs,
+    conformal_from_oof,
+    load_l2_probs,
+)
+
+names, probs = load_l2_probs(pred_dir / f"{sample}_l2_probs.npz")
+table = annotate_nuclei(probs, names, margin_min=0.08, max_prob_min=0.25)
+# table["label_plot"]: sharp L2, parent family, or "low_confidence"
+
+conf = conformal_from_oof(
+    probs,
+    names,
+    oof_npz=Path("data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/oof_predictions.npz"),
+    classes=["B_cell", "Plasma"],
+    groups={
+        "B_Plasma": ("B_cell", "Plasma"),
+        "lymphoid": ("B_cell", "Plasma", "CD4_T", "CD8_T", "Tregs", "NK"),
+    },
+)
+# presence at 10% FPR vs OOF-null: conf["B_cell"]["present"]
+# display score (raw conformal p):  conf["B_cell"]["confidence"]
+obs = attach_to_obs(adata.obs, table, conformal=conf, fdr=0.10)
+```
+
+CLI (writes a sidecar `{sample}_confidence.npz`, does not rewrite the pred h5ad):
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+/nobackup2/users/lingyu/conda_envs/SeededNTM/bin/python \
+  code/Hist2Pheno_pkg/prediction_confidence.py \
+  data/Visium/NPC/pred_uni2_A2_bestmlp_paired_v2_seed42/<sample>_l2_probs.npz \
+  --oof data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/oof_predictions.npz \
+  --classes B_cell Plasma B_Plasma \
+  --fdr 0.10
+```
+
+`--classes` accepts L2 names and family names from `DEFAULT_SIMILAR_FAMILIES`
+(`B_Plasma`, `T_cell`, `lymphoid`, `myeloid`, `epithelial`). Tests live in
+[`test_prediction_confidence.py`](test_prediction_confidence.py).
+
 ## 2026-20-25 Which embedder to run next
 
 `data/` currently keeps **UNI** results only. The paired UNI2 run is `--method UNI2` with `--patch_size 14` (one class token, 7 µm at 0.5 µm/px), the same one-token crop UNI uses at 16 px / 8 µm. Commands for the seven training cohorts are in the next section. `--patch_size 28` (14 µm, four tokens, still one class token) is the larger single-cell crop if a later run should include cytoplasm. Write `.pth` files to a new directory and retrain the MLP. The published pan-cancer checkpoint stays the UNI one.
@@ -413,6 +499,25 @@ These commands only extract embeddings. The trainers still read `project_all_UNI
 
 ## Changelog
 
+### 2026-11-11 — Per-nucleus L2 confidence (`prediction_confidence.py`)
+
+- Added [`prediction_confidence.py`](prediction_confidence.py): UTOPIA-style
+  conformal presence plus softmax margin/entropy and similar-type collapse
+  (B/Plasma, T subtypes, myeloid, epithelial). Calibrates on pan-cancer OOF
+  (`oof_predictions.npz`); scores existing `{sample}_l2_probs.npz` without a
+  new train or GPU predict.
+- `annotate_nuclei` writes `label_plot` (`pred_CT`, parent family, or
+  `low_confidence`). `conformal_from_oof` writes per-class raw-p
+  `confidence` and an FPR `present` mask vs the OOF-null quantile
+  (`--fdr 0.10` = 90th percentile of non-class cells). Whole-slide BH
+  `p_adj` is diagnostic only: it is empty on ~1e5 NPC nuclei because
+  UTOPIA BH is per histology cluster and OOF false-positive softmax
+  already reaches ~1. `attach_to_obs` copies those columns onto pred `obs`.
+- CLI sidecar `{sample}_confidence.npz`. Notebook maps call
+  `plot_bcell_presence_figure`, `plot_class_argmax_vs_gated`, and
+  `plot_trusted_spatial` in this module. Unit tests in
+  [`test_prediction_confidence.py`](test_prediction_confidence.py).
+
 ### 2026-10-26 — UNI2 gt and StarDist commands listed in the extractor
 
 - `run_uni2_patch14.sh` now comments both run lists at the top: `gt` for the seven training cohorts (`ImgEmbeddings_all/sc_pth_14_14`) and `stardist` for every segmented nucleus (`ImgEmbeddings_all_stardist/sc_pth_14_14`). StarDist lines set `SAVE_PATCH_IMAGES=0`.
@@ -492,6 +597,7 @@ helpers moved from `Xenium_lung/xenium_uni_nb_helpers.py` to
 | [`plotting_utils.py`](plotting_utils.py) | Generic DataFrame count/composition transforms and reusable bar, stacked-composition, and lineage-panel plots. |
 | [`histology_niche_index.py`](histology_niche_index.py) | Shared TLS / SRI / TNI engine (`OrganNicheConfig`, neighborhood scores, cohort burden). |
 | [`uni_label_cv_helpers.py`](uni_label_cv_helpers.py) | Shared UNI-label CV, internal-validation, and StarDist prediction/report helpers used by dataset pipelines and notebooks. |
+| [`prediction_confidence.py`](prediction_confidence.py) | Per-nucleus L2 confidence from existing softmax: similar-type collapse and UTOPIA-style conformal presence calibrated on pan-cancer OOF. |
 
 ## Architecture boundary
 
@@ -656,6 +762,11 @@ plot_celltype_spatial_distribution(
 Use `codex_hcc_fine`, `codex_hcc_intermediate`, or `codex_hcc_coarse` for HCC
 tiers. `plot_tier_spatial_distribution` is available for encoded prediction
 arrays and optional ground-truth panels.
+
+To plot confidence instead of argmax, replace `celltype_col` with
+`label_plot` from `annotate_nuclei`, or subset to
+`obs["present_B_cell_fdr0.10"]` from `attach_to_obs` (see
+[Per-nucleus cell-type confidence](#2026-11-11-per-nucleus-cell-type-confidence)).
 
 ### Generic bars and composition plots
 

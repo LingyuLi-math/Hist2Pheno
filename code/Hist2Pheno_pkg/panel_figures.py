@@ -864,6 +864,7 @@ def plot_annotated_roi_nuclei(
     fill_linewidth: float = 0.35,
     corner_label: str = "Hyperplastic AECs",
     scale_um: float = 20.0,
+    legend: bool = False,
     save_dir: str | Path | None = None,
     save_format: str = "png",   # 新增：可选 "png" 或 "pdf"
     show: bool = True,
@@ -876,6 +877,8 @@ def plot_annotated_roi_nuclei(
     ``pad_top_um``, and ``pad_bottom_um`` override the shared ``pad_um``.
     Nucleus colors are the palette colors, drawn opaque.
     ``color_strength`` is ignored so an older call still runs.
+    ``legend=True`` adds the cell types actually drawn, in palette order,
+    in a margin to the right of the crop.
 
     Parameters
     ----------
@@ -884,6 +887,7 @@ def plot_annotated_roi_nuclei(
     """
     import matplotlib.pyplot as plt
     from matplotlib.collections import PolyCollection
+    from matplotlib.lines import Line2D
     from scipy.spatial import cKDTree
 
     if style not in ("dots", "fill"):
@@ -951,17 +955,23 @@ def plot_annotated_roi_nuclei(
         idx = np.flatnonzero(inside)[np.isfinite(dist)]
 
         hgt, wid = fade.shape[:2]
+        lab = labels[idx]
+        present = [cls for cls in palette if np.any(lab == cls)]
+        legend_in = 0.0
+        if legend and present:
+            longest = max(len(str(cls)) for cls in present)
+            ncol = 2 if len(present) > 18 else 1
+            legend_in = (0.62 + 0.078 * longest) * ncol + 0.15
 
+        fig_w = wid / dpi + legend_in
         fig = plt.figure(
-            figsize=(wid / dpi, hgt / dpi),
+            figsize=(fig_w, hgt / dpi),
             dpi=dpi,
             facecolor="white",
         )
-        ax = fig.add_axes([0, 0, 1, 1])
+        ax = fig.add_axes([0, 0, (wid / dpi) / fig_w, 1])
 
         ax.imshow(fade)
-
-        lab = labels[idx]
 
         if style == "dots":
             pts = xy[idx]
@@ -1047,9 +1057,36 @@ def plot_annotated_roi_nuclei(
             zorder=6,
         )
 
+        if legend and present:
+            leg_ax = fig.add_axes([(wid / dpi) / fig_w, 0, legend_in / fig_w, 1])
+            leg_ax.set_axis_off()
+            leg_ax.legend(
+                handles=[
+                    Line2D(
+                        [0], [0], linestyle="none", marker="o", markersize=7,
+                        markerfacecolor=tuple(palette[cls][:3]),
+                        markeredgecolor="none",
+                        label=str(cls),
+                    )
+                    for cls in present
+                ],
+                loc="center left",
+                fontsize=8,
+                frameon=False,
+                ncol=2 if len(present) > 18 else 1,
+                handletextpad=0.4,
+                labelspacing=0.35,
+                borderaxespad=0.4,
+                title="Cell type",
+                title_fontsize=9,
+            )
+
         if save_dir is not None:
             out = save_dir / f"{name}_{suffix}.{save_format}"
 
+            if save_format == "pdf":
+                plt.rcParams["pdf.fonttype"] = 42
+                plt.rcParams["ps.fonttype"] = 42
             fig.savefig(
                 out,
                 dpi=dpi,

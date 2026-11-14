@@ -96,7 +96,7 @@ Full pooling is memory-heavy (~5.5M cells × 1024-d float32 ≈ 22 GB embeddings
 
 ## 2026-10-26 UNI2 run order
 
-The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A3. A4 is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
+The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A6. A4 (k=8 attention) is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
 
 ### 1. Train and internal cross-validation — [`1_demo_train.sh`](1_demo_train.sh)
 
@@ -106,19 +106,53 @@ CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A0
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A1
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
+CUDA_DEVICE=1 bash code/PanCancer/1_demo_train.sh uni2 A6
 ```
 
-Each job is cross-section 5-fold. It writes `result_uni2_<arch>/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts. It is not an external test set.
+Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). It is not an external test set.
 
 ### 2. Choose the architecture — [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)
 
-Compare A0–A3 on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. This notebook does not call predict, and those cohorts are not a held-out test set.
+Compare A0–A3, then A5/A6, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. This notebook does not call predict, and those cohorts are not a held-out test set.
 
-A3 is the best finished architecture (pooled OOF L2 0.8907). Its deployment weight is fold 0:
+Numbers below are the **2026-10-27 `paired_v2_seed42` retrain** (named-layer init, split-seed 42, L2→L1 NLL weight 2). A 2026-10-26 morning A3 of 0.8907 used L2→L1 NLL weight 1 and those checkpoints were removed.
 
-`data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt`
+A3 remains the best finished architecture on pooled OOF L2 (**0.8897**). Its deployment weight is fold 0:
 
-0.8907 is the five-fold pooled OOF of the A3 recipe. It is not the score of this one file on every section.
+`data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate_paired_v2_seed42/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt`
+
+0.8897 is the five-fold pooled OOF of the A3 recipe. It is not the score of this one file on every section.
+
+### 2026-11-11 — A5 / A6 L12-link ablation (finished)
+
+Same UNI2 cache, same cross-section 5-fold, same spatial trunk as **A2** (k=8 mean, **no gate**). Only the L12 loss weights change:
+
+| | CE(L12) | L2→L12 NLL | L12→L1 NLL | L2→L1 NLL | JS |
+|--|---------|------------|------------|-----------|-----|
+| A2 (reference trunk) | 1 | 0.5 | 0.5 | 2 | 0.1 / 0.1 |
+| A5 `l12_links_1` | 1 | **1** | **1** | 2 | 0.1 / 0.1 |
+| A6 `l12_links_2` | **2** | **2** | **2** | 2 | 0.1 / 0.1 |
+
+A3 keeps A2's L12 weights and adds a learned spatial gate. Fold-mean AUROC is the mean of the five `group_cv_folds.csv` rows (each fold's held-out sections). Pooled OOF L2 is the single AUROC on all 5.6M OOF cells.
+
+| | spatial | pooled OOF L2 | fold-mean L2 AUROC | fold-mean L12 AUROC | L2 macro-F1 | L1 macro-F1 | `best_mlp` fold |
+|--|---------|---------------|--------------------|---------------------|-------------|-------------|-----------------|
+| A3 k=8 mean+gate | gate | **0.8897** | **0.8805** | **0.8282** | **0.3013 ± 0.029** | 0.4225 ± 0.044 | 0 |
+| A2 k=8 mean | mean | 0.8894 | 0.8798 | 0.8272 | 0.2941 ± 0.030 | 0.4181 ± 0.042 | 1 |
+| A5 L12 links = 1 | mean | 0.8894 | 0.8798 | 0.8250 | 0.2980 ± 0.027 | 0.4220 ± 0.037 | 1 |
+| A6 L12 links = 2 | mean | 0.8882 | 0.8783 | 0.8253 | 0.2972 ± 0.030 | **0.4391 ± 0.049** | 1 |
+| A1 adjacent, no spatial | none | 0.8601 | 0.8468 | 0.7888 | 0.2303 ± 0.018 | 0.3412 ± 0.020 | 0 |
+| A0 legacy, no spatial | none | 0.8580 | 0.8453 | 0.7874 | 0.2287 ± 0.017 | 0.3390 ± 0.020 | 0 |
+
+Raising the L12 edges did not beat A2/A3 on L2 or L12 AUROC. A5 is tied with A2 on pooled OOF L2 (0.8894) and slightly better on L2 F1. A6 is 0.0012 below A2 on L2 AUROC; its gain is L1 macro-F1 (0.439 vs A2 0.418). Keep **A3** for deployment if the target is L2. Use A5/A6 only if you want the stronger L12 consistency loss on the A2 trunk.
+
+Weights:
+
+- A5 fold 1: `data/PanCancer/result_uni2_A5_l12_links_1_paired_v2_seed42/cross_dataset_cv/A5_l12_links_1/best_mlp_gpu.pt`
+- A6 fold 1: `data/PanCancer/result_uni2_A6_l12_links_2_paired_v2_seed42/cross_dataset_cv/A6_l12_links_2/best_mlp_gpu.pt`
+
+Logs: `code/log/pancancer_section_uni2_A5_l12_links_1_paired_v2_seed42.log` (wall 3:32), `...A6_l12_links_2...` (wall 3:24). NPC maps: [`Pred_visual_npc_uni2_A5.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A5.ipynb), [`Pred_visual_npc_uni2_A6.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A6.ipynb).
 
 ### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
 
@@ -151,6 +185,8 @@ bash code/PanCancer/1_demo_train.sh celltype smoke
 bash code/PanCancer/1_demo_train.sh celltype train
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 smoke
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A4
+CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A5
+CUDA_DEVICE=1 bash code/PanCancer/3_demo_pred.sh uni2 A6
 
 bash code/PanCancer/3_demo_pred.sh section predict
 bash code/PanCancer/3_demo_pred.sh section repredict

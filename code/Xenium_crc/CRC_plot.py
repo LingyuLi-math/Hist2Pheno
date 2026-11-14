@@ -20,7 +20,10 @@ def configure_matplotlib() -> None:
             "axes.spines.top": False,
             "axes.spines.right": False,
             "axes.grid": False,
-            "font.size": 10,
+            "font.size": 20,
+            # TrueType (42), not Type 3, so PDF text stays editable.
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
         }
     )
 

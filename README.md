@@ -333,19 +333,69 @@ Optional **cell-stratified** CV (`--group-splitter cell_stratified`) mixes cells
 |--|----------------------|-----------------|
 | folder | `data/PanCancer/result_all_spatial/` | `data/PanCancer/result_cell_stratified_spatial/` |
 | tag | `D_emph_L2_spatial_pancancer` | `D_emph_L2_spatial_pancancer_cellstrat` |
-| train log | `data/PanCancer/train.log` (`demo.sh` step 3) | `data/PanCancer/train_cell_stratified.log` (step 3b) |
-| predict | `data/PanCancer/pred_all_spatial/` + `predict.log` (step 4; **section-CV** checkpoint) | not the default predict path — pass `--checkpoint` and `--pred-root` |
+| train log | `data/PanCancer/train.log` (`1_demo_train.sh section train`) | `data/PanCancer/train_cell_stratified.log` (`1_demo_train.sh celltype train`) |
+| predict | `data/PanCancer/pred_all_spatial/` + `predict.log` (`3_demo_pred.sh section predict`; **section-CV** checkpoint) | `3_demo_pred.sh celltype predict` writes `pred_cell_stratified_spatial/` from that checkpoint |
 
-Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`4_Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb) pools the ROC from the UNI2 A2 deployment, `pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/` (all 896 sections, including sections the weight saw in training). Its last section scores the three A2 `best_mlp` weights on those same sections and writes `data/PanCancer/embedder_A2_compare/a2_deployment_sections.csv`, `a2_deployment_overall.csv`, `a2_deployment_by_cancer.csv`, and `a2_deployment_l2_by_cancer.pdf`. Pooled OOF, including UNI vs Virchow2 vs UNI2 at A2, stays in [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](code/PanCancer/2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb) (`a2_pooled_oof.csv`, `a2_fold_oof.csv`, `a2_fold_oof_l2.pdf` in the same directory). UNI2 train and predict are [`1_demo_train.sh`](code/PanCancer/1_demo_train.sh) and [`3_demo_pred.sh`](code/PanCancer/3_demo_pred.sh). UNI and Virchow2 A2 deployment are [`pred_uni_A2.sh`](code/PanCancer/pred_uni_A2.sh) and [`pred_virchow2_A2.sh`](code/PanCancer/pred_virchow2_A2.sh). [`demo.sh`](code/PanCancer/demo.sh) remains the published UNI dispatcher. The published UNI `pred_all_spatial/` tree is the internal-validation fold-0 run below, not notebook 4.
+Step 4 (`PanCancer_predict_visualize.py`) does **not** write into `result_cell_stratified_spatial/`. Notebook [`4_Pred_statistic_visual_pancancer_all.ipynb`](code/PanCancer/4_Pred_statistic_visual_pancancer_all.ipynb) pools the ROC from the UNI2 A2 deployment, `pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/` (all 896 sections, including sections the weight saw in training). Its last section scores the three A2 `best_mlp` weights on those same sections and writes `data/PanCancer/embedder_A2_compare/a2_deployment_sections.csv`, `a2_deployment_overall.csv`, `a2_deployment_by_cancer.csv`, and `a2_deployment_l2_by_cancer.pdf`. Pooled OOF, including UNI vs Virchow2 vs UNI2 at A2, stays in [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](code/PanCancer/2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb) (`a2_pooled_oof.csv`, `a2_fold_oof.csv`, `a2_fold_oof_l2.pdf` in the same directory). The two wrappers are [`1_demo_train.sh`](code/PanCancer/1_demo_train.sh) (index and train) and [`3_demo_pred.sh`](code/PanCancer/3_demo_pred.sh) (score sections). The walkthrough below is **UNI2 A2** (adjacent loss, spatial k=8 uniform mean, no gate). UNI and Virchow2 A2 deployment are [`pred_uni_A2.sh`](code/PanCancer/pred_uni_A2.sh) and [`pred_virchow2_A2.sh`](code/PanCancer/pred_virchow2_A2.sh). [`demo.sh`](code/PanCancer/demo.sh) remains the published UNI dispatcher (`1_demo_train.sh section train`, then `3_demo_pred.sh section predict`). The published UNI `pred_all_spatial/` tree is the internal-validation fold-0 run below, not notebook 4.
+
+Per-cohort match → coordinate CSV → `*_matched_features.h5ad` is assumed done. Those h5ads hold labels and HE coordinates. They do not hold UNI2 tokens. Steps 0 and 1 are independent of each other; step 3 needs both. The runnable chain stops at step 3: its OOF is the held-out score. Step 4 is commented out. It only rescores every training section with one weight, including sections that weight already saw. `stardist` extraction is not in this chain. Default conda env inside the extractor and the two PanCancer scripts is `SeededNTM`. `CUDA_DEVICE` is the card index; leave `CUDA_VISIBLE_DEVICES` unset. The extractor pins the checkout to `/home/lingyu/ssd2/Python/Hist2Pheno`.
 
 ```bash
-python -u code/PanCancer/prepare_pancancer_index.py
-python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
-  --use-spatial-context --spatial-k 8 --spatial-mode mean \
-  --steps prepare train he_validate \
-  --save-result result_all_spatial \
-  --ablation-tag D_emph_L2_spatial_pancancer
-python -u code/PanCancer/PanCancer_predict_visualize.py --include-incomplete-lung --skip-existing
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+
+# 0. UNI2-h tokens for matched GT cells (GPU, one cohort at a time).
+#    patch_size=14, one class token, stored as embeddings.h5ad under
+#    project_all_UNI2/ImgEmbeddings_all/sc_pth_14_14.
+#    Lung / BRCA / CRC are rescaled to 0.5 µm/px (0.425 / 0.84 / 0.548).
+#    HCC, PDAC, GIST, and GBM stay on native pixels.
+#    A section whose embeddings.h5ad is already complete is skipped.
+#    Finish all seven before step 3. Do not run two extracts into the same tree,
+#    and do not start step 3 while an extract is still writing.
+#    This does not build the matched h5ad. Mode stardist is a separate all-nuclei store
+#    and is not read by steps 1, 3, or 4.
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh lung gt 0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh brca gt 0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh crc gt 0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh hcc gt 0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh pdac gt 0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gist gt 0
+bash code/Hist2Pheno_pkg/run_uni2_patch14.sh gbm gt 0
+
+# 1. Section index (CPU, no training).
+#    Scans the seven cohort matched h5ads, remaps labels to celltype_pancancer,
+#    and writes data/PanCancer/section_index.csv. Embeddings stay in the cohort files.
+#    An existing data/PanCancer/fold_plan.csv is kept, so fold ids do not shuffle.
+#    Re-run after adding or relabeling a cohort h5ad. Skip if section_index.csv is current;
+#    training can discover h5ads itself when that file is absent.
+bash code/PanCancer/1_demo_train.sh index
+
+# 2. Optional smoke (GPU, about two epochs on BRCA + GBM, 5k cells/section).
+#    Same A2 recipe as the full run. Writes result_uni2_smoke_A2_paired_v2_seed42/.
+#    Do not start a second uni2 job until this one finishes: the first prepare builds
+#    data/PanCancer/uni2_aligned/, and a parallel prepare will race that cache.
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 smoke
+
+# 3. Train UNI2 A2 (GPU, long).
+#    Reads section_index.csv from step 1 and aligns each section's step-0
+#    embeddings.h5ad onto that matched h5ad by HE coordinates (1536-d).
+#    Cross-section 5-fold, inner val 0.2, class-weight balanced, seeds 42.
+#    Steps: prepare, train, he_validate. Spatial context is k=8 mean.
+#    Checkpoint: data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt
+#    That best_mlp is fold 1. Log: code/log/pancancer_section_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42.log
+#    The fold plan used by this weight is the fold_plan.csv inside that result directory, not the index preview.
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2
+
+# 4. Optional, left commented. Deployment predict (GPU). One best_mlp on every training section, including sections it saw.
+#    Loads the step-3 checkpoint and the same step-0 gt tokens. AUROC is matched GT cells.
+#    The ROC directory is named stardist_roc; that name is historical and does not mean
+#    StarDist tokens are read. Missing StarDist tokens only skip the all-nuclei map
+#    (n_stardist_all = 0). This command also passes --skip-figures, so that map is unused.
+#    This is not OOF. For the held-out fold score, set PREDICTION_MODE=oof (each section uses the fold that left it out).
+#    Skips a section that already has a run stamp.
+#    Output: data/PanCancer/pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/
+#    Log: code/log/pancancer_section_uni2_A2_predict_paired_v2_seed42_deployment.log
+#    If CUDA_DEVICE is unset, this A2 command uses card 2. A set CUDA_DEVICE overrides that.
+# CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A2
 ```
 
 ### UNI2 results (paired_v2, 2026-10-28)

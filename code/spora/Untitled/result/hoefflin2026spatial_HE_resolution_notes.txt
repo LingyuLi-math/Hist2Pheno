@@ -1,0 +1,11 @@
+Tissue: hoefflin2026spatial_almistmp_0000
+Local source root: /lustre/scratch127/cellgen/cellgeni/tickets/REQ-82797/data/hoefflin2026spatial/hoefflin2026spatial
+he/0_5mpp/images/<tissue>.ome.zarr/0: RGB uint8, height 7008, width 6304.
+he/1_0mpp/images/<tissue>.ome.zarr/0: RGB uint8, height 3504, width 3152.
+The 0_5mpp store has twice the width and height (4x pixels).
+Both stores contain a single image level, path 0.
+Caution: 0_5mpp directory implies 0.5 micrometers/pixel, but its OME coordinateTransformations scale is [1,1,1] with micrometer axes. Absolute physical calibration is inconsistent; directory designation is used without claiming a verified scale bar.
+Current map uses the 1_0mpp image and matching mask, downsampled with stride 3 for a lightweight whole-image overview. No ROI or crops. High-resolution PNG export has been removed from both notebooks.
+The previously generated H&E-only PNG retains original RGB pixels; it is kept as an existing artifact and is no longer regenerated.
+Previous overview used the 1_0mpp store and stride 3 (1051 x 1168 image pixels before figure rendering).
+No higher-resolution whole-slide scanner files were found in this dataset directory; the local 0_5mpp export is a tissue image, not proof of access to the original whole slide.

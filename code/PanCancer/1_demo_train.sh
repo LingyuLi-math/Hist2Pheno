@@ -5,7 +5,7 @@
 ##   bash code/PanCancer/1_demo_train.sh index
 ##   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
 ##   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4}
+##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7}
 ##   CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 ##
 ## Published UNI section/celltype commands pin:
@@ -34,6 +34,9 @@
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A4
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A6
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
 
 
 set -euo pipefail
@@ -51,7 +54,7 @@ Usage:
   bash code/PanCancer/1_demo_train.sh index
   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4}
+  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7}
 
 GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
 Logs: data/PanCancer/train*.log and code/log/pancancer_section_uni2_<arch>.log
@@ -224,8 +227,46 @@ cmd_uni2() {
         --ablation-tag A4_adjacent_spatial_k8attention
       )
       ;;
+    # Same trunk as A2 (k=8 mean, no gate). L2→L1 NLL stays 2 and both JS stay 0.1.
+    # A5 raises the two L12 edges from 0.5 to 1. A6 sets those edges to 2 and CE(L12) to 2.
+    A5_l12_links_1)
+      args+=(
+        --hierarchy adjacent --legacy-l2-l1-weight 2 --l12-ce-weight 1
+        --l2-l12-nll 1 --l12-l1-nll 1 --l2-l12-js 0.1 --l12-l1-js 0.1
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_A5_l12_links_1
+        --ablation-tag A5_l12_links_1
+      )
+      ;;
+    A6_l12_links_2)
+      args+=(
+        --hierarchy adjacent --legacy-l2-l1-weight 2 --l12-ce-weight 2
+        --l2-l12-nll 2 --l12-l1-nll 2 --l2-l12-js 0.1 --l12-l1-js 0.1
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_A6_l12_links_2
+        --ablation-tag A6_l12_links_2
+      )
+      ;;
+    # Same trunk as A2. Sampler replaces class-weighted CE so rare L12
+    # (B_Plasma) is seen every batch; focal γ=1 down-weights easy Tumor.
+    # Writes result_uni2_A7_bal_focal_paired_v2_seed42/; does not touch A2.
+    A7_bal_focal)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --train-balance-sampler
+        --train-balance-sampler-mode hierarchical_l1_l12_l2
+        --class-weight-mode none
+        --l2-focal-gamma 1
+        --save-result result_uni2_A7_bal_focal
+        --ablation-tag A7_bal_focal
+      )
+      ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A4"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7"
       ;;
   esac
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
@@ -263,7 +304,10 @@ case "${1:-}" in
       A2) cmd_uni2 A2_adjacent_spatial_k8mean ;;
       A3) cmd_uni2 A3_adjacent_spatial_k8mean_gate ;;
       A4) cmd_uni2 A4_adjacent_spatial_k8attention ;;
-      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4" ;;
+      A5) cmd_uni2 A5_l12_links_1 ;;
+      A6) cmd_uni2 A6_l12_links_2 ;;
+      A7) cmd_uni2 A7_bal_focal ;;
+      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4 | A5 | A6 | A7" ;;
     esac
     ;;
   *) die "unknown command '$1' (index | section | celltype | uni2)" ;;

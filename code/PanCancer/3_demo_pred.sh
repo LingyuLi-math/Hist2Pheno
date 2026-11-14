@@ -4,7 +4,7 @@
 ##
 ##   bash code/PanCancer/3_demo_pred.sh section  {predict|repredict|crc}
 ##   bash code/PanCancer/3_demo_pred.sh celltype {predict|repredict}
-##   bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3}
+##   bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3|A5|A6}
 ##   CUDA_DEVICE=0 bash code/PanCancer/3_demo_pred.sh uni2 A0
 ##   CUDA_DEVICE=1 bash code/PanCancer/3_demo_pred.sh uni2 A1
 ##   CUDA_DEVICE=2 bash code/PanCancer/3_demo_pred.sh uni2 A2
@@ -59,7 +59,7 @@ usage() {
 Usage:
   bash code/PanCancer/3_demo_pred.sh section  {predict|repredict|crc}
   bash code/PanCancer/3_demo_pred.sh celltype {predict|repredict}
-  bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3}
+  bash code/PanCancer/3_demo_pred.sh uni2 {A0|A1|A2|A3|A5|A6}
 
 GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
 predict skips sections that already have a panel (published) or a run stamp (UNI2).
@@ -173,8 +173,20 @@ cmd_uni2() {
       log="$REPO/code/log/pancancer_section_uni2_A3_bestmlp_predict.log"
       extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
       ;;
+    A5)
+      ckpt="$OUT/result_uni2_A5_l12_links_1/cross_dataset_cv/A5_l12_links_1/best_mlp_gpu.pt"
+      root="$OUT/pred_uni2_A5_l12_links_1"
+      log="$REPO/code/log/pancancer_section_uni2_A5_l12_links_1_predict.log"
+      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+      ;;
+    A6)
+      ckpt="$OUT/result_uni2_A6_l12_links_2/cross_dataset_cv/A6_l12_links_2/best_mlp_gpu.pt"
+      root="$OUT/pred_uni2_A6_l12_links_2"
+      log="$REPO/code/log/pancancer_section_uni2_A6_l12_links_2_predict.log"
+      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+      ;;
     *)
-      die "uni2 predict must be A0 | A1 | A2 | A3"
+      die "uni2 predict must be A0 | A1 | A2 | A3 | A5 | A6"
       ;;
   esac
   # 2026.10.26, rewrite onto paired_v2_seed42 / 上面的无后缀路径是重训前的目录
@@ -214,8 +226,8 @@ case "${1:-}" in
     ;;
   uni2)
     case "${2:-}" in
-      A0|A1|A2|A3) cmd_uni2 "$2" ;;
-      *) die "uni2 steps: A0 | A1 | A2 | A3" ;;
+      A0|A1|A2|A3|A5|A6) cmd_uni2 "$2" ;;
+      *) die "uni2 steps: A0 | A1 | A2 | A3 | A5 | A6" ;;
     esac
     ;;
   *) die "unknown command '$1' (section | celltype | uni2)" ;;
