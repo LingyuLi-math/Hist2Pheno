@@ -331,14 +331,20 @@ Do not mix Visium HD 8 µm bin coordinates with Xenium HE pixels without the pap
 
 [`code/PanCancer/`](code/PanCancer/) trains **one** three-head MLP on sheet `celltype_pancancer` (20 L2 / 8 L12 / 5 L1; ESCC omitted). Native labels are remapped on read; UNI embeddings stay in each cohort `*_matched_features.h5ad`. Command index: [`demo.sh`](code/PanCancer/demo.sh). Details: [`code/PanCancer/README.md`](code/PanCancer/README.md).
 
-Two SPORA releases are additional sections of the same seven names. `schurch2020coordinated` ([Schürch et al., *Cell* 2020](https://doi.org/10.1016/j.cell.2020.07.005)) adds 140 CRC TMA cores (35 patients, 205,264 kept cells) to the 3 Xenium CRC sections. `hoefflin2026spatial` ([Hoefflin et al., bioRxiv 2026](https://doi.org/10.64898/2026.03.12.709536)) adds 30 IDH-mutant glioma sections (1,633,273 kept cells; cAC / cOPC / cMES collapsed to Tumor) to the 2 GBM sections. Prepare still prints seven dataset columns; the CRC and GBM counts go up. A0–A7 checkpoints already on disk were fit on the earlier 896 sections. The next prepare, including `uni2 A8` and `run_spora_pancancer.sh train`, appends these 170 sections to `section_index.csv` and trains on 1,066 sections. A9–A11 keep that A8 trunk and add Hist2Prot auxiliary heads (neighbour composition, optional µm geometry, tissue compartment); commands are in [`code/PanCancer/README.md`](code/PanCancer/README.md#2026-11-16-a9-a11-hist2prot-auxiliary-heads-not-yet-trained). The multiplexed 3D CRC atlas is a separate study: [Lin et al., *Cell* 2023](https://www.cell.com/cell/fulltext/S0092-8674(22)01571-9). `run_spora_pancancer.sh train` writes `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`. A8 writes `result_uni2_A8_l12_balanced_paired_v2_seed42/`.
+Two SPORA releases are additional sections of the same seven names. `schurch2020coordinated` ([Schürch et al., *Cell* 2020](https://doi.org/10.1016/j.cell.2020.07.005)) adds 140 CRC TMA cores (35 patients, 205,264 kept cells) to the 3 Xenium CRC sections. `hoefflin2026spatial` ([Hoefflin et al., bioRxiv 2026](https://doi.org/10.64898/2026.03.12.709536)) adds 30 IDH-mutant glioma sections (1,633,273 kept cells; cAC / cOPC / cMES collapsed to Tumor) to the 2 GBM sections. Prepare still prints seven dataset columns; the CRC and GBM counts go up. A0–A7 checkpoints already on disk were fit on the earlier 896 sections. The current index is 1,066 sections (CRC 143, GBM 32). A8–A11 train on that index. A9–A11 keep the A8 trunk and add Hist2Prot auxiliary heads. The multiplexed 3D CRC atlas is a separate study: [Lin et al., *Cell* 2023](https://www.cell.com/cell/fulltext/S0092-8674(22)01571-9).
+
+The 205,264 Schürch cells include `CD8+ T cells` and `plasma cells`. Tables exported before those two names were in the keep set still have 180,222 cells and omit both. `refresh-schurch` rewrites the 140 Schürch tables and re-extracts their UNI2 tokens. Hoefflin is not rewritten. Run that before A8–A11. Each training script then puts five folds on four GPUs: fold 0 builds the spatial cache, folds 1–3 run with it, fold 4 follows fold 0, and the first GPU writes `best_mlp_gpu.pt`. One architecture at a time. Detail is in [`code/PanCancer/README.md`](code/PanCancer/README.md#2026-11-16-a8-balanced-l12-not-yet-trained).
 
 ```bash
 cd /home/lingyu/ssd2/Python/Hist2Pheno
-bash code/spora/run_spora_pancancer.sh prepare
-bash code/spora/run_spora_pancancer.sh uni2          # GPUs 0–3
-CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh train
+bash code/spora/run_spora_pancancer.sh refresh-schurch   # Schurch CD8 + plasma, GPUs 0–3
+bash code/PanCancer/run_a8_4gpu.sh
+bash code/PanCancer/run_a9_4gpu.sh
+bash code/PanCancer/run_a10_4gpu.sh    # writes data/PanCancer/mpp_map.csv first
+bash code/PanCancer/run_a11_4gpu.sh
 ```
+
+`run_spora_pancancer.sh train` is a separate A2 fit, `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`. A8–A11 write `result_uni2_A8_l12_balanced_paired_v2_seed42/`, `result_uni2_A9_nbr_comp_paired_v2_seed42/`, `result_uni2_A10_nbr_comp_geom_paired_v2_seed42/`, and `result_uni2_A11_nbr_tissue_paired_v2_seed42/`.
 
 Screening notes: [`code/spora/spora_CellData.md`](code/spora/spora_CellData.md) and [`spora_celltype_training_screen.ipynb`](code/spora/spora_celltype_training_screen.ipynb). Phillips CTCL, Haist HNSCC lymph nodes, and Hickey intestine stay out of this run.
 

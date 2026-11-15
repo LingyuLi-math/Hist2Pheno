@@ -655,6 +655,7 @@ class PooledCtx:
     tissue_comp_weight: float = 0.0  # 2026.11.15, Hist2Prot tissue-compartment task (A11)
     tissue_comp_k: int = 32
     split_seed: int = 42  # 2026.10.26, fixed splits across training seeds / 固定 cross-section 拆分
+    only_folds: tuple[int, ...] | None = None
     g: dict = field(default_factory=dict)
 
     @property
@@ -753,7 +754,9 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         if plan.patient_id.isna().any(): raise ValueError("patient map missing indexed sections")
         for fold,(_,va) in enumerate(GroupKFold(ctx.cv_k).split(plan, groups=plan.patient_id)):
             plan.loc[plan.index[va],"fold"] = fold
-    plan.to_csv(plan_path, index=False)
+    tmp_plan = plan_path.with_suffix(".csv.tmp")
+    plan.to_csv(tmp_plan, index=False)
+    os.replace(tmp_plan, plan_path)
     fold_of = {
         str(s): int(f)
         for s, f in zip(plan["section_id"], plan["fold"])
@@ -876,7 +879,14 @@ def step_train(ctx: PooledCtx) -> None:
         spatial_k=ctx.spatial_k,
         spatial_mode=ctx.spatial_mode,
         group_splitter=ctx.group_splitter,
+        only_folds=ctx.only_folds,
     )
+    if ctx.only_folds is not None:
+        print(
+            "  partial fold run finished. OOF and best_mlp are written after every fold exists.",
+            flush=True,
+        )
+        return
     dest = ctx.ckpt_dir / "best_mlp_gpu.pt"
     copy_checkpoint(lp["best_fold"]["checkpoint"], dest)
     # 2026.10.24, preserve all three OOF heads and exact row identity / 真正 OOF
@@ -976,6 +986,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="index | prepare | train | he_validate | all",
     )
     p.add_argument("--cv-k", type=int, default=5)
+    p.add_argument(
+        "--only-folds",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Train these fold ids only. Other folds are left for another process.",
+    )
     p.add_argument("--max-epochs", type=int, default=50)
     p.add_argument("--patience", type=int, default=10)
     p.add_argument("--train-batch-size", type=int, default=DEFAULT_TRAIN_BATCH_SIZE)
@@ -1122,6 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
         spatial_mode=args.spatial_mode,
         max_cells_per_section=args.max_cells_per_section,
         group_splitter=args.group_splitter,
+        only_folds=tuple(args.only_folds) if args.only_folds else None,
         train_balance_sampler=train_balance,
         train_balance_sampler_mode=args.train_balance_sampler_mode,
     )
@@ -1143,6 +1161,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"  l2_focal:   {ctx.l2_focal_gamma}", flush=True)
     print("=" * 60, flush=True)
+    if ctx.only_folds is not None and "he_validate" in steps:
+        raise ValueError("--only-folds trains those folds only; run he_validate after every fold exists")
     try:
         if "index" in steps:
             step_index(ctx)

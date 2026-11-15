@@ -2,6 +2,7 @@
 # 2026.03.23 For model training and validation: LLY Adjust model to use level1 and level2
 # 2026.06.26 For each dataset, add spatial context for model training and validation
 # 2026.08.11 LLY, add function for CODEX_HCC dataset
+# 2026.11.16 LLY, add TRAIN_STEPS and ONLY_FOLDS
 ######################################################
 import gc
 import os
@@ -2604,6 +2605,7 @@ def train_hce_group_kfold_cv(
     spatial_k=8,
     spatial_mode="mean",
     group_splitter="shuffle",
+    only_folds=None,
 ):
     """
     Dataset-level CV. Default ``group_splitter='shuffle'`` is ``GroupShuffleSplit``:
@@ -2722,6 +2724,9 @@ def train_hce_group_kfold_cv(
             test_size=test_frac,
             random_state=int(random_state),
         ).split(X_f, y_enc, groups_f)
+    wanted_folds = None if only_folds is None else {int(x) for x in only_folds}
+    if wanted_folds is not None and not wanted_folds:
+        raise ValueError("only_folds is empty")
     fold_rows = []
     skipped = []
     oof_preds_parts = []
@@ -2731,6 +2736,8 @@ def train_hce_group_kfold_cv(
     oof_rows_parts = []
 
     for fold_idx, (tr_idx, va_idx) in enumerate(split_iter):
+        if wanted_folds is not None and int(fold_idx) not in wanted_folds:
+            continue
         held = np.unique(groups_f[va_idx])
         g_tr_u = np.unique(groups_f[tr_idx])
         section_overlap = np.intersect1d(g_tr_u, held)
@@ -2922,6 +2929,11 @@ def train_hce_group_kfold_cv(
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    if wanted_folds is not None:
+        missing = wanted_folds - {int(r["fold"]) for r in fold_rows}
+        if missing:
+            raise RuntimeError(f"only_folds did not finish: {sorted(missing)}")
 
     def _mean_std(key):
         vals = np.array([r[key] for r in fold_rows], dtype=np.float64)
@@ -3596,6 +3608,7 @@ def run_group_kfold_cv_and_load_best_model(
     spatial_k=8,
     spatial_mode="mean",
     group_splitter="shuffle",
+    only_folds=None,
 ):
     """Run dataset-level GroupShuffleSplit / GroupKFold CV, then load the best fold by 4-term score."""
     from pathlib import Path
@@ -3646,7 +3659,15 @@ def run_group_kfold_cv_and_load_best_model(
         spatial_k=spatial_k,
         spatial_mode=spatial_mode,
         group_splitter=group_splitter,
+        only_folds=only_folds,
     )
+    if only_folds is not None:
+        print(
+            f"  only-folds {sorted(int(x) for x in only_folds)} trained; "
+            "best_mlp waits until every fold exists",
+            flush=True,
+        )
+        return {"group_summary": group_summary, "best_fold": None, "model": None}
 
     best_fold = max(
         group_summary["folds"],
@@ -3746,6 +3767,7 @@ def run_group_kfold_cv_with_oof_report(
     spatial_k=8,
     spatial_mode="mean",
     group_splitter="shuffle",
+    only_folds=None,
 ):
     """Dataset-level group CV + load best fold + out-of-fold (held-out dataset) predictions."""
     ctx = run_group_kfold_cv_and_load_best_model(
@@ -3782,6 +3804,7 @@ def run_group_kfold_cv_with_oof_report(
         spatial_k=spatial_k,
         spatial_mode=spatial_mode,
         group_splitter=group_splitter,
+        only_folds=only_folds,
     )
     gs = ctx["group_summary"]
     oof = {

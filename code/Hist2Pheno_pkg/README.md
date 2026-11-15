@@ -29,7 +29,9 @@ A9–A11 start from A8. `--neighbor-comp-weight 0` and `--tissue-comp-weight 0` 
 | A10 | A9 flags plus `--mpp-map`, `--spatial-radii-um 50`, `--spatial-geometry` | same head | same histogram on a 50 µm graph, with log count / distance / density added to the fusion |
 | A11 | A9 flags plus `--tissue-comp-weight 0.2 --tissue-comp-k 32` | `tissue_comp_head` | Tumor / Epithelium / Lymphoid / Myeloid / Stroma / Vascular / Mixed from the GT L12 mix of the 32 nearest cells |
 
-The neighbour graph is the same per-section graph as the spatial features, restricted so a validation target does not use the other partition. A compartment is assigned when its share reaches 0.5 (Vascular 0.35); otherwise the label is Mixed. Commands and result directories: [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-16-a9-a11-hist2prot-auxiliary-heads-not-yet-trained).
+The neighbour graph is the same per-section graph as the spatial features, restricted so a validation target does not use the other partition. A compartment is assigned when its share reaches 0.5 (Vascular 0.35); otherwise the label is Mixed.
+
+`--only-folds` trains the listed fold ids and returns before `best_mlp_gpu.pt` and the pooled OOF file. The four-GPU scripts use it so folds 0–3 run together and fold 4 follows. A later run with no `--only-folds` loads every `hce_group_fold_*.pt`, writes `best_mlp_gpu.pt`, and runs `he_validate`. Commands and result directories: [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-16-a9-a11-hist2prot-auxiliary-heads-not-yet-trained).
 
 ## 2026-11-15 Integrity fixes
 

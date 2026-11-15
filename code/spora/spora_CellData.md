@@ -110,14 +110,25 @@ IDH 突变胶质瘤，25 个病人、30 张组织，H&E 与 CODEX 全部 `exact`
 
 这些别名已经写进 `code/Hist2Pheno_pkg/dataset/build_pancancer_celltype_v1.py`。schurch2020coordinated 的切片算作 **CRC**，hoefflin2026spatial 算作 **GBM**，队列名仍然是原来的七个。`1_demo_train.sh uni2 A8` 和下面的 train 都会在读 `section_index.csv` 时把缺的切片补进去。已经训完的 A0–A7 权重对应补进去之前的 896 张切片。
 
-GT 质心来自 1 µm 实例分割。训练用这些质心上的 UNI2 token。配方和 README 里的 UNI2 A2 相同（adjacent loss，k=8 mean，section 5-fold）。`run_spora_pancancer.sh train` 的结果目录是 `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`。A8 写到 `result_uni2_A8_l12_balanced_paired_v2_seed42/`。
+GT 质心来自 1 µm 实例分割。训练用这些质心上的 UNI2 token。当前索引用 1,066 张切片：CRC 143（原来 3 张 Xenium + 140 张 Schürch），GBM 32（原来 2 张 + 30 张 Hoefflin）。
+
+先把 Schürch 里漏掉的 `CD8+ T cells` 和 `plasma cells` 写回细胞表，并在 GPU 0–3 上重提 UNI2。普通 `prepare` 和 `uni2` 会跳过已有文件，所以用这一条。Hoefflin 不重写。
 
 ```bash
 cd /home/lingyu/ssd2/Python/Hist2Pheno
-bash code/spora/run_spora_pancancer.sh prepare
-bash code/spora/run_spora_pancancer.sh uni2       # GPU 0–3
-CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh train
+bash code/spora/run_spora_pancancer.sh refresh-schurch
 ```
+
+然后再训练。A8–A11 各用四张 GPU：fold 0 先建空间缓存，fold 1–3 并行，fold 4 接在 fold 0 后面，最后一张卡写 `best_mlp_gpu.pt`。一次只跑一个。A10 会先写 `data/PanCancer/mpp_map.csv`，Schürch 和 Hoefflin 是 1.0 µm/px。
+
+```bash
+bash code/PanCancer/run_a8_4gpu.sh
+bash code/PanCancer/run_a9_4gpu.sh
+bash code/PanCancer/run_a10_4gpu.sh
+bash code/PanCancer/run_a11_4gpu.sh
+```
+
+`run_spora_pancancer.sh train` 仍是单独的 A2，结果在 `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`。A8–A11 分别写到 `result_uni2_A8_l12_balanced_paired_v2_seed42/`、`result_uni2_A9_nbr_comp_paired_v2_seed42/`、`result_uni2_A10_nbr_comp_geom_paired_v2_seed42/`、`result_uni2_A11_nbr_tissue_paired_v2_seed42/`。说明在 `code/PanCancer/README.md`。
 
 只想先看 CRC 和 GBM（含这两批新切片）能不能跑通：
 
@@ -131,7 +142,7 @@ CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh smoke
 
 schurch：`tumor cells`→Tumor；`CD4+ T cells`、`CD4+ T cells CD45RO+`、`CD4+ T cells GATA3+`→CD4_T；`CD8+ T cells`→CD8_T；`Tregs`→Tregs；`NK cells`→NK；`B cells`→B_cell；`plasma cells`→Plasma；`CD11c+ DCs`→DC；各型 macrophage 与 `CD11b+ monocytes`→Macrophage；`granulocytes`→Neutrophil；`stroma`→Stromal；`vasculature`、`lymphatics`→Endothelial。
 
-`CD8+ T cells` 和 `plasma cells` 原先不在 `NATIVE_TO_V1` 里，`prepare_spora_sections.py` 把它们滤掉了。现在的 140 份 `*_cells_with_pixel.csv` 里这两类都是 0。映射已经补上。要让它们进入 CRC，需要重新跑 `bash code/spora/run_spora_pancancer.sh prepare`。
+`CD8+ T cells` 和 `plasma cells` 原先不在 `NATIVE_TO_V1` 里，`prepare_spora_sections.py` 把它们滤掉了。现在的 140 份 `*_cells_with_pixel.csv` 里这两类都是 0。映射已经补上。要让它们进入 CRC，运行 `bash code/spora/run_spora_pancancer.sh refresh-schurch`。它会强制重导 140 张 Schürch，删掉旧的 UNI2，再用 GPU 0–3 重新提取。Hoefflin 不动。
 
 hoefflin：`cAC1`、`cAC2`、`cOPC`、`cUndiff`、`cMES`、`cMESHyp`→Tumor；`Mac`→Macrophage；`Neutro`→Neutrophil；`Vasc`→Endothelial；`TcellCD4`→CD4_T；`TcellCD8`→CD8_T；`Bcell`→B_cell。
 

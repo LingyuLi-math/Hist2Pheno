@@ -14,6 +14,7 @@
 #
 #   cd /home/lingyu/ssd2/Python/Hist2Pheno
 #   bash code/spora/run_spora_pancancer.sh prepare
+#   bash code/spora/run_spora_pancancer.sh refresh-schurch
 #   bash code/spora/run_spora_pancancer.sh segment
 #   bash code/spora/run_spora_pancancer.sh uni2
 #   CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh train
@@ -47,6 +48,7 @@ usage() {
   cat <<EOF
 Usage:
   bash code/spora/run_spora_pancancer.sh prepare
+  bash code/spora/run_spora_pancancer.sh refresh-schurch   # Schurch CD8 + plasma, then UNI2
   bash code/spora/run_spora_pancancer.sh segment     # StarDist, GPUs: ${GPUS[*]}
   bash code/spora/run_spora_pancancer.sh uni2        # GT UNI2 tokens, GPUs: ${GPUS[*]}
   CUDA_DEVICE=${CUDA_DEVICE} bash code/spora/run_spora_pancancer.sh train
@@ -64,12 +66,14 @@ cmd_prepare() {
 }
 
 list_tifs() {
-  [[ -d "${PREP}" ]] || die "missing ${PREP}. Run prepare first."
-  find "${PREP}" -name '*_he.tif' | sort
+  local root="${1:-${PREP}}"
+  [[ -d "${root}" ]] || die "missing ${root}. Run prepare first."
+  find "${root}" -name '*_he.tif' | sort
 }
 
 shard_lists() {
   local kind="$1"
+  local root="${2:-${PREP}}"
   local dir="${PREP}/.shards/${kind}"
   rm -rf "${dir}"
   mkdir -p "${dir}"
@@ -80,7 +84,7 @@ shard_lists() {
     gpu="${GPUS[$((i % n))]}"
     echo "${tif}" >> "${dir}/${gpu}.txt"
     i=$((i + 1))
-  done < <(list_tifs)
+  done < <(list_tifs "${root}")
   echo "${i}" > "${dir}/count"
   echo "${dir}"
 }
@@ -109,6 +113,51 @@ cmd_segment() {
   if ((${#pids[@]})); then
     wait_pids "${pids[@]}"
   fi
+}
+
+cmd_refresh_schurch() {
+  local ds="schurch2020coordinated"
+  local root="${PREP}/${ds}"
+  echo "force-prepare ${ds}: rewrite tables so CD8+ T cells and plasma cells are kept"
+  "${PYTHON}" -u code/spora/prepare_spora_sections.py \
+    --datasets "${ds}" --force --workers "${PREPARE_WORKERS:-8}"
+  "${PYTHON}" - "${root}" << 'PY'
+import sys
+from pathlib import Path
+import pandas as pd
+root = Path(sys.argv[1])
+files = sorted(root.glob("*/*_cells_with_pixel.csv"))
+n = n_cd8 = n_plasma = 0
+for path in files:
+    labels = pd.read_csv(path, usecols=["final_CT"])["final_CT"]
+    n += len(labels)
+    n_cd8 += int((labels == "CD8+ T cells").sum())
+    n_plasma += int((labels == "plasma cells").sum())
+print(f"schurch files={len(files)} cells={n} CD8+ T cells={n_cd8} plasma cells={n_plasma}", flush=True)
+if len(files) != 140 or n_cd8 == 0 or n_plasma == 0:
+    raise SystemExit("Schurch export is still missing CD8+ T cells or plasma cells")
+PY
+  local removed=0 emb
+  while IFS= read -r emb; do
+    [[ -n "${emb}" ]] || continue
+    rm -rf "${emb}"
+    removed=$((removed + 1))
+  done < <(find "${root}" -mindepth 2 -maxdepth 2 -type d -name '*_project_all_UNI2' | sort)
+  echo "removed ${removed} old Schurch UNI2 stores"
+  local dir n pids=() gpu
+  dir="$(shard_lists schurch-uni2 "${root}")"
+  n="$(cat "${dir}/count")"
+  echo "UNI2 Schurch ${n} tissues on GPUs: ${GPUS[*]}"
+  for gpu in "${GPUS[@]}"; do
+    [[ -s "${dir}/${gpu}.txt" ]] || continue
+    CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u code/spora/spora_uni2_worker.py \
+      --list "${dir}/${gpu}.txt" &
+    pids+=("$!")
+  done
+  if ((${#pids[@]})); then
+    wait_pids "${pids[@]}"
+  fi
+  echo "Schurch UNI2 refreshed. Hoefflin was not rewritten. Start A8/A9 after this, not before."
 }
 
 cmd_uni2() {
@@ -175,6 +224,7 @@ cmd_smoke() {
 case "${1:-}" in
   -h|--help|help|"") usage ;;
   prepare) cmd_prepare ;;
+  refresh-schurch) cmd_refresh_schurch ;;
   segment|stardist) cmd_segment ;;
   uni2) cmd_uni2 ;;
   train) cmd_train ;;

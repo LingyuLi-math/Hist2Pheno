@@ -131,6 +131,7 @@ def prepare_runtime(cv,result,config):
             os.replace(gtmp,geom_path)
         finally:
             if os.path.exists(tmp):os.unlink(tmp)
+    print(f"  context cache ready {path.name}", flush=True)
     runtime.update(contexts=np.load(path,mmap_mode='r'),geometry=np.load(geom_path,mmap_mode='r'))
     return runtime
 

@@ -337,7 +337,31 @@ cmd_uni2() {
   for ((i=0; i<${#args[@]}; i++)); do
     if [[ "${args[i]}" == --save-result ]]; then args[i+1]="${args[i+1]}_${suffix}"; fi
   done
+  # TRAIN_STEPS replaces the default "prepare train he_validate".
+  # ONLY_FOLDS is a space-separated fold list for one GPU in a parallel run.
+  if [[ -n "${TRAIN_STEPS:-}" ]]; then
+    local -a rebuilt=()
+    local skip=0
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "$skip" -gt 0 ]]; then skip=$((skip - 1)); continue; fi
+      if [[ "${args[i]}" == --steps ]]; then
+        local -a step_arr=()
+        read -r -a step_arr <<< "$TRAIN_STEPS"
+        rebuilt+=(--steps "${step_arr[@]}")
+        skip=3
+        continue
+      fi
+      rebuilt+=("${args[i]}")
+    done
+    args=("${rebuilt[@]}")
+  fi
+  if [[ -n "${ONLY_FOLDS:-}" ]]; then
+    local -a fold_arr=()
+    read -r -a fold_arr <<< "$ONLY_FOLDS"
+    args+=(--only-folds "${fold_arr[@]}")
+  fi
   log="${log%.log}_${suffix}.log"
+  if [[ -n "${LOG_TAG:-}" ]]; then log="${log%.log}_${LOG_TAG}.log"; fi
   echo "log $log"
   run_py "$log" replace "${args[@]}"
 }

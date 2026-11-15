@@ -252,10 +252,21 @@ This run writes its own result directory. CRC in this run is the 3 Xenium sectio
 - checkpoint directory `cross_dataset_cv/A8_l12_balanced/`
 - log `code/log/pancancer_section_uni2_A8_l12_balanced_paired_v2_seed42.log`
 
+One GPU trains the five folds one after another:
+
 ```bash
 cd /home/lingyu/ssd2/Python/Hist2Pheno
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8
 ```
+
+Four GPUs train four folds at once, then the first GPU trains fold 4 and writes the OOF report. Wall time is about two folds plus that report. Each process still loads the full cell table. Run `refresh-schurch` first if Schürch `CD8+ T cells` and `plasma cells` should be in this fit. The shared launcher is [`run_uni2_4gpu.sh`](run_uni2_4gpu.sh); [`run_a8_4gpu.sh`](run_a8_4gpu.sh) calls it with `A8`.
+
+```bash
+bash code/spora/run_spora_pancancer.sh refresh-schurch
+bash code/PanCancer/run_a8_4gpu.sh
+```
+
+`GPUS="0 1 2 3"` changes the device list. `--only-folds N` is how one process trains a single fold. Fold 0 starts alone and the others wait until its log contains `context cache ready`. Folds 1–3 then occupy the other three GPUs. Fold 4 starts on the first GPU after fold 0 exits. The last step has no `--only-folds`: it loads the five `hce_group_fold_*.pt` files, writes `best_mlp_gpu.pt`, and runs `he_validate`. A fold file that already exists is not retrained. Logs are `code/log/pancancer_section_uni2_A8_l12_balanced_paired_v2_seed42_{prepare,fold0,fold1,fold2,fold3,fold4,finalize}.log`.
 
 Fill the pooled OOF L2, the B / Plasma table, and the chosen fold into this section after the job finishes. Do not deploy A8, and do not run `3_demo_pred.sh uni2 A8`, until that OOF number is in hand. NPC predict after that is `code/External_val/NPC/demo_uni2_A8.sh`.
 
@@ -271,7 +282,9 @@ A9, A10, and A11 keep the A8 trunk (A3 spatial gate, balanced L12). Each adds a 
 
 Compartment order is Tumor, Epithelium, Lymphoid, Myeloid, Stroma, Vascular, Mixed. A compartment wins at share 0.5 (Vascular at 0.35); otherwise the label is Mixed. Inference writes `nbr_comp_probs` for A9–A11 and `tissue_comp_probs` for A11.
 
-A10 needs `data/PanCancer/mpp_map.csv` before training. Schürch and Hoefflin coordinates are on the 1 µm H&E, so those `pan_organ` rows are 1.0 µm/px. The other CODEX cohorts stay at 0.5.
+A10 needs `data/PanCancer/mpp_map.csv` before training. Schürch and Hoefflin coordinates are on the 1 µm H&E. `make_mpp_map.py` therefore sets `codex_crc_spora` and `codex_glioma_spora` to 1.0 µm/px. The other CODEX cohorts stay at 0.5. [`run_a10_4gpu.sh`](run_a10_4gpu.sh) writes that CSV before prepare. [`run_a9_4gpu.sh`](run_a9_4gpu.sh) and [`run_a11_4gpu.sh`](run_a11_4gpu.sh) use the same fold schedule as A8. Do not start a second four-GPU script while the first still holds the devices. Logs follow `code/log/pancancer_section_uni2_<tag>_{prepare,foldN,finalize}.log`.
+
+One GPU, five folds in order:
 
 ```bash
 cd /home/lingyu/ssd2/Python/Hist2Pheno
@@ -279,6 +292,15 @@ python code/PanCancer/make_mpp_map.py
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A9
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A10
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A11
+```
+
+Four GPUs, after `refresh-schurch` if the new Schürch cells should be included. One architecture at a time:
+
+```bash
+bash code/spora/run_spora_pancancer.sh refresh-schurch
+bash code/PanCancer/run_a9_4gpu.sh
+bash code/PanCancer/run_a10_4gpu.sh
+bash code/PanCancer/run_a11_4gpu.sh
 ```
 
 Outputs:
@@ -289,7 +311,7 @@ Outputs:
 
 Predict after a finished weight: `bash code/PanCancer/3_demo_pred.sh uni2 A9` (same for A10 and A11). A10 inference reads the per-section mpp stored in the checkpoint.
 
-Schürch `CD8+ T cells` and `plasma cells` are now in `NATIVE_TO_V1` and the keep set. The prepared tables written before that change omit both (0 cells in `data/CODEX/spora/prepared/schurch2020coordinated/`). Re-run `bash code/spora/run_spora_pancancer.sh prepare` before A9–A11 if those cells should enter CRC.
+Schürch `CD8+ T cells` and `plasma cells` are now in `NATIVE_TO_V1` and the keep set. The prepared tables written before that change omit both (0 cells in `data/CODEX/spora/prepared/schurch2020coordinated/`). Run `bash code/spora/run_spora_pancancer.sh refresh-schurch` before A8–A11 if those cells should enter CRC. That rewrites the 140 Schürch tables and re-extracts their UNI2 tokens. Hoefflin is left as it is.
 
 ### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
 
