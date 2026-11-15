@@ -198,6 +198,26 @@ def _unpack_spatial_batch(batch, head_mode="dual"):
     return x, y_l2, y_l1, None, None, None, None
 
 
+def _tissue_comp_loss(logits, targets, weights, global_idx, device):
+    """Class-weighted CE to the tissue-compartment label (Hist2Prot Eq. 8)."""
+    y = torch.as_tensor(targets[global_idx.detach().cpu().numpy()], device=device)
+    m = y >= 0
+    if not bool(m.any()):
+        return logits.float().sum() * 0.0
+    return torch.nn.functional.cross_entropy(logits.float()[m], y[m], weight=weights)
+
+
+def _neighbor_comp_loss(logits, targets, valid, global_idx, device):
+    """Soft cross-entropy to the neighbours' L2 histogram (Hist2Prot neighbour task)."""
+    rows = global_idx.detach().cpu().numpy()
+    q = torch.as_tensor(np.asarray(targets[rows], dtype=np.float32), device=device)
+    m = torch.as_tensor(np.asarray(valid[rows]), device=device)
+    if not bool(m.any()):
+        return logits.float().sum() * 0.0
+    logp = torch.nn.functional.log_softmax(logits.float(), dim=1)
+    return -(q[m] * logp[m]).sum(1).mean()
+
+
 def _neighbor_x_from_batch(spatial_ctx, global_idx, device):
     if spatial_ctx is None or global_idx is None:
         return None
@@ -937,7 +957,109 @@ def build_mlp_classifier_for_state_dict(
             num_level3_classes=n3,
             num_level4_classes=n4,
         )
-    return build_mlp_classifier(**kw), use_five
+    model = build_mlp_classifier(**kw)
+    # 2026.11.15, A9/A11 auxiliary heads (absent in A0–A8)
+    for name in AUX_HEADS:
+        if f"{name}.weight" in state_dict:
+            w = state_dict[f"{name}.weight"]
+            attach_aux_head(model, name, int(w.shape[1]), int(w.shape[0]))
+    return model, use_five
+
+
+AUX_HEADS = ("neighbor_comp_head", "tissue_comp_head")
+
+# 2026.11.15, tissue compartments (Hist2Prot Eq. 8: tumor / stroma / lymph /
+# endothelial ...). Derived from the GT L12 composition of the k_tissue nearest
+# labelled cells (self included). Order is part of the checkpoint contract.
+TISSUE_COMPARTMENTS = ("Tumor", "Epithelium", "Lymphoid", "Myeloid", "Stroma", "Vascular", "Mixed")
+_COMPARTMENT_OF_L12 = {"Tumor": 0, "Epithelial": 1, "T_cell": 2, "B_Plasma": 2,
+                       "Myeloid": 3, "Stromal": 4, "Endothelial": 5}
+_COMPARTMENT_MIN_SHARE = (0.5, 0.5, 0.5, 0.5, 0.5, 0.35)
+
+
+def attach_aux_head(model, name, in_dim, n_out):
+    """Attach an optional training-time auxiliary head on the shared feature."""
+    if name not in AUX_HEADS:
+        raise ValueError(f"unknown auxiliary head {name}")
+    if not hasattr(model, "forward_heads_aux"):
+        raise ValueError("auxiliary heads need the three-head MLP")
+    ref = next(model.parameters())
+    head = nn.Linear(int(in_dim), int(n_out)).to(ref.device)
+    setattr(model, name, head)
+    return head
+
+
+def attach_neighbor_comp_head(model, in_dim, n_out):
+    return attach_aux_head(model, "neighbor_comp_head", in_dim, n_out)
+
+
+def tissue_compartment_targets(cv, result, k_tissue=32):
+    """Per-row tissue-compartment label from the GT L12 mix of the k_tissue
+    nearest cells (self included), within one section and one partition.
+
+    A compartment wins when its share reaches its threshold (0.5; vascular
+    0.35); otherwise "Mixed". Rows outside train/val get -1 (ignored).
+    """
+    from scipy.spatial import cKDTree
+    from pancancer_labels import ontology_class_names, hierarchy_maps
+    names = ontology_class_names()
+    l2_to_l12 = np.asarray(hierarchy_maps(names)["l2_to_l12"])
+    l12 = list(names["L12"])
+    comp_of_l12 = np.array([_COMPARTMENT_OF_L12.get(c, -1) for c in l12])
+    if len(cv["class_names"]) != len(l2_to_l12):
+        raise ValueError("tissue compartments need the pan-cancer L2 ontology")
+    comp_of_row = comp_of_l12[l2_to_l12[np.asarray(cv["y_encoded_f"], dtype=np.int64)]]
+    xy = np.asarray(cv["X_coords_f"], dtype=np.float64)
+    g = np.asarray(cv["groups_f"])
+    part = np.full(len(g), -1, np.int8)
+    part[np.asarray(result["train_global_indices"])] = 0
+    part[np.asarray(result["val_global_indices"])] = 1
+    out = np.full(len(g), -1, np.int64)
+    n_comp = len(TISSUE_COMPARTMENTS) - 1
+    thr = np.asarray(_COMPARTMENT_MIN_SHARE)
+    for gg in np.unique(g):
+        for pp in (0, 1):
+            rows = np.flatnonzero((g == gg) & (part == pp))
+            if rows.size == 0:
+                continue
+            k = int(min(k_tissue, rows.size))
+            _, nn_ = cKDTree(xy[rows]).query(xy[rows], k=k)
+            nn_ = np.asarray(nn_).reshape(rows.size, k)
+            comp = comp_of_row[rows][nn_]
+            share = np.stack([(comp == c).mean(1) for c in range(n_comp)], 1)
+            ok = share >= thr[None, :]
+            best = np.where(ok, share, -1).argmax(1)
+            out[rows] = np.where(ok.any(1), best, n_comp)
+    return out
+
+
+def neighbor_composition_targets(cv, result, num_classes):
+    """Per-row L2 histogram of the k spatial neighbours (self excluded).
+
+    Uses the same per-section graph as the context features and the same
+    train/val restriction, so validation targets never mix partitions. Rows
+    with no neighbour get a zero row and are masked out of the loss.
+    """
+    from spatial_context import restrict
+    graphs_ = cv.get("_context_graphs")
+    if not graphs_:
+        raise ValueError("neighbor composition needs the spatial graph (use --use-spatial-context)")
+    idx, dist = graphs_[0]
+    tr = np.asarray(result["train_global_indices"]); va = np.asarray(result["val_global_indices"])
+    g = np.asarray(cv["groups_f"])
+    if np.intersect1d(g[tr], g[va]).size:
+        idx, dist = restrict((idx, dist), tr, va)
+    y = np.asarray(cv["y_encoded_f"], dtype=np.int64)
+    n, k = idx.shape
+    out = np.zeros((n, int(num_classes)), dtype=np.float32)
+    valid = idx >= 0
+    rows = np.repeat(np.arange(n, dtype=np.int64), k)[valid.ravel()]
+    cols = y[idx[valid]]
+    C = int(num_classes)
+    out[:] = np.bincount(rows * C + cols, minlength=n * C).reshape(n, C)
+    counts = out.sum(1, keepdims=True)
+    np.divide(out, np.maximum(counts, 1.0), out=out)
+    return out.astype(np.float16), counts[:, 0] > 0
 
 
 def get_best_checkpoint_path(path, therapy_data, therapy_model=None):
@@ -1300,6 +1422,40 @@ def train_and_save_model(
         spatial_config=result.get("spatial_config") if result else None,
     )
 
+    # 2026.11.15, A9 neighbourhood-composition head (Hist2Prot neighbour task)
+    nbr_w = float(((result or {}).get("_cv_source") or {}).get("neighbor_comp_weight", 0.0) or 0.0)
+    nbr_targets = nbr_valid = None
+    if nbr_w > 0:
+        if head_mode != "three":
+            raise ValueError("--neighbor-comp-weight needs the three-head model (L12 head on)")
+        if not use_spatial_context or result.get("_streaming_spatial") is None:
+            raise ValueError("--neighbor-comp-weight needs streaming spatial context")
+        attach_neighbor_comp_head(model, int(hidden_dims[-1]), int(num_classes))
+        nbr_targets, nbr_valid = neighbor_composition_targets(
+            result["_cv_source"], result, num_classes)
+        print(f"  Neighbour-composition task: weight={nbr_w:g}, "
+              f"rows with neighbours={int(nbr_valid.sum()):,}/{len(nbr_valid):,}", flush=True)
+
+    # 2026.11.15, A11 tissue-compartment head (Hist2Prot tissue task)
+    _src = (result or {}).get("_cv_source") or {}
+    tis_w = float(_src.get("tissue_comp_weight", 0.0) or 0.0)
+    tis_targets = tis_weights = None
+    if tis_w > 0:
+        if head_mode != "three":
+            raise ValueError("--tissue-comp-weight needs the three-head model (L12 head on)")
+        if _src.get("X_coords_f") is None:
+            raise ValueError("--tissue-comp-weight needs spatial coordinates")
+        attach_aux_head(model, "tissue_comp_head", int(hidden_dims[-1]), len(TISSUE_COMPARTMENTS))
+        tis_targets = tissue_compartment_targets(_src, result, int(_src.get("tissue_comp_k", 32)))
+        tr_t = tis_targets[np.asarray(result["train_global_indices"])]
+        tr_t = tr_t[tr_t >= 0]
+        cnt = np.bincount(tr_t, minlength=len(TISSUE_COMPARTMENTS)).astype(np.float64)
+        w_t = np.where(cnt > 0, cnt.sum() / (len(TISSUE_COMPARTMENTS) * np.maximum(cnt, 1)), 0.0)
+        tis_weights = torch.as_tensor(w_t, dtype=torch.float32, device=device)
+        print("  Tissue-compartment task: weight=%g, train counts %s" % (
+            tis_w, dict(zip(TISSUE_COMPARTMENTS, cnt.astype(int).tolist()))), flush=True)
+    aux_on = nbr_w > 0 or tis_w > 0
+
     # 2026.10.26, paired layer initialization / A0–A3 同名 backbone/head 参数逐位一致
     if result is not None and result.get("_cv_source", {}).get("paired_initialization", False):
         from paired_initialization import initialize_paired_model
@@ -1637,13 +1793,27 @@ def train_and_save_model(
                             target_l4=y_l4,
                         )
                     elif use_level12_head:
-                        logits_l2, logits_l1_head, logits_l12 = model.forward_heads(
-                            x, neighbor_x=neighbor_x
-                        )
+                        if aux_on:
+                            logits_l2, logits_l1_head, logits_l12, aux_logits = (
+                                model.forward_heads_aux(x, neighbor_x=neighbor_x))
+                        else:
+                            logits_l2, logits_l1_head, logits_l12 = model.forward_heads(
+                                x, neighbor_x=neighbor_x
+                            )
                         loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, _, _, adj_terms = criterion(
                             logits_l2, logits_l1_head, y_l2, y_l1,
                             logits_l12=logits_l12, target_l12=y_l12,
                         )
+                        if nbr_w > 0:
+                            nbr_loss = _neighbor_comp_loss(aux_logits["nbr"], nbr_targets, nbr_valid,
+                                                           global_idx, device)
+                            loss = loss + nbr_w * nbr_loss
+                            adj_terms = {**adj_terms, "neighbor_comp": nbr_loss.detach()}
+                        if tis_w > 0:
+                            tis_loss = _tissue_comp_loss(aux_logits["tissue"], tis_targets, tis_weights,
+                                                         global_idx, device)
+                            loss = loss + tis_w * tis_loss
+                            adj_terms = {**adj_terms, "tissue_comp": tis_loss.detach()}
                     else:
                         logits_l2, logits_l1_head = model.forward_heads(
                             x, neighbor_x=neighbor_x
@@ -1678,13 +1848,27 @@ def train_and_save_model(
                         target_l4=y_l4,
                     )
                 elif use_level12_head:
-                    logits_l2, logits_l1_head, logits_l12 = model.forward_heads(
-                        x, neighbor_x=neighbor_x
-                    )
+                    if aux_on:
+                        logits_l2, logits_l1_head, logits_l12, aux_logits = (
+                            model.forward_heads_aux(x, neighbor_x=neighbor_x))
+                    else:
+                        logits_l2, logits_l1_head, logits_l12 = model.forward_heads(
+                            x, neighbor_x=neighbor_x
+                        )
                     loss, ce_l2, ce_l1_std, ce_l1_agg, ce_l12, _, _, adj_terms = criterion(
                         logits_l2, logits_l1_head, y_l2, y_l1,
                         logits_l12=logits_l12, target_l12=y_l12,
                     )
+                    if nbr_w > 0:
+                        nbr_loss = _neighbor_comp_loss(aux_logits["nbr"], nbr_targets, nbr_valid,
+                                                       global_idx, device)
+                        loss = loss + nbr_w * nbr_loss
+                        adj_terms = {**adj_terms, "neighbor_comp": nbr_loss.detach()}
+                    if tis_w > 0:
+                        tis_loss = _tissue_comp_loss(aux_logits["tissue"], tis_targets, tis_weights,
+                                                     global_idx, device)
+                        loss = loss + tis_w * tis_loss
+                        adj_terms = {**adj_terms, "tissue_comp": tis_loss.detach()}
                 else:
                     logits_l2, logits_l1_head = model.forward_heads(
                         x, neighbor_x=neighbor_x
@@ -1987,6 +2171,11 @@ def train_and_save_model_from_split(
          "class_weight":class_weight_mode,"beta":class_balanced_beta,"focal":l2_focal_gamma,
          **({"l12_class_weight":result["_cv_source"]["l12_class_weight_mode"]}
             if (result.get("_cv_source") or {}).get("l12_class_weight_mode","none")!="none" else {}),
+         **({"neighbor_comp_weight":float(result["_cv_source"]["neighbor_comp_weight"])}
+            if float((result.get("_cv_source") or {}).get("neighbor_comp_weight",0) or 0)>0 else {}),
+         **({"tissue_comp_weight":float(result["_cv_source"]["tissue_comp_weight"]),
+             "tissue_comp_k":int(result["_cv_source"].get("tissue_comp_k",32))}
+            if float((result.get("_cv_source") or {}).get("tissue_comp_weight",0) or 0)>0 else {}),
          "smoothing":[l1_label_smoothing,l2_label_smoothing],
          "spatial":result.get("spatial_config"),"spatial_mode":result.get("spatial_mode"),
          "spatial_k":result.get("spatial_k"),"hierarchy":result.get("hierarchy_config"),"hierarchy_maps":result.get("hierarchy_maps"),
@@ -2101,7 +2290,12 @@ def train_and_save_model_from_split(
             "loss_weights":{"l1_ce":hce_w1,"l2_ce":hce_w2,"l2_to_l1_nll":hce_w12,"l12_ce":hce_w_l12head,
                 # 2026.11.15, only when enabled so A0–A7 checkpoint families are unchanged
                 **({"l12_class_weight":str(result["_cv_source"]["l12_class_weight_mode"])}
-                   if str((result.get("_cv_source") or {}).get("l12_class_weight_mode","none"))!="none" else {})},
+                   if str((result.get("_cv_source") or {}).get("l12_class_weight_mode","none"))!="none" else {}),
+                **({"neighbor_comp":float(result["_cv_source"]["neighbor_comp_weight"])}
+                   if float((result.get("_cv_source") or {}).get("neighbor_comp_weight",0) or 0)>0 else {}),
+                **({"tissue_comp":float(result["_cv_source"]["tissue_comp_weight"]),
+                    "tissue_comp_k":int(result["_cv_source"].get("tissue_comp_k",32))}
+                   if float((result.get("_cv_source") or {}).get("tissue_comp_weight",0) or 0)>0 else {})},
             "spatial_config":result.get("spatial_config"), "spatial_mode":result.get("spatial_mode"),
             "class_names":list(map(str,class_names)) if class_names is not None else None,
             "hierarchy_config":result.get("hierarchy_config"),

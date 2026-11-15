@@ -651,6 +651,9 @@ class PooledCtx:
     inner_val_fraction: float = 0.2
     embedder: str = "uni"
     l12_class_weight_mode: str = "none"  # 2026.11.15, none keeps A0–A7 reproducible
+    neighbor_comp_weight: float = 0.0  # 2026.11.15, Hist2Prot neighbour task (A9)
+    tissue_comp_weight: float = 0.0  # 2026.11.15, Hist2Prot tissue-compartment task (A11)
+    tissue_comp_k: int = 32
     split_seed: int = 42  # 2026.10.26, fixed splits across training seeds / 固定 cross-section 拆分
     g: dict = field(default_factory=dict)
 
@@ -788,6 +791,9 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     cv["spatial_config"] = ctx.spatial_options or vars(SpatialConfig(k=ctx.spatial_k))
     cv["inner_val_fraction"] = ctx.inner_val_fraction
     cv["l12_class_weight_mode"] = ctx.l12_class_weight_mode
+    cv["neighbor_comp_weight"] = ctx.neighbor_comp_weight
+    cv["tissue_comp_weight"] = ctx.tissue_comp_weight
+    cv["tissue_comp_k"] = ctx.tissue_comp_k
     cv["seed"] = ctx.seed
     cv["split_seed"] = ctx.split_seed
     cv["paired_initialization"] = True
@@ -1022,6 +1028,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--l12-ce-weight",type=float,default=1.0,help="Scalar on direct CE(L12). L1/L2 CE stay class-weighted at weight 1.")
     p.add_argument("--l12-class-weight-mode",choices=("none","balanced"),default="none",
         help="2026.11.15. balanced: class-weight CE(L12) and the L2→L12 / L12→L1 NLL like CE(L1)/CE(L2).")
+    p.add_argument("--neighbor-comp-weight",type=float,default=0.0,
+        help="2026.11.15. >0 adds a head predicting the L2 composition of the k spatial neighbours "
+             "(soft CE, Hist2Prot neighbour task). Needs --use-spatial-context and the L12 head.")
+    p.add_argument("--tissue-comp-weight",type=float,default=0.0,
+        help="2026.11.15. >0 adds a head predicting the tissue compartment (Tumor/Epithelium/Lymphoid/"
+             "Myeloid/Stroma/Vascular/Mixed) from the GT L12 mix of the k nearest cells (Hist2Prot tissue task).")
+    p.add_argument("--tissue-comp-k",type=int,default=32,help="Neighbourhood size for the compartment label.")
     p.add_argument("--spatial-radii-um",type=float,nargs="*",default=[])
     p.add_argument("--spatial-mpp",type=float,default=None)
     p.add_argument("--spatial-coordinates-um",action="store_true")
@@ -1066,6 +1079,12 @@ def main(argv: list[str] | None = None) -> int:
         train_balance = is_cell_stratified_splitter(args.group_splitter)
     if args.spatial_mode == "attention" and (len(args.spatial_radii_um)>1 or args.spatial_geometry):
         raise ValueError("Attention supports one scale without geometry; use mean for multiscale/geometry")
+    if args.neighbor_comp_weight < 0:
+        raise ValueError("--neighbor-comp-weight must be >= 0")
+    if args.neighbor_comp_weight > 0 and not args.use_spatial_context:
+        raise ValueError("--neighbor-comp-weight needs --use-spatial-context")
+    if args.tissue_comp_weight < 0 or args.tissue_comp_k < 2:
+        raise ValueError("--tissue-comp-weight must be >= 0 and --tissue-comp-k >= 2")
     if args.group_splitter == "shuffle":
         raise ValueError("PanCancer OOF CLI requires unique folds; use cross_dataset_section or group_kfold")
     if args.patient_map is not None and args.group_splitter != "cross_dataset_section":
@@ -1082,6 +1101,9 @@ def main(argv: list[str] | None = None) -> int:
         inner_val_fraction=args.inner_val_fraction, embedder=args.embedder, hce_w12=args.legacy_l2_l1_weight,
         hce_w_l12head=args.l12_ce_weight,
         l12_class_weight_mode=args.l12_class_weight_mode,
+        neighbor_comp_weight=args.neighbor_comp_weight,
+        tissue_comp_weight=args.tissue_comp_weight,
+        tissue_comp_k=args.tissue_comp_k,
         data_root=args.data_root.expanduser().resolve(),
         save_result=save_result,
         ablation_tag=ablation_tag,

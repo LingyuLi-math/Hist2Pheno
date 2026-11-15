@@ -259,6 +259,38 @@ CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8
 
 Fill the pooled OOF L2, the B / Plasma table, and the chosen fold into this section after the job finishes. Do not deploy A8, and do not run `3_demo_pred.sh uni2 A8`, until that OOF number is in hand. NPC predict after that is `code/External_val/NPC/demo_uni2_A8.sh`.
 
+### 2026-11-16 A9-A11 Hist2Prot auxiliary heads (not yet trained)
+
+A9, A10, and A11 keep the A8 trunk (A3 spatial gate, balanced L12). Each adds a training-time head on the same fused feature. The extra loss weight is 0.2. A0–A8 checkpoints have no auxiliary head, so their fold files stay reusable. Finished A0–A7 numbers above are still the 896-section runs. These three commands train on the enlarged CRC and GBM (1,066 sections once `section_index.csv` includes the SPORA rows).
+
+| | added head | target | extra loss |
+|--|------------|--------|------------|
+| A9 `nbr_comp` | neighbour L2 composition | histogram of the k=8 neighbours, self excluded | soft CE, weight 0.2 |
+| A10 `nbr_comp_geom` | same as A9 | same, after converting each section to µm | same, plus a 50 µm neighbour cap and log count / distance / density |
+| A11 `nbr_tissue` | A9 plus tissue compartment | 7 classes from the GT L12 mix of the 32 nearest cells (self included) | both weights 0.2; compartment CE is class-weighted |
+
+Compartment order is Tumor, Epithelium, Lymphoid, Myeloid, Stroma, Vascular, Mixed. A compartment wins at share 0.5 (Vascular at 0.35); otherwise the label is Mixed. Inference writes `nbr_comp_probs` for A9–A11 and `tissue_comp_probs` for A11.
+
+A10 needs `data/PanCancer/mpp_map.csv` before training. Schürch and Hoefflin coordinates are on the 1 µm H&E, so those `pan_organ` rows are 1.0 µm/px. The other CODEX cohorts stay at 0.5.
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+python code/PanCancer/make_mpp_map.py
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A9
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A10
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A11
+```
+
+Outputs:
+
+- `data/PanCancer/result_uni2_A9_nbr_comp_paired_v2_seed42/`
+- `data/PanCancer/result_uni2_A10_nbr_comp_geom_paired_v2_seed42/`
+- `data/PanCancer/result_uni2_A11_nbr_tissue_paired_v2_seed42/`
+
+Predict after a finished weight: `bash code/PanCancer/3_demo_pred.sh uni2 A9` (same for A10 and A11). A10 inference reads the per-section mpp stored in the checkpoint.
+
+Schürch `CD8+ T cells` and `plasma cells` are now in `NATIVE_TO_V1` and the keep set. The prepared tables written before that change omit both (0 cells in `data/CODEX/spora/prepared/schurch2020coordinated/`). Re-run `bash code/spora/run_spora_pancancer.sh prepare` before A9–A11 if those cells should enter CRC.
+
 ### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
 
 ```bash

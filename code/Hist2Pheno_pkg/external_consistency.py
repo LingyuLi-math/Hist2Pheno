@@ -54,6 +54,11 @@ def load_model(cohort,allow_cpu):
     return cached[1:]
 
 
+def _tissue_names():
+    from model import TISSUE_COMPARTMENTS
+    return list(TISSUE_COMPARTMENTS)
+
+
 def predict_one(cohort,sample,*,force=False,allow_cpu=False):
     import anndata as ad
     paths=cohort.sample_paths(sample);dest=paths['pred'];probpath=cohort.l2_probs_path(sample)
@@ -117,6 +122,11 @@ def predict_one(cohort,sample,*,force=False,allow_cpu=False):
             l1_class_names=np.asarray(classes['L1'],dtype=str),
             l12_probs=np.asarray(probs['l12'],dtype=np.float32),
             l12_class_names=np.asarray(classes['L12'],dtype=str),
+            # 2026.11.15, A9 only: predicted L2 composition of each nucleus's neighbours
+            **({'nbr_comp_probs':np.asarray(probs['nbr'],dtype=np.float32)} if 'nbr' in probs else {}),
+            # 2026.11.15, A11 only: predicted tissue compartment per nucleus
+            **({'tissue_comp_probs':np.asarray(probs['tissue'],dtype=np.float32),
+                'tissue_comp_names':np.asarray(_tissue_names(),dtype=str)} if 'tissue' in probs else {}),
             row_identity_sha256=np.asarray(rows),pipeline_run_id=np.asarray(stamp))
         return pp.publish(marker,stamp,[dest,probpath],source=source,row_signature=rows,
             obs_ids_sha256=pp.fingerprint(names),n_cells=len(X),model=desc,probabilities_sha256=probabilities_sha)

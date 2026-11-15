@@ -131,6 +131,8 @@ CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh smoke
 
 schurch：`tumor cells`→Tumor；`CD4+ T cells`、`CD4+ T cells CD45RO+`、`CD4+ T cells GATA3+`→CD4_T；`CD8+ T cells`→CD8_T；`Tregs`→Tregs；`NK cells`→NK；`B cells`→B_cell；`plasma cells`→Plasma；`CD11c+ DCs`→DC；各型 macrophage 与 `CD11b+ monocytes`→Macrophage；`granulocytes`→Neutrophil；`stroma`→Stromal；`vasculature`、`lymphatics`→Endothelial。
 
+`CD8+ T cells` 和 `plasma cells` 原先不在 `NATIVE_TO_V1` 里，`prepare_spora_sections.py` 把它们滤掉了。现在的 140 份 `*_cells_with_pixel.csv` 里这两类都是 0。映射已经补上。要让它们进入 CRC，需要重新跑 `bash code/spora/run_spora_pancancer.sh prepare`。
+
 hoefflin：`cAC1`、`cAC2`、`cOPC`、`cUndiff`、`cMES`、`cMESHyp`→Tumor；`Mac`→Macrophage；`Neutro`→Neutrophil；`Vasc`→Endothelial；`TcellCD4`→CD4_T；`TcellCD8`→CD8_T；`Bcell`→B_cell。
 
 phillips 若以后做皮肤队列，再用 `old_cluster`，并且继续把 `tumor cells` 排除在泛癌 Tumor 之外。

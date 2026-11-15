@@ -250,6 +250,10 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     "CD4+ T cells GATA3+": ("CD4_T", "T_cell"),
     "TcellCD4": ("CD4_T", "T_cell"),
     "TcellCD8": ("CD8_T", "T_cell"),
+    # 2026.11.15 review: Schurch spells these in lower case / with "+".
+    # Without them CRC-SPORA CD8 T and plasma cells were silently dropped.
+    "CD8+ T cells": ("CD8_T", "T_cell"),
+    "plasma cells": ("Plasma", "B_Plasma"),
     "NK cells": ("NK", "T_cell"),
     "Bcell": ("B_cell", "B_Plasma"),
     "CD11c+ DCs": ("DC", "Myeloid"),
@@ -320,14 +324,14 @@ PANCANCER_KEEP_ALIASES: dict[str, frozenset[str]] = {
     }),
     "CD8_T": frozenset({
         "CD8 T cell", "CD8 T cells", "CD8+ T-cells", "CD8+_T_Cells",
-        "Cytotoxic T cells", "CD8⁺ T cell", "TcellCD8",
+        "Cytotoxic T cells", "CD8⁺ T cell", "TcellCD8", "CD8+ T cells",
     }),
     "Tregs": frozenset({"Treg", "Tregs"}),
     "NK": frozenset({"NK", "NK cells", "NK/NKT", "Proliferating NK/NKT"}),
     "B_cell": frozenset({
         "B cells", "B_Cells", "Bcell", "Mature B", "Memory B", "Proliferating B cells",
     }),
-    "Plasma": frozenset({"Plasma", "Plasma cells"}),
+    "Plasma": frozenset({"Plasma", "Plasma cells", "plasma cells"}),
     "DC": frozenset({
         "DCs", "Dendritic cells", "IRF7+_DCs", "LAMP3+_DCs", "Migratory DCs",
         "cDC I", "cDCs", "CD11c+ DCs", "mRegDC", "pDC", "pDCs", "Langerhans cells",

@@ -1978,6 +1978,21 @@ class ThreeHeadImprovedMLPClassifier(DualHeadImprovedMLPClassifier):
         feat = self._forward_backbone(x)
         return self.output_layer(feat), self.level1_head(feat), self.level12_head(feat)
 
+    # 2026.11.15, Hist2Prot auxiliary tasks / 训练期辅助头（A9/A11）
+    # Same shared feature z_i as the three heads (Hist2Prot Eq. 5–8 are all
+    # defined on the fused representation). Heads exist only when attached:
+    #   neighbor_comp_head  -> L2 composition of the k spatial neighbours (A9)
+    #   tissue_comp_head    -> tissue compartment of the local region (A11)
+    def forward_heads_aux(self, x, neighbor_x=None):
+        x = self._apply_spatial(x, neighbor_x)
+        feat = self._forward_backbone(x)
+        aux = {}
+        if hasattr(self, "neighbor_comp_head"):
+            aux["nbr"] = self.neighbor_comp_head(feat)
+        if hasattr(self, "tissue_comp_head"):
+            aux["tissue"] = self.tissue_comp_head(feat)
+        return self.output_layer(feat), self.level1_head(feat), self.level12_head(feat), aux
+
     def forward(self, x, neighbor_x=None):
         logits_l2, _, _ = self.forward_heads(x, neighbor_x=neighbor_x)
         return logits_l2

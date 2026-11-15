@@ -19,6 +19,18 @@ A0–A7 leave L12 unweighted. L1 and L2 cross-entropy are `balanced`, but `CE(L1
 
 Check: `python -m pytest -q code/Hist2Pheno_pkg/test_l12_class_weight.py`.
 
+## 2026-11-16 A9–A11: Hist2Prot auxiliary heads (opt-in)
+
+A9–A11 start from A8. `--neighbor-comp-weight 0` and `--tissue-comp-weight 0` are the defaults, so A0–A8 training is unchanged. A weight above 0 attaches a linear head on the shared feature and adds that loss.
+
+| | flag | head | target |
+|--|------|------|--------|
+| A9 | `--neighbor-comp-weight 0.2` | `neighbor_comp_head` | L2 histogram of the k spatial neighbours, self excluded (soft CE) |
+| A10 | A9 flags plus `--mpp-map`, `--spatial-radii-um 50`, `--spatial-geometry` | same head | same histogram on a 50 µm graph, with log count / distance / density added to the fusion |
+| A11 | A9 flags plus `--tissue-comp-weight 0.2 --tissue-comp-k 32` | `tissue_comp_head` | Tumor / Epithelium / Lymphoid / Myeloid / Stroma / Vascular / Mixed from the GT L12 mix of the 32 nearest cells |
+
+The neighbour graph is the same per-section graph as the spatial features, restricted so a validation target does not use the other partition. A compartment is assigned when its share reaches 0.5 (Vascular 0.35); otherwise the label is Mixed. Commands and result directories: [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-16-a9-a11-hist2prot-auxiliary-heads-not-yet-trained).
+
 ## 2026-11-15 Integrity fixes
 
 These fixes do not change trained weights or the published OOF AUROC of a finished run. They close paths where a score could be attached to the wrong class, the wrong parent, or a file from another run. Archives written before this date keep their old contents until that step is run again. The Pan-cancer OOF file contract is in [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-15-oof-archive-contract).

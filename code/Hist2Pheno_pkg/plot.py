@@ -3030,6 +3030,11 @@ def mlp_collect_five_head_softmax_probs(
         head_names = ("l2", "l1", "l12", "l3", "l4")
     elif has_level12:
         head_names = ("l2", "l1", "l12")
+        # 2026.11.15, A9/A11: also return auxiliary heads when present
+        aux_names = tuple(k for k, attr in (("nbr", "neighbor_comp_head"), ("tissue", "tissue_comp_head"))
+                          if hasattr(model, attr))
+        if aux_names:
+            head_names = ("l2", "l1", "l12") + aux_names
     elif has_dual:
         head_names = ("l2", "l1")
     else:
@@ -3047,14 +3052,20 @@ def mlp_collect_five_head_softmax_probs(
                 neighbor_x = prediction_batch(context,global_idx,device)
             if use_cuda_autocast:
                 with torch.amp.autocast("cuda"):
-                    if has_level12:
+                    if len(head_names) > 3 and has_level12:
+                        _a, _b, _c, _aux = model.forward_heads_aux(xb, neighbor_x=neighbor_x)
+                        logits = (_a, _b, _c) + tuple(_aux[k] for k in head_names[3:])
+                    elif has_level12:
                         logits = model.forward_heads(xb, neighbor_x=neighbor_x)
                     elif has_dual:
                         logits = model.forward_heads(xb, neighbor_x=neighbor_x)[:2]
                     else:
                         logits = (model(xb, neighbor_x=neighbor_x),)
             else:
-                if has_level12:
+                if len(head_names) > 3 and has_level12:
+                    _a, _b, _c, _aux = model.forward_heads_aux(xb, neighbor_x=neighbor_x)
+                    logits = (_a, _b, _c) + tuple(_aux[k] for k in head_names[3:])
+                elif has_level12:
                     logits = model.forward_heads(xb, neighbor_x=neighbor_x)
                 elif has_dual:
                     logits = model.forward_heads(xb, neighbor_x=neighbor_x)[:2]

@@ -5,7 +5,7 @@
 ##   bash code/PanCancer/1_demo_train.sh index
 ##   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
 ##   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8}
+##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A9|A10|A11}
 ##   CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 ##
 ## Published UNI section/celltype commands pin:
@@ -38,6 +38,9 @@
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A6
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8   # 2026.11.15 A3 + balanced L12
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A9   # A8 + neighbour composition (Hist2Prot)
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A10  # A9 + µm topology/density
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A11  # A9 + tissue compartment (Hist2Prot)
 
 
 set -euo pipefail
@@ -55,7 +58,7 @@ Usage:
   bash code/PanCancer/1_demo_train.sh index
   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8}
+  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A9|A10|A11}
 
 GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
 Logs: data/PanCancer/train*.log and code/log/pancancer_section_uni2_<arch>.log
@@ -279,8 +282,54 @@ cmd_uni2() {
         --ablation-tag A8_l12_balanced
       )
       ;;
+    # 2026.11.15, Hist2Prot neighbour task. A8 + a head that predicts the L2
+    # composition of the k=8 spatial neighbours (soft CE, weight 0.2 =
+    # Hist2Prot lambda_neighbor). Inference also writes nbr_comp_probs.
+    A9_nbr_comp)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean --spatial-gate
+        --context-cache-dir "$OUT/context_cache"
+        --l12-class-weight-mode balanced
+        --neighbor-comp-weight 0.2
+        --save-result result_uni2_A9_nbr_comp
+        --ablation-tag A9_nbr_comp
+      )
+      ;;
+    # 2026.11.15, Hist2Prot topology/density. A9 in µm: per-section mpp map,
+    # 50 µm neighbour cap and [log count, log mean distance, log density]
+    # geometry. Build the map first: python code/PanCancer/make_mpp_map.py
+    A10_nbr_comp_geom)
+      [[ -f "$OUT/mpp_map.csv" ]] || die "missing $OUT/mpp_map.csv; run code/PanCancer/make_mpp_map.py"
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean --spatial-gate
+        --mpp-map "$OUT/mpp_map.csv" --spatial-radii-um 50 --spatial-geometry
+        --context-cache-dir "$OUT/context_cache"
+        --l12-class-weight-mode balanced
+        --neighbor-comp-weight 0.2
+        --save-result result_uni2_A10_nbr_comp_geom
+        --ablation-tag A10_nbr_comp_geom
+      )
+      ;;
+    # 2026.11.15, Hist2Prot full auxiliary set. A9 + tissue-compartment head
+    # (Tumor/Epithelium/Lymphoid/Myeloid/Stroma/Vascular/Mixed from the GT L12
+    # mix of the 32 nearest cells; class-weighted CE, weight 0.2 = Hist2Prot
+    # lambda_tissue). In the paper removing all auxiliary tasks cost the most.
+    A11_nbr_tissue)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean --spatial-gate
+        --context-cache-dir "$OUT/context_cache"
+        --l12-class-weight-mode balanced
+        --neighbor-comp-weight 0.2
+        --tissue-comp-weight 0.2 --tissue-comp-k 32
+        --save-result result_uni2_A11_nbr_tissue
+        --ablation-tag A11_nbr_tissue
+      )
+      ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A9|A10|A11"
       ;;
   esac
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
@@ -322,7 +371,10 @@ case "${1:-}" in
       A6) cmd_uni2 A6_l12_links_2 ;;
       A7) cmd_uni2 A7_bal_focal ;;
       A8) cmd_uni2 A8_l12_balanced ;;
-      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8" ;;
+      A9) cmd_uni2 A9_nbr_comp ;;
+      A10) cmd_uni2 A10_nbr_comp_geom ;;
+      A11) cmd_uni2 A11_nbr_tissue ;;
+      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8 | A9 | A10 | A11" ;;
     esac
     ;;
   *) die "unknown command '$1' (index | section | celltype | uni2)" ;;
