@@ -51,11 +51,38 @@ Example::
 from __future__ import annotations
 
 import json
+import hashlib
+import os
+import tempfile
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+
+
+def _confidence_cache_stamp(files, **parameters):
+    """Bind derived confidence to actual inputs, row order and all options."""
+    h = hashlib.sha256()
+    for name in [*files, __file__]:
+        with open(name, 'rb') as source:
+            for block in iter(lambda: source.read(8 * 1024 * 1024), b''):
+                h.update(block)
+        h.update(b'\0')
+    h.update(json.dumps(parameters, sort_keys=True, allow_nan=False).encode())
+    return h.hexdigest()
+
+
+def _atomic_confidence_npz(path, **payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(suffix='.npz', dir=path.parent)
+    os.close(fd)
+    try:
+        np.savez_compressed(temp, **payload)
+        os.replace(temp, path)
+    finally:
+        Path(temp).unlink(missing_ok=True)
 
 # Pan-cancer L2 names that histology routinely confuses at 7–8 µm.
 DEFAULT_SIMILAR_FAMILIES: dict[str, tuple[str, ...]] = {
@@ -597,11 +624,18 @@ def conformal_from_oof(
     nuclei in the same H&E cluster. Without it, every cluster reuses the
     full calibration pool.
     """
-    if oof_labels is None or oof_probs is None:
+    loaded_from_file = oof_labels is None or oof_probs is None
+    if loaded_from_file:
         labels, oof_probs = load_oof_head(oof_npz, head=head)
     else:
         labels = np.asarray(oof_labels)
         oof_probs = np.asarray(oof_probs, dtype=np.float32)
+    if oof_class_names is None and loaded_from_file:
+        key = {'l2': 'l2', 'l12': 'l12', 'l1': 'l1_head', 'l1_head': 'l1_head'}[head]
+        with np.load(oof_npz, allow_pickle=False) as stored:
+            if key + '_class_names' in stored:
+                oof_class_names = stored[key + '_class_names'].astype(str).tolist()
+    # Legacy archives need an explicitly verified order or the historical fallback.
     oof_names = list(oof_class_names) if oof_class_names is not None else list(class_names)
     if oof_probs.shape[1] != len(oof_names):
         raise ValueError(
@@ -838,6 +872,9 @@ def conformal_hierarchy(
         oof_labels=labels,
         oof_probs=oof_probs,
     )
+    with np.load(oof_npz, allow_pickle=False) as stored:
+        if 'l2_class_names' in stored:
+            kw['oof_class_names'] = stored['l2_class_names'].astype(str).tolist()
     return {
         "L2": conformal_from_oof(test_probs, names, classes=names, groups=None, **kw),
         "L12": conformal_from_oof(test_probs, names, classes=[], groups=groups["L12"], **kw),
@@ -950,12 +987,14 @@ def ensure_conformal_npz(
     """Write missing ``present_*`` / ``confidence_*`` keys into ``sidecar``."""
     sidecar = Path(sidecar)
     wanted = [str(c) for c in classes]
+    stamp = _confidence_cache_stamp([l2_probs, oof_npz], fpr=float(fpr))
     payload: dict[str, object] = {}
     missing = list(wanted)
     if sidecar.is_file():
         with np.load(sidecar, allow_pickle=True) as z:
-            payload = {k: z[k] for k in z.files}
-            missing = [c for c in wanted if f"present_{c}" not in z.files]
+            if 'input_signature' in z.files and str(z['input_signature'].item()) == stamp:
+                payload = {k: z[k] for k in z.files}
+                missing = [c for c in wanted if f"present_{c}" not in z.files]
     if missing:
         names, probs = load_l2_probs(l2_probs)
         packs = conformal_from_oof(probs, names, oof_npz, classes=missing, fpr=fpr)
@@ -965,7 +1004,8 @@ def ensure_conformal_npz(
             payload[f"score_{name}"] = pack["score"]
             payload[f"threshold_{name}"] = np.asarray(pack["threshold"])
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(sidecar, **payload)
+        payload['input_signature'] = np.asarray(stamp)
+        _atomic_confidence_npz(sidecar, **payload)
     return sidecar
 
 
@@ -1021,7 +1061,10 @@ def ensure_cluster_conformal_npz(
             if "obs_names" in stored.files
             else np.array([str(i) for i in range(len(probs))])
         )
-    stamp = f"utopia_cluster_bh_k{n_clusters}_pca{pca_dim}_seed{seed}_{batch_magnitude}"
+    stamp = _confidence_cache_stamp(
+        [l2_probs, oof_npz, features_h5ad], n_clusters=int(n_clusters),
+        pca_dim=int(pca_dim), seed=int(seed), fpr=float(fpr),
+        batch_magnitude=batch_magnitude, classes=wanted, class_names=names)
     if sidecar.is_file():
         with np.load(sidecar, allow_pickle=True) as stored:
             ready = "confidence_source" in stored.files and "he_cluster" in stored.files
@@ -1059,6 +1102,8 @@ def ensure_cluster_conformal_npz(
         batch_magnitude=batch_magnitude,
     )
     payload: dict[str, object] = {
+        "obs_names": obs,
+        "class_names": np.asarray(names, dtype=str),
         "he_cluster": labels.astype(np.int16),
         "n_clusters": np.int32(n_clusters),
         "pca_dim": np.int32(pca_dim),
@@ -1072,7 +1117,7 @@ def ensure_cluster_conformal_npz(
         payload[f"score_{name}"] = pack["score"]
         payload[f"threshold_{name}"] = np.asarray(pack["threshold"])
     sidecar.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(sidecar, **payload)
+    _atomic_confidence_npz(sidecar, **payload)
     return sidecar
 
 
@@ -1086,9 +1131,11 @@ def ensure_trusted_labels(
     """L1 / L12 / L2 gated-argmax labels, cached as ``*_confidence_hierarchy.npz``."""
     cache = Path(cache)
     names, probs = load_l2_probs(l2_probs)
+    stamp = _confidence_cache_stamp([l2_probs, oof_npz], fpr=float(fpr), class_names=names)
     if cache.is_file():
         with np.load(cache, allow_pickle=True) as z:
-            if all(h in z.files for h in HEADS) and len(z["L2"]) == len(probs):
+            if ('input_signature' in z.files and str(z['input_signature'].item()) == stamp
+                    and all(h in z.files for h in HEADS) and len(z["L2"]) == len(probs)):
                 return {h: np.asarray(z[h], dtype=object) for h in HEADS}
     packs = conformal_hierarchy(probs, names, oof_npz, fpr=fpr)
     trusted: dict[str, np.ndarray] = {}
@@ -1096,8 +1143,9 @@ def ensure_trusted_labels(
     for head in HEADS:
         trusted[head], peak[head] = trusted_argmax(packs[head])
     cache.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
+    _atomic_confidence_npz(
         cache,
+        input_signature=np.asarray(stamp),
         **{h: trusted[h] for h in HEADS},
         **{f"peak_{h}": peak[h].astype(np.float32) for h in HEADS},
     )

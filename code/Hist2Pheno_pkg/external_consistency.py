@@ -111,7 +111,12 @@ def predict_one(cohort,sample,*,force=False,allow_cpu=False):
         pp.atomic_h5ad(pred,dest)
         probabilities_sha=pp.fingerprint(np.asarray(probs['l2'],dtype=np.float32),np.asarray(classes['L2'],dtype=str),names)
         pp.atomic_npz(probpath,probs=np.asarray(probs['l2'],dtype=np.float32),
+            checkpoint_family=np.asarray(desc['family']),
             class_names=np.asarray(classes['L2'],dtype=str),obs_names=names,
+            l1_probs=np.asarray(probs['l1'],dtype=np.float32),
+            l1_class_names=np.asarray(classes['L1'],dtype=str),
+            l12_probs=np.asarray(probs['l12'],dtype=np.float32),
+            l12_class_names=np.asarray(classes['L12'],dtype=str),
             row_identity_sha256=np.asarray(rows),pipeline_run_id=np.asarray(stamp))
         return pp.publish(marker,stamp,[dest,probpath],source=source,row_signature=rows,
             obs_ids_sha256=pp.fingerprint(names),n_cells=len(X),model=desc,probabilities_sha256=probabilities_sha)

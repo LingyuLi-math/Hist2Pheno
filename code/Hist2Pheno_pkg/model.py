@@ -394,12 +394,21 @@ def _child_to_parent_majority(y_l2, y_l1, num_classes):
     return child_to_parent, n_conflict
 ########################################################
 
-def _build_l2_to_l1_map(num_classes, y_enc_full, y_l1_full, device):
+def _build_l2_to_l1_map(num_classes, y_enc_full, y_l1_full, device,
+                        *, child_to_parent=None, num_level1_classes=None):
     """Return ``map_l2_to_l1`` for hierarchical L1 aggregation from L2 softmax."""
-    child_to_parent, _n_conflict = _child_to_parent_majority(
-        y_enc_full, y_l1_full, num_classes
-    )
-    num_l1 = int(np.max(y_l1_full)) + 1
+    if child_to_parent is None:
+        child_to_parent, _n_conflict = _child_to_parent_majority(
+            y_enc_full, y_l1_full, num_classes
+        )
+    else:
+        child_to_parent = np.asarray(child_to_parent, dtype=np.int64)
+        if child_to_parent.shape != (num_classes,) or (child_to_parent < 0).any():
+            raise ValueError('Incomplete checkpoint L2-to-L1 ontology')
+    num_l1 = (int(num_level1_classes) if num_level1_classes is not None
+              else int(np.max(y_l1_full)) + 1)
+    if (child_to_parent >= num_l1).any():
+        raise ValueError('Checkpoint parent index exceeds L1 head width')
     map_l2_to_l1 = torch.zeros(num_classes, num_l1, dtype=torch.float32, device=device)
     for k, p in enumerate(child_to_parent):
         if p >= 0:
@@ -614,7 +623,18 @@ def _eval_fold_tier_metrics(
     """
     from sklearn.metrics import accuracy_score, f1_score
 
-    map_l2_to_l1 = _build_l2_to_l1_map(num_classes, y_enc_full, y_l1_full, device)
+    # Use the checkpoint ontology, including classes absent from this subset.
+    # Inferring it from evaluation labels silently drops absent children's mass.
+    maps = getattr(model, 'checkpoint_metadata', {}).get('hierarchy_maps', {})
+    parents = None
+    if maps:
+        parents = np.asarray(maps['l12_to_l1'], dtype=np.int64)[
+            np.asarray(maps['l2_to_l12'], dtype=np.int64)]
+    n_l1_head = (int(model.level1_head.out_features) if hasattr(model, 'level1_head')
+                 else int(np.max(y_l1_full)) + 1)
+    map_l2_to_l1 = _build_l2_to_l1_map(
+        num_classes, y_enc_full, y_l1_full, device,
+        child_to_parent=parents, num_level1_classes=n_l1_head)
     three_or_five = hasattr(model, "level12_head")
     five_head = hasattr(model, "level3_head")
     head_mode = "five" if five_head else "three" if three_or_five else "dual"
@@ -629,7 +649,7 @@ def _eval_fold_tier_metrics(
         "l4": ([], []),
     }
     prob_buckets = {}
-    num_level1_classes = int(np.max(y_l1_full)) + 1
+    num_level1_classes = n_l1_head
     num_level12_classes = num_level3_classes = num_level4_classes = None
 
     n_val = 0
@@ -845,6 +865,9 @@ def _load_fold_model_for_eval(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(sd_fold))
+    if artifact:
+        model.checkpoint_metadata = artifact['metadata']
+        model.checkpoint_scaler = restore_scaler(artifact['scaler'])
     return model, num_classes
 
 

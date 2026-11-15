@@ -82,8 +82,13 @@ def graph_weights(idx,dist,cfg):
 
 def prepare_runtime(cv,result,config):
     cfg=config_of(config);n,d=cv['X_f'].shape
-    if '_context_graphs' not in cv:
+    # A long-lived CV object may be reused for a different k/radius or coordinates.
+    # An existing graph alone is not evidence that it matches the new request.
+    graph_key=digest(asdict(cfg),np.asarray(cv['X_coords_f']),
+                     np.asarray(cv.get('groups_f',np.zeros(n))))
+    if cv.get('_context_graph_key') != graph_key:
         cv['_context_graphs']=graphs(cv['X_coords_f'],cv.get('groups_f',np.zeros(n)),cfg)
+        cv['_context_graph_key']=graph_key
     gs=cv['_context_graphs']
     tr=result['train_global_indices'];va=result['val_global_indices']
     if np.intersect1d(np.asarray(cv['groups_f'])[tr],np.asarray(cv['groups_f'])[va]).size:

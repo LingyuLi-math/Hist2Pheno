@@ -4,6 +4,47 @@ Shared, dataset-neutral modeling, transformation, and plotting code for Hist2Phe
 Dataset directories such as `CODEX_hcc/` and `Xenium_lung/` remain responsible
 for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
+## 2026-11-15 Integrity fixes
+
+These fixes do not change trained weights or the published OOF AUROC of a finished run. They close paths where a score could be attached to the wrong class, the wrong parent, or a file from another run. Archives written before this date keep their old contents until that step is run again. The Pan-cancer OOF file contract is in [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-15-oof-archive-contract).
+
+### L2→L1 aggregation at evaluation (`model.py`)
+
+Fold metrics used to infer each L2 class's L1 parent by majority vote on the labels present in that evaluation array. An L2 class with no cells kept parent −1, so its softmax mass never reached an L1 bin. Evaluation now reads `hierarchy_maps` from the checkpoint (`L2 → L12 → L1`), including classes absent from the subset, and takes the L1 width from the loaded head. On the current workbook that composition equals the direct L2→L1 map (20 / 8 / 5), which is the map training already uses to fill missing parents. `_load_fold_model_for_eval` attaches `checkpoint_metadata` and `checkpoint_scaler` so the map is available. L2 head AUROC does not use this aggregation.
+
+### Confidence caches and class order (`prediction_confidence.py`)
+
+`conformal_from_oof` and `conformal_hierarchy` read `l2_class_names`, `l12_class_names`, and `l1_head_class_names` from `oof_predictions.npz` when those arrays exist, and match columns by name. A test file whose column order differs from the OOF file is not assumed to be the same order. An older OOF file without those arrays still falls back to the test-file order. That fallback is safe only when both files come from the same training run.
+
+Confidence sidecars are keyed by a hash of the input file bytes, the options, and this module. A changed probability file or a changed option does not reuse the old sidecar. The write goes to a temporary `.npz` and then replaces the destination. The cluster sidecar also stores `obs_names` and `class_names`. Sidecars from before this date have no `input_signature` and are recomputed on the next call.
+
+### External probability archives (`external_consistency.py`)
+
+`{sample}_l2_probs.npz` now also stores `checkpoint_family`, `l1_probs`, `l1_class_names`, `l12_probs`, and `l12_class_names`, in the checkpoint head order. The prediction stamp includes this module, so the next predict does not treat an older L2-only archive as complete. `checkpoint_family` is how a later check refuses to compare an A2 archive with an A3 OOF file.
+
+### Repeated label remap (`pancancer_labels.py`)
+
+`remap_obs_frame` writes canonical names into `final_CT` and keeps the original string in `native_CT`. Some canonical names are not valid native keys (`B_cell`, `Tumor`, `DC`, `Neural` do not map again). A second call now remaps `native_CT` when that column is already present. Checked on a real native: `Invasive_Tumor` stays `Tumor` on the second call. The Pan-cancer training loader still maps the source column on each read; it does not depend on this second-call guard.
+
+### Spatial graph reuse (`spatial_context.py`)
+
+`prepare_runtime` used to keep `_context_graphs` for the life of the CV object. The cache key is now the spatial config, the coordinates, and the section ids. A new `k`, radius, or coordinate array rebuilds the neighbor graph.
+
+### Read-only B / Plasma audit (`audit_uni2_bcell.py`)
+
+This script does not change labels, probabilities, or weights. It checks that an external probability archive and an OOF archive belong to the selected checkpoint's family and L2 class order, then reports softmax mass — not a cell count — for `B_cell`, `Plasma`, and `B_Plasma`. When the archive contains L12 probabilities, it also compares the L12 head with L2 mass rolled up by `hierarchy_maps`.
+
+```bash
+python code/Hist2Pheno_pkg/audit_uni2_bcell.py \
+  --checkpoint path/to/best_mlp_gpu.pt \
+  --pred-probs path/to/sample_l2_probs.npz \
+  --oof path/to/oof_predictions.npz \
+  --oof-rows path/to/oof_rows.csv \
+  --output path/to/audit_out
+```
+
+`fold_ids` inside `oof_predictions.npz` follow the probability rows (fold-concatenated order). `oof_rows.csv` stays in global row order. Move between them with `row_indices`.
+
 ## 2026-11-11 Per-nucleus cell-type confidence
 
 [`prediction_confidence.py`](prediction_confidence.py) scores the L2 softmax

@@ -858,10 +858,17 @@ def step_train(ctx: PooledCtx) -> None:
         if plan.fold.isna().any():raise RuntimeError("Missing actual section fold in artifact")
         plan.to_csv(ctx.result_dir/"fold_plan.csv",index=False)
         cv["fold_id_f"]=np.asarray([actual[cv["group_to_sample"][int(g)]] for g in cv["groups_f"]],dtype=int)
-    arrays = {"row_indices":row_ids}
+    family = __import__('pipeline_provenance').checkpoint_family(
+        read_artifact(dest, required=True)['metadata'])
+    arrays = {"row_indices":row_ids, 'checkpoint_family': np.asarray(family)}
     for head, data in summary["oof_heads"].items():
         arrays[head+"_labels"] = data["labels"]
         arrays[head+"_probs"] = data["probs"]
+        class_key = {'l2': 'class_names', 'l1_head': 'class_names_level1',
+                     'l12': 'class_names_level12'}.get(head)
+        if class_key is not None:
+            arrays[head+'_class_names'] = np.asarray(cv[class_key], dtype=str)
+    arrays['fold_ids'] = np.asarray(cv['fold_id_f'])[row_ids]
     np.savez_compressed(ctx.result_dir/"oof_predictions.npz", **arrays)
     pd.DataFrame({"row_index":np.arange(len(cv["groups_f"])),
         "section_id":[cv["group_to_sample"][int(g)] for g in cv["groups_f"]],

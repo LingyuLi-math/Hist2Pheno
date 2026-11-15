@@ -86,6 +86,7 @@ python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
 | `ontology_heads.json` | L1 / L12 / L2 class order |
 | `label_cache/*.npz` | keep indices + remapped labels + xy (no embeddings) |
 | `result_all_spatial/` | section-CV OOF plots + `validation_internal_metrics.csv` |
+| `result_*/oof_predictions.npz` | OOF labels and probabilities. From 2026-11-15 also class names, `checkpoint_family`, and `fold_ids` ([below](#2026-11-15-oof-archive-contract)) |
 | `result_all_spatial/cross_dataset_cv/<tag>/best_mlp_gpu.pt` | section-CV checkpoint |
 | `result_cell_stratified_spatial/` | cell-stratified OOF + checkpoint (separate from above) |
 | `train.log` | full section-CV stdout/stderr + wall-clock (`tee -a`; see `demo.sh` step 3) |
@@ -93,6 +94,22 @@ python -u code/PanCancer/PanCancer_train_validate_cv_UNIlabel.py \
 
 Full pooling is memory-heavy (~5.5M cells × 1024-d float32 ≈ 22 GB embeddings). Use
 `--datasets BRCA GBM --max-cells-per-section 5000` to smoke-test.
+
+## 2026-11-15 OOF archive contract
+
+`PanCancer_train_validate_cv_UNIlabel.py` still writes one `oof_predictions.npz` per run. The probabilities are unchanged. The file now also records which class each column is, which training run produced it, and which fold predicted each row. This does not alter a finished checkpoint. An `oof_predictions.npz` from before this date has no `*_class_names`, `checkpoint_family`, or `fold_ids`. Confidence code still reads those older files, and it assumes the test-file class order. Retrain to make the order explicit.
+
+Keys added next to the existing `row_indices`, `{head}_labels`, and `{head}_probs` (`head` is `l2`, `l12`, `l1_head`):
+
+| Key | What it is |
+|-----|------------|
+| `l2_class_names`, `l12_class_names`, `l1_head_class_names` | Column order of that head. Same lists as `cv["class_names"]`, `class_names_level12`, and `class_names_level1`, which are the lists used to encode the labels. Column `i` is that name. |
+| `checkpoint_family` | Family id of `best_mlp_gpu.pt`. Fold id, held-out sections, and best epoch are not part of the family, so every fold of one run shares it. A different recipe (for example A2 vs A3) does not. |
+| `fold_ids` | Fold of each probability row. Same order as `l2_probs`: folds concatenated, not global cell order. |
+
+`oof_rows.csv` remains one row per cell in global order (`row_index` 0…N−1), with `fold` in that same order. To line it up with the npz, index the CSV by `row_indices`. `fold_ids[i]` is the fold of probability row `i`, which is cell `row_indices[i]`.
+
+Package-side checks that consume this file (evaluation ontology, confidence class alignment, external L1/L12 archives) are recorded in [`code/Hist2Pheno_pkg/README.md`](../Hist2Pheno_pkg/README.md#2026-11-15-integrity-fixes).
 
 ## 2026-10-26 UNI2 run order
 
@@ -111,7 +128,7 @@ CUDA_DEVICE=1 bash code/PanCancer/1_demo_train.sh uni2 A6
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
 ```
 
-Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). It is not an external test set.
+Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). It is not an external test set. A file written before 2026-11-15 has labels and probabilities only; the class-order fields in the [OOF archive contract](#2026-11-15-oof-archive-contract) appear after the next train.
 
 ### 2. Choose the architecture — [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)
 

@@ -97,6 +97,11 @@ def remap_obs_frame(
     Output columns: ``final_CT`` (L2), ``final_sublineage`` (L12), ``final_lineage`` (L1),
     plus ``native_CT`` (original label).
     """
+    # Our output stores final_CT in the canonical label space. On a repeated
+    # call, map the preserved native labels, not those canonical names. Some
+    # native names intentionally conflict with the canonical ontology.
+    if native_col == 'final_CT' and 'native_CT' in obs.columns:
+        native_col = 'native_CT'
     if native_col not in obs.columns:
         if native_col != "celltype" and "celltype" in obs.columns:
             native_col = "celltype"
