@@ -4,6 +4,21 @@ Shared, dataset-neutral modeling, transformation, and plotting code for Hist2Phe
 Dataset directories such as `CODEX_hcc/` and `Xenium_lung/` remain responsible
 for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
+## 2026-11-16 A8: class-weighted L12 (opt-in)
+
+A0–A7 leave L12 unweighted. L1 and L2 cross-entropy are `balanced`, but `CE(L12)` and the two aggregated NLL terms (`L2→L12`, `L12→L1`) were not. That unweighted L12 term pulls rare families, including `B_Plasma` (about 3.5% of cells), back toward the empirical prior. A7 tried to fix the same hole with a hierarchical sampler and focal loss, and the pooled OOF L2 fell to the A0 level. A8 does not repeat that. It keeps the A3 recipe and only class-weights the L12 terms.
+
+`--l12-class-weight-mode` is `none` or `balanced`. `none` is the default.
+
+| | `CE(L12)` | `NLL(L2→L12)` | `NLL(L12→L1)` | two JS terms |
+|--|-----------|---------------|---------------|--------------|
+| `none` (A0–A7) | unweighted | unweighted | unweighted | unweighted |
+| `balanced` (A8) | inverse-frequency on the 8 L12 classes | same L12 weights | the existing L1 `balanced` weights | still unweighted |
+
+`weight=None` is bit-identical to the previous `adjacent_loss`. The extra key is written into the training protocol and `loss_weights` only when the mode is not `none`, so finished A0–A7 checkpoint families stay the same and their fold checkpoints remain reusable. A8 is the A3 trunk (k=8 mean, learned gate, same scalar loss weights) plus `--l12-class-weight-mode balanced`. The command and the output folder are in [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-16-a8-balanced-l12-not-yet-trained).
+
+Check: `python -m pytest -q code/Hist2Pheno_pkg/test_l12_class_weight.py`.
+
 ## 2026-11-15 Integrity fixes
 
 These fixes do not change trained weights or the published OOF AUROC of a finished run. They close paths where a score could be attached to the wrong class, the wrong parent, or a file from another run. Archives written before this date keep their old contents until that step is run again. The Pan-cancer OOF file contract is in [`code/PanCancer/README.md`](../PanCancer/README.md#2026-11-15-oof-archive-contract).

@@ -235,6 +235,37 @@ NATIVE_TO_V1: dict[str, tuple[str, str]] = {
     "Stroma Uncharacterized": ("Other", "Stromal"),
     "Other": ("Other", "Stromal"),
     "LowQ": ("Other", "Stromal"),
+    # SPORA CODEX (2026-11-16): Schurch CRC TMA + Hoefflin IDH-mutant glioma.
+    # Glioma malignant states collapse to Tumor. Oligo / Astro / Neuron stay out
+    # because the source atlas marks them Unknown.
+    "tumor cells": ("Tumor", "Tumor"),
+    "cAC1": ("Tumor", "Tumor"),
+    "cAC2": ("Tumor", "Tumor"),
+    "cOPC": ("Tumor", "Tumor"),
+    "cUndiff": ("Tumor", "Tumor"),
+    "cMES": ("Tumor", "Tumor"),
+    "cMESHyp": ("Tumor", "Tumor"),
+    "CD4+ T cells": ("CD4_T", "T_cell"),
+    "CD4+ T cells CD45RO+": ("CD4_T", "T_cell"),
+    "CD4+ T cells GATA3+": ("CD4_T", "T_cell"),
+    "TcellCD4": ("CD4_T", "T_cell"),
+    "TcellCD8": ("CD8_T", "T_cell"),
+    "NK cells": ("NK", "T_cell"),
+    "Bcell": ("B_cell", "B_Plasma"),
+    "CD11c+ DCs": ("DC", "Myeloid"),
+    "Mac": ("Macrophage", "Myeloid"),
+    "CD68+CD163+ macrophages": ("Macrophage", "Myeloid"),
+    "CD68+ macrophages": ("Macrophage", "Myeloid"),
+    "CD11b+CD68+ macrophages": ("Macrophage", "Myeloid"),
+    "CD68+ macrophages GzmB+": ("Macrophage", "Myeloid"),
+    "CD163+ macrophages": ("Macrophage", "Myeloid"),
+    "CD11b+ monocytes": ("Macrophage", "Myeloid"),
+    "granulocytes": ("Neutrophil", "Myeloid"),
+    "Neutro": ("Neutrophil", "Myeloid"),
+    "stroma": ("Stromal", "Stromal"),
+    "Vasc": ("Endothelial", "Endothelial"),
+    "vasculature": ("Endothelial", "Endothelial"),
+    "lymphatics": ("Endothelial", "Endothelial"),
 }
 
 L2_NOTES = {
@@ -273,6 +304,7 @@ PANCANCER_KEEP_ALIASES: dict[str, frozenset[str]] = {
         "AC-like", "Epithelium (INOS+)", "Epithelium (INOS-)", "G1S", "G2M",
         "Invasive_Tumor", "MES-like", "NPC-like", "OC-like", "Prolif_Invasive_Tumor",
         "Tumor I", "Tumor II", "Tumor III", "Tumor IV", "Tumor V",
+        "tumor cells", "cAC1", "cAC2", "cOPC", "cUndiff", "cMES", "cMESHyp",
     }),
     "Alveolar": frozenset({"AT1", "AT2", "Proliferating AT2"}),
     "Epithelial": frozenset({
@@ -284,20 +316,21 @@ PANCANCER_KEEP_ALIASES: dict[str, frozenset[str]] = {
     "CD4_T": frozenset({
         "CD4 T cell", "CD4 T cells", "CD4+ T-cells", "CD4+_T_Cells",
         "Helper T cells", "CD4⁺ T cell",
+        "CD4+ T cells", "CD4+ T cells CD45RO+", "CD4+ T cells GATA3+", "TcellCD4",
     }),
     "CD8_T": frozenset({
         "CD8 T cell", "CD8 T cells", "CD8+ T-cells", "CD8+_T_Cells",
-        "Cytotoxic T cells", "CD8⁺ T cell",
+        "Cytotoxic T cells", "CD8⁺ T cell", "TcellCD8",
     }),
     "Tregs": frozenset({"Treg", "Tregs"}),
-    "NK": frozenset({"NK", "NK/NKT", "Proliferating NK/NKT"}),
+    "NK": frozenset({"NK", "NK cells", "NK/NKT", "Proliferating NK/NKT"}),
     "B_cell": frozenset({
-        "B cells", "B_Cells", "Mature B", "Memory B", "Proliferating B cells",
+        "B cells", "B_Cells", "Bcell", "Mature B", "Memory B", "Proliferating B cells",
     }),
     "Plasma": frozenset({"Plasma", "Plasma cells"}),
     "DC": frozenset({
         "DCs", "Dendritic cells", "IRF7+_DCs", "LAMP3+_DCs", "Migratory DCs",
-        "cDC I", "cDCs", "mRegDC", "pDC", "pDCs", "Langerhans cells",
+        "cDC I", "cDCs", "CD11c+ DCs", "mRegDC", "pDC", "pDCs", "Langerhans cells",
     }),
     "Macrophage": frozenset({
         "Alveolar Macrophages", "Interstitial Macrophages", "Mac_SEPP1", "Mac_Tmr",
@@ -305,8 +338,11 @@ PANCANCER_KEEP_ALIASES: dict[str, frozenset[str]] = {
         "Proliferating Macrophages", "Proliferating macrophages",
         "Proliferating Myeloid", "Mac_SPP1", "Macrophages - IFN-activated",
         "Macrophages M2-like", "Monocytes/MDMs", "SPP1+ Macrophages", "Macrophage",
+        "Mac", "CD68+CD163+ macrophages", "CD68+ macrophages",
+        "CD11b+CD68+ macrophages", "CD68+ macrophages GzmB+", "CD163+ macrophages",
+        "CD11b+ monocytes",
     }),
-    "Neutrophil": frozenset({"Neutrophils", "Neutrophil"}),
+    "Neutrophil": frozenset({"Neutrophils", "Neutrophil", "Neutro", "granulocytes"}),
     "Fibroblast": frozenset({
         "Adventitial FBs", "Alveolar FBs", "Fibroblasts", "Subpleural FBs",
         "Vascular Fibroblast", "Vascular fibroblast", "Fibroblast",
@@ -316,11 +352,12 @@ PANCANCER_KEEP_ALIASES: dict[str, frozenset[str]] = {
         "Proliferating FBs", "Proliferating Fibroblast", "Proliferating fibroblast",
         "Myofibroblast",
     }),
-    "Stromal": frozenset({"CAF", "Stromal", "Stromal cells"}),
+    "Stromal": frozenset({"CAF", "Stromal", "Stromal cells", "stroma"}),
     "Endothelial": frozenset({
         "Arteriole", "Capillary", "Endothelial", "Endothelial cells", "Lymphatic",
         "Lymphatic Endothelial", "Lymphatic Endothelial cells",
         "Lymphatic endothelial", "Vascular", "Venous",
+        "Vasc", "vasculature", "lymphatics",
     }),
     "Neural": frozenset({"Enteric Glial", "Enteric glial", "Oligodendrocyte"}),
 }

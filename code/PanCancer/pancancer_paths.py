@@ -79,10 +79,28 @@ COHORTS: dict[str, CohortSpec] = {
         cases_root=_REPO_ROOT / "data/CODEX/GBM/Cases",
         h5ad_glob="*/*_matched_features.h5ad",
     ),
+    # SPORA add-ons. Kept out of COHORT_ORDER so the published 7-cohort
+    # command does not pick them up. code/spora/run_spora_pancancer.sh passes
+    # them explicitly and writes a separate result directory.
+    "Schurch": CohortSpec(
+        name="Schurch",
+        tech="CODEX",
+        pan_organ="codex_crc_spora",
+        cases_root=_REPO_ROOT / "data/CODEX/spora/prepared/schurch2020coordinated",
+        h5ad_glob="*/*_matched_features.h5ad",
+    ),
+    "Hoefflin": CohortSpec(
+        name="Hoefflin",
+        tech="CODEX",
+        pan_organ="codex_glioma_spora",
+        cases_root=_REPO_ROOT / "data/CODEX/spora/prepared/hoefflin2026spatial",
+        h5ad_glob="*/*_matched_features.h5ad",
+    ),
 }
 
-# Display / CLI order: 3 Xenium then 4 CODEX.
+# Display / CLI order: 3 Xenium then 4 CODEX. SPORA cohorts stay opt-in.
 COHORT_ORDER = ["Lung", "BRCA", "CRC", "HCC", "PDAC", "GIST", "GBM"]
+SPORA_COHORT_ORDER = ["Schurch", "Hoefflin"]
 
 DEFAULT_DATA_ROOT = _REPO_ROOT / "data/PanCancer"
 

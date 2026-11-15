@@ -61,6 +61,8 @@ def nuclei_to_spots(
         ``class_counts`` ``(m, n_classes)`` hard counts, or ``None``.
         ``mean`` ``(m, k)`` mean of ``values``, or ``None``. Spots with no
         nucleus are zeros.
+        ``sum`` ``(m, k)`` sum of ``values`` (expected counts when ``values``
+        are softmax rows), or ``None``.
     """
     nuc_xy = np.asarray(nuc_xy, dtype=np.float64)
     spot_xy = np.asarray(spot_xy, dtype=np.float64)
@@ -119,6 +121,11 @@ def nuclei_to_spots(
         mean = np.divide(
             sums, n_nuclei[:, None], out=np.zeros_like(sums), where=n_nuclei[:, None] > 0,
         )
+        # 2026.11.15, sum of softmax = expected nucleus count per type, the
+        # same unit as cell2location abundance. ``mean`` is a fraction.
+        total = sums
+    else:
+        total = None
 
     return {
         "spot_index": spot_index,
@@ -127,4 +134,5 @@ def nuclei_to_spots(
         "dominant": dominant,
         "class_counts": class_counts,
         "mean": mean,
+        "sum": total,
     }

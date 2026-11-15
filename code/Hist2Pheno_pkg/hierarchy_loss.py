@@ -45,8 +45,13 @@ def _js(p, q):
     return ((p * (p.log()-m.log())).sum(1) + (q * (q.log()-m.log())).sum(1)).mean()/2
 
 
-def adjacent_loss(logits2, logits12, logits1, y12, y1, maps, config):
-    """Soft JS consistency; no argmax routing, gradients reach both heads."""
+def adjacent_loss(logits2, logits12, logits1, y12, y1, maps, config, weight_l12=None, weight_l1=None):
+    """Soft JS consistency; no argmax routing, gradients reach both heads.
+
+    2026.11.15: ``weight_l12`` / ``weight_l1`` optionally class-weight the two
+    aggregated NLL terms (same weights as the direct CE heads). ``None`` keeps
+    the previous unweighted behaviour exactly.
+    """
     cfg = config if isinstance(config, HierarchyConfig) else HierarchyConfig(**config)
     p2, p12, p1 = [torch.softmax(x.float(), 1) for x in (logits2, logits12, logits1)]
     a = aggregation_matrix(maps['l2_to_l12'], p12.shape[1], p2.device)
@@ -54,7 +59,7 @@ def adjacent_loss(logits2, logits12, logits1, y12, y1, maps, config):
     if a.shape[0] != p2.shape[1] or b.shape[0] != p12.shape[1]:
         raise ValueError('Hierarchy dimensions do not match checkpoint head order')
     q12, q1 = p2 @ a, p12 @ b
-    terms = {'l2_l12_nll': F.nll_loss(q12.clamp_min(1e-7).log(), y12),
-             'l12_l1_nll': F.nll_loss(q1.clamp_min(1e-7).log(), y1),
+    terms = {'l2_l12_nll': F.nll_loss(q12.clamp_min(1e-7).log(), y12, weight=weight_l12),
+             'l12_l1_nll': F.nll_loss(q1.clamp_min(1e-7).log(), y1, weight=weight_l1),
              'l2_l12_js': _js(p12, q12), 'l12_l1_js': _js(p1, q1)}
     return sum(getattr(cfg, k)*v for k, v in terms.items()), terms

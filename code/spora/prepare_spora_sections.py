@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Export SPORA H&E, GT centroids, and matched h5ads for pan-cancer training.
+
+Schurch and Hoefflin already have 1 µm instance masks whose labels match
+``cell_id``. This step reads those masks. It does not run StarDist.
+``run_spora_pancancer.sh segment`` is the 4-GPU StarDist job.
+
+Outputs, per tissue, under ``data/CODEX/spora/prepared/<dataset>/<tissue>/``:
+
+- ``<tissue>_he.tif`` RGB uint8 at 1 µm/pixel
+- ``<tissue>_cells_with_pixel.csv`` kept cells, ``centroid_x`` = row, ``centroid_y`` = column
+- ``<tissue>_matched_features.h5ad`` ``obs['final_CT']`` and ``obsm['spatial_HE']``
+
+``centroid_x`` is the row so it matches ``Image_feature_extraction.py`` and the
+pan-cancer UNI2 aligner, which both treat ``centroid_x`` as ``pxl_row``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+_REPO = Path(__file__).resolve().parents[2]
+_DATASET_PY = _REPO / "code" / "Hist2Pheno_pkg" / "dataset"
+if str(_DATASET_PY) not in sys.path:
+    sys.path.insert(0, str(_DATASET_PY))
+
+from build_pancancer_celltype_v1 import pancancer_keeps_native  # noqa: E402
+
+DATA_ROOT = _REPO / "data" / "CODEX" / "spora"
+PREPARED = DATA_ROOT / "prepared"
+DATASETS = ("schurch2020coordinated", "hoefflin2026spatial")
+LABEL_COL = {
+    "schurch2020coordinated": "cell_type",
+    "hoefflin2026spatial": "cell_type",
+}
+
+
+def _read_he(zarr_path: Path) -> np.ndarray:
+    import zarr
+
+    array = zarr.open_group(str(zarr_path), mode="r")["0"]
+    volume = np.asarray(array[:])
+    if volume.ndim != 3 or volume.shape[0] != 3:
+        raise ValueError(f"{zarr_path} expected CYX with 3 channels, got {volume.shape}")
+    return np.moveaxis(volume, 0, -1)
+
+
+def _centroids(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return label, row, col for every positive instance. One pass over foreground."""
+    rows, cols = np.nonzero(mask)
+    labels = mask[rows, cols].astype(np.int64, copy=False)
+    keep = labels > 0
+    rows, cols, labels = rows[keep], cols[keep], labels[keep]
+    counts = np.bincount(labels)
+    sum_row = np.bincount(labels, weights=rows.astype(np.float64))
+    sum_col = np.bincount(labels, weights=cols.astype(np.float64))
+    present = np.flatnonzero(counts > 0)
+    present = present[present > 0]
+    return present, sum_row[present] / counts[present], sum_col[present] / counts[present]
+
+
+def _write_tif(path: Path, image: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import tifffile
+
+        tifffile.imwrite(path, image, photometric="rgb")
+    except ImportError:
+        from PIL import Image
+
+        Image.fromarray(image).save(path)
+
+
+def _write_h5ad(path: Path, frame: pd.DataFrame, uni2_dir: Path) -> None:
+    import anndata as ad
+
+    xy = frame[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
+    obs = frame.set_index(frame["cell_id"].astype(str), drop=False)
+    obs.index.name = None
+    adata = ad.AnnData(X=np.zeros((len(obs), 1), dtype=np.float32), obs=obs)
+    adata.obsm["spatial_HE"] = xy
+    adata.uns["embedding_dir"] = str(uni2_dir)
+    adata.uns["match_tolerance"] = 1.0
+    adata.uns["mpp"] = 1.0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    adata.write_h5ad(path)
+
+
+def prepare_tissue(dataset: str, tissue: str, force: bool) -> str:
+    source = DATA_ROOT / dataset / dataset
+    out = PREPARED / dataset / tissue
+    he_tif = out / f"{tissue}_he.tif"
+    csv_path = out / f"{tissue}_cells_with_pixel.csv"
+    h5ad_path = out / f"{tissue}_matched_features.h5ad"
+    uni2_dir = out / f"{tissue}_project_all_UNI2" / "ImgEmbeddings_all" / "sc_pth_14_14"
+    if not force and he_tif.is_file() and csv_path.is_file() and h5ad_path.is_file():
+        return f"skip {tissue}"
+    out.mkdir(parents=True, exist_ok=True)
+
+    cells = pd.read_parquet(
+        source / "metadata" / "cells.parquet",
+        columns=["tissue_id", "cell_id", LABEL_COL[dataset]],
+    )
+    cells = cells.loc[cells["tissue_id"] == tissue].copy()
+    native = cells[LABEL_COL[dataset]].astype(str)
+    cells = cells.loc[native.map(pancancer_keeps_native)].copy()
+    cells["final_CT"] = native.loc[cells.index].to_numpy()
+    if cells.empty:
+        return f"skip {tissue}: no kept labels"
+
+    tissues = pd.read_parquet(source / "metadata" / "tissues.parquet")
+    he_meta = tissues.loc[
+        (tissues["modality"] == "he") & (tissues["tissue_id"] == tissue),
+        ["patient_id", "split"],
+    ].drop_duplicates()
+    if len(he_meta) == 1:
+        cells["patient_id"] = he_meta["patient_id"].iloc[0]
+        cells["split"] = he_meta["split"].iloc[0]
+    else:
+        cells["patient_id"] = ""
+        cells["split"] = ""
+
+    mask_path = source / "segmentations" / "1_0mpp" / "cell_masks" / "instances" / f"{tissue}.npz"
+    with np.load(mask_path, allow_pickle=False) as handle:
+        mask = handle["mask"]
+    label, row, col = _centroids(mask)
+    del mask
+    lookup = pd.DataFrame({"cell_id": label.astype(np.int64), "centroid_x": row, "centroid_y": col})
+    merged = cells.merge(lookup, on="cell_id", how="inner")
+    if merged.empty:
+        return f"skip {tissue}: no mask hits"
+    merged = merged.sort_values("cell_id")
+    keep_cols = ["cell_id", "centroid_x", "centroid_y", "final_CT", "tissue_id", "patient_id", "split"]
+    merged[keep_cols].to_csv(csv_path, index=False)
+
+    zarr_path = source / "he" / "1_0mpp" / "images" / f"{tissue}.ome.zarr"
+    _write_tif(he_tif, _read_he(zarr_path))
+    _write_h5ad(h5ad_path, merged[keep_cols], uni2_dir)
+    return f"wrote {tissue}: {len(merged)} cells"
+
+
+def _job(payload: tuple[str, str, bool]) -> str:
+    dataset, tissue, force = payload
+    try:
+        return prepare_tissue(dataset, tissue, force)
+    except Exception as exc:
+        return f"FAIL {tissue}: {exc}"
+
+
+def tissues_of(dataset: str) -> list[str]:
+    cells = pd.read_parquet(
+        DATA_ROOT / dataset / dataset / "metadata" / "cells.parquet",
+        columns=["tissue_id"],
+    )
+    return sorted(cells["tissue_id"].unique())
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--datasets", nargs="*", default=list(DATASETS))
+    parser.add_argument("--tissue", default="", help="One tissue_id. Empty means every annotated tissue.")
+    parser.add_argument("--limit", type=int, default=0, help="Stop after this many tissues per dataset. 0 means all.")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--force", action="store_true")
+    args = parser.parse_args(argv)
+
+    jobs: list[tuple[str, str, bool]] = []
+    for dataset in args.datasets:
+        if dataset not in DATASETS:
+            raise SystemExit(f"unknown dataset {dataset}")
+        names = [args.tissue] if args.tissue else tissues_of(dataset)
+        if args.limit:
+            names = names[: args.limit]
+        jobs.extend((dataset, name, args.force) for name in names)
+    print(f"prepare {len(jobs)} tissues -> {PREPARED}", flush=True)
+    if args.workers <= 1 or len(jobs) <= 1:
+        lines = [_job(job) for job in jobs]
+    else:
+        from multiprocessing import Pool
+
+        with Pool(args.workers) as pool:
+            lines = pool.map(_job, jobs)
+    failed = 0
+    for line in lines:
+        print(line, flush=True)
+        if line.startswith("FAIL"):
+            failed += 1
+    print(f"done failed={failed}", flush=True)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

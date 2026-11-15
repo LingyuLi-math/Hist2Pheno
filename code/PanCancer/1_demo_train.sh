@@ -5,7 +5,7 @@
 ##   bash code/PanCancer/1_demo_train.sh index
 ##   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
 ##   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7}
+##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8}
 ##   CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 ##
 ## Published UNI section/celltype commands pin:
@@ -37,6 +37,7 @@
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A6
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
+# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8   # 2026.11.15 A3 + balanced L12
 
 
 set -euo pipefail
@@ -54,7 +55,7 @@ Usage:
   bash code/PanCancer/1_demo_train.sh index
   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7}
+  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8}
 
 GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
 Logs: data/PanCancer/train*.log and code/log/pancancer_section_uni2_<arch>.log
@@ -265,8 +266,21 @@ cmd_uni2() {
         --ablation-tag A7_bal_focal
       )
       ;;
+    # 2026.11.15, A3 trunk (k=8 mean + gate), all loss weights unchanged.
+    # Only CE(L12), NLL(L2→L12) and NLL(L12→L1) become class-weighted (balanced),
+    # so the L12 head no longer pulls B_Plasma back to its 3.5% empirical prior.
+    A8_l12_balanced)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean --spatial-gate
+        --context-cache-dir "$OUT/context_cache"
+        --l12-class-weight-mode balanced
+        --save-result result_uni2_A8_l12_balanced
+        --ablation-tag A8_l12_balanced
+      )
+      ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8"
       ;;
   esac
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
@@ -307,7 +321,8 @@ case "${1:-}" in
       A5) cmd_uni2 A5_l12_links_1 ;;
       A6) cmd_uni2 A6_l12_links_2 ;;
       A7) cmd_uni2 A7_bal_focal ;;
-      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4 | A5 | A6 | A7" ;;
+      A8) cmd_uni2 A8_l12_balanced ;;
+      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8" ;;
     esac
     ;;
   *) die "unknown command '$1' (index | section | celltype | uni2)" ;;

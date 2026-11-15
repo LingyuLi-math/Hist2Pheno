@@ -1121,6 +1121,7 @@ def train_and_save_model(
             w_l3=1.0,
             w_l4=1.0,
             use_level12_head=False,
+            class_weights_level12=None,
             use_extra_heads=False,
             l2_label_smoothing=0.0,
             l1_label_smoothing=0.0,
@@ -1146,6 +1147,11 @@ def train_and_save_model(
                 self.register_buffer("class_weights_level1", class_weights_level1)
             else:
                 self.class_weights_level1 = None
+            # 2026.11.15, optional class-weighted L12 / L12 头与 L1/L2 使用同一类别先验
+            if class_weights_level12 is not None:
+                self.register_buffer("class_weights_level12", class_weights_level12)
+            else:
+                self.class_weights_level12 = None
 
             map_l2_to_l1 = torch.zeros(len(child_to_parent), num_level1_classes, dtype=torch.float32)
             for k, p in enumerate(child_to_parent):
@@ -1196,7 +1202,8 @@ def train_and_save_model(
             total_loss = self.w1 * ce_l1_std + self.w2 * ce_l2 + self.w12 * ce_l1_agg
             ce_l12 = ce_l3 = ce_l4 = None
             if self.use_level12_head:
-                ce_l12 = F.cross_entropy(logits_l12.float(), target_l12)
+                ce_l12 = F.cross_entropy(logits_l12.float(), target_l12,
+                                         weight=self.class_weights_level12)
                 total_loss = total_loss + self.w_l12head * ce_l12
             if self.use_extra_heads:
                 ce_l3 = F.cross_entropy(logits_l3.float(), target_l3)
@@ -1210,7 +1217,9 @@ def train_and_save_model(
             adjacent_terms = {}
             if self.use_level12_head and result is not None and result.get("hierarchy_config"):
                 extra, adjacent_terms = adjacent_loss(logits_l2, logits_l12, logits_l1_head,
-                    target_l12, target_l1, result["hierarchy_maps"], result["hierarchy_config"])
+                    target_l12, target_l1, result["hierarchy_maps"], result["hierarchy_config"],
+                    weight_l12=self.class_weights_level12,
+                    weight_l1=self.class_weights_level1 if self.class_weights_level12 is not None else None)
                 total_loss = total_loss + extra
                 adjacent_terms = {k: v.detach() for k, v in adjacent_terms.items()}
             return (
@@ -1400,6 +1409,26 @@ def train_and_save_model(
         )
     class_weights_l1_tensor = torch.as_tensor(full_weights_l1, dtype=torch.float32, device=device)
 
+    # 2026.11.15, L12 CE was unweighted while L1/L2 CE were balanced. The
+    # unweighted L12 CE plus the unweighted L2→L12 NLL / JS pulled L2 mass of
+    # rare families (B_Plasma) back toward the empirical prior. Default "none"
+    # keeps old checkpoints reproducible; "balanced" opts in.
+    l12_cw_mode = str(((result or {}).get("_cv_source") or {}).get("l12_class_weight_mode", "none"))
+    class_weights_l12_tensor = None
+    if use_level12_head and l12_cw_mode != "none":
+        if l12_cw_mode != "balanced":
+            raise ValueError("l12_class_weight_mode must be none or balanced")
+        y12_tr = (result or {}).get("y_train_level12_encoded")
+        if y12_tr is None:
+            raise ValueError("balanced L12 weights need result['y_train_level12_encoded']")
+        y12_tr = np.asarray(y12_tr, dtype=np.int64)
+        u12 = np.unique(y12_tr)
+        cw12 = compute_class_weight("balanced", classes=u12, y=y12_tr)
+        full_w12 = np.ones(int(num_level12_classes), dtype=np.float64)
+        full_w12[u12.astype(int)] = cw12
+        class_weights_l12_tensor = torch.as_tensor(full_w12, dtype=torch.float32, device=device)
+        print(f"  L12 class weights (balanced): {np.round(full_w12, 3).tolist()}", flush=True)
+
     # Build level2 -> level1 mapping from the filtered dataset.
     child_to_parent, n_l2_l1_conflict = _child_to_parent_majority(
         y_train_encoded, y_train_level1_encoded, num_classes
@@ -1448,6 +1477,7 @@ def train_and_save_model(
         l2_label_smoothing=l2_label_smoothing,
         l1_label_smoothing=l1_label_smoothing,
         l2_focal_gamma=l2_focal_gamma,
+        class_weights_level12=class_weights_l12_tensor,
     ).to(device)
 
     loss_msg = (
@@ -1955,6 +1985,8 @@ def train_and_save_model_from_split(
          "epochs":max_epochs,"patience":patience,"hidden":list(hidden_dims),"dropout":dropout,
          "lr":lr,"weight_decay":weight_decay,"val_selection":val_selection_metric,
          "class_weight":class_weight_mode,"beta":class_balanced_beta,"focal":l2_focal_gamma,
+         **({"l12_class_weight":result["_cv_source"]["l12_class_weight_mode"]}
+            if (result.get("_cv_source") or {}).get("l12_class_weight_mode","none")!="none" else {}),
          "smoothing":[l1_label_smoothing,l2_label_smoothing],
          "spatial":result.get("spatial_config"),"spatial_mode":result.get("spatial_mode"),
          "spatial_k":result.get("spatial_k"),"hierarchy":result.get("hierarchy_config"),"hierarchy_maps":result.get("hierarchy_maps"),
@@ -2066,7 +2098,10 @@ def train_and_save_model_from_split(
             "initialization":result.get("initialization"),
             "training_seed":result.get("_cv_source",{}).get("seed"),
             "split_seed":result.get("_cv_source",{}).get("split_seed"),
-            "loss_weights":{"l1_ce":hce_w1,"l2_ce":hce_w2,"l2_to_l1_nll":hce_w12,"l12_ce":hce_w_l12head},
+            "loss_weights":{"l1_ce":hce_w1,"l2_ce":hce_w2,"l2_to_l1_nll":hce_w12,"l12_ce":hce_w_l12head,
+                # 2026.11.15, only when enabled so A0–A7 checkpoint families are unchanged
+                **({"l12_class_weight":str(result["_cv_source"]["l12_class_weight_mode"])}
+                   if str((result.get("_cv_source") or {}).get("l12_class_weight_mode","none"))!="none" else {})},
             "spatial_config":result.get("spatial_config"), "spatial_mode":result.get("spatial_mode"),
             "class_names":list(map(str,class_names)) if class_names is not None else None,
             "hierarchy_config":result.get("hierarchy_config"),

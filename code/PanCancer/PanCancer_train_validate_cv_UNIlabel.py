@@ -650,6 +650,7 @@ class PooledCtx:
     mpp_map: Path | None = None
     inner_val_fraction: float = 0.2
     embedder: str = "uni"
+    l12_class_weight_mode: str = "none"  # 2026.11.15, none keeps A0–A7 reproducible
     split_seed: int = 42  # 2026.10.26, fixed splits across training seeds / 固定 cross-section 拆分
     g: dict = field(default_factory=dict)
 
@@ -756,6 +757,7 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     cv["hierarchy_config"] = ctx.hierarchy_options
     cv["spatial_config"] = ctx.spatial_options or vars(SpatialConfig(k=ctx.spatial_k))
     cv["inner_val_fraction"] = ctx.inner_val_fraction
+    cv["l12_class_weight_mode"] = ctx.l12_class_weight_mode
     cv["seed"] = ctx.seed
     cv["split_seed"] = ctx.split_seed
     cv["paired_initialization"] = True
@@ -988,6 +990,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         p.add_argument("--"+name.replace("_","-"),type=float,default=default)
     p.add_argument("--legacy-l2-l1-weight",type=float,default=2.0)
     p.add_argument("--l12-ce-weight",type=float,default=1.0,help="Scalar on direct CE(L12). L1/L2 CE stay class-weighted at weight 1.")
+    p.add_argument("--l12-class-weight-mode",choices=("none","balanced"),default="none",
+        help="2026.11.15. balanced: class-weight CE(L12) and the L2→L12 / L12→L1 NLL like CE(L1)/CE(L2).")
     p.add_argument("--spatial-radii-um",type=float,nargs="*",default=[])
     p.add_argument("--spatial-mpp",type=float,default=None)
     p.add_argument("--spatial-coordinates-um",action="store_true")
@@ -1047,6 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
         spatial_options=spatial_options, patient_map=args.patient_map, mpp_map=args.mpp_map,
         inner_val_fraction=args.inner_val_fraction, embedder=args.embedder, hce_w12=args.legacy_l2_l1_weight,
         hce_w_l12head=args.l12_ce_weight,
+        l12_class_weight_mode=args.l12_class_weight_mode,
         data_root=args.data_root.expanduser().resolve(),
         save_result=save_result,
         ablation_tag=ablation_tag,

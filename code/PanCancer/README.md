@@ -113,7 +113,7 @@ Package-side checks that consume this file (evaluation ontology, confidence clas
 
 ## 2026-10-26 UNI2 run order
 
-The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A7. A4 (k=8 attention) is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
+The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A8. A8 reuses that cache; it does not rebuild it. A4 (k=8 attention) is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
 
 ### 1. Train and internal cross-validation — [`1_demo_train.sh`](1_demo_train.sh)
 
@@ -126,13 +126,14 @@ CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
 CUDA_DEVICE=1 bash code/PanCancer/1_demo_train.sh uni2 A6
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8
 ```
 
 Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). It is not an external test set. A file written before 2026-11-15 has labels and probabilities only; the class-order fields in the [OOF archive contract](#2026-11-15-oof-archive-contract) appear after the next train.
 
 ### 2. Choose the architecture — [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)
 
-Compare A0–A3, then A5/A6/A7, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. This notebook does not call predict, and those cohorts are not a held-out test set.
+Compare A0–A3, then A5/A6/A7, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. A8 is the next run and has no number here until that job finishes. This notebook does not call predict, and those cohorts are not a held-out test set.
 
 Numbers below are the **2026-10-27 `paired_v2_seed42` retrain** (named-layer init, split-seed 42, L2→L1 NLL weight 2). A 2026-10-26 morning A3 of 0.8907 used L2→L1 NLL weight 1 and those checkpoints were removed.
 
@@ -141,6 +142,37 @@ A3 remains the best finished architecture on pooled OOF L2 (**0.8897**). Its dep
 `data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate_paired_v2_seed42/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt`
 
 0.8897 is the five-fold pooled OOF of the A3 recipe. It is not the score of this one file on every section.
+
+### 2026-11-16 Training L2 label mix
+
+Ground-truth L2 counts on the 5,627,071 training cells (896 sections, seven cohorts). Counted from `l2_labels` in `data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/oof_predictions.npz`. Each cell is held out once, so this file is the full training label mix, not an A2 prediction. A0–A8 train on the same cells. Column order is the workbook L2 order (`ontology_class_names`); this archive has no `l2_class_names` key.
+
+`B_cell` is 135,794 cells, **2.41%**, 12th of 20 classes by count. `Plasma` is 61,271, **1.09%**. Together they are the L12 family `B_Plasma`: 197,065 cells, **3.50%**. That is the empirical prior the unweighted L12 term pulls toward. They are scarce next to Fibroblast (15.14%) and Tumor (14.94%), and they are not the smallest classes: Neural (0.19%), NK (0.21%), and Injury_epithelial (0.25%) are smaller.
+
+| L2 | L12 | n | % |
+|----|-----|--:|--:|
+| DCIS | Tumor | 41,775 | 0.74 |
+| Tumor | Tumor | 840,604 | 14.94 |
+| Alveolar | Epithelial | 58,050 | 1.03 |
+| Epithelial | Epithelial | 556,973 | 9.90 |
+| Injury_epithelial | Epithelial | 14,090 | 0.25 |
+| Myoepithelial | Epithelial | 18,010 | 0.32 |
+| CD4_T | T_cell | 454,922 | 8.08 |
+| CD8_T | T_cell | 426,920 | 7.59 |
+| Tregs | T_cell | 322,139 | 5.72 |
+| NK | T_cell | 11,655 | 0.21 |
+| **B_cell** | **B_Plasma** | **135,794** | **2.41** |
+| **Plasma** | **B_Plasma** | **61,271** | **1.09** |
+| DC | Myeloid | 316,538 | 5.63 |
+| Macrophage | Myeloid | 686,418 | 12.20 |
+| Neutrophil | Myeloid | 177,425 | 3.15 |
+| Fibroblast | Stromal | 851,747 | 15.14 |
+| Myofibroblast | Stromal | 38,977 | 0.69 |
+| Stromal | Stromal | 157,868 | 2.81 |
+| Endothelial | Endothelial | 445,047 | 7.91 |
+| Neural | Neural | 10,848 | 0.19 |
+
+L12 totals from the same file: T_cell 1,215,636 (21.60%), Myeloid 1,180,381 (20.98%), Stromal 1,048,592 (18.63%), Tumor 882,379 (15.68%), Epithelial 647,123 (11.50%), Endothelial 445,047 (7.91%), B_Plasma 197,065 (3.50%), Neural 10,848 (0.19%).
 
 ### 2026-11-11 — A5 / A6 L12-link ablation (finished)
 
@@ -202,6 +234,30 @@ The intended B / Plasma lift is recall-only and does not survive AUROC or F1 (sa
 Mean softmax `P(B)` does rise (A2 0.030 → A7 0.042). Extra mass is not concentrated on B: Endothelial argmax goes 254,110 → **1,957,081** (recall 0.184 → 0.635), Macrophage 192,611 → **4,910** (recall 0.096 → 0.002), Tumor recall 0.655 → 0.466. Keep **A3** for deployment. Do not run `3_demo_pred.sh uni2 A7`.
 
 Weight: fold 0 `data/PanCancer/result_uni2_A7_bal_focal_paired_v2_seed42/cross_dataset_cv/A7_bal_focal/best_mlp_gpu.pt`. Log: `code/log/pancancer_section_uni2_A7_bal_focal_paired_v2_seed42.log`.
+
+### 2026-11-16 A8 balanced L12 (not yet trained)
+
+Same UNI2 cache and the **A3** trunk: k=8 mean, learned spatial gate, scalar loss weights unchanged. A7 changed the sampler and turned class weights off; A8 does not. The only change from A3 is `--l12-class-weight-mode balanced`.
+
+| | spatial | CE(L12) weight | L2→L12 / L12→L1 NLL | L12 class weights |
+|--|---------|----------------|---------------------|-------------------|
+| A3 (reference) | k=8 mean + gate | 1, unweighted classes | 0.5 / 0.5, unweighted | `none` |
+| A8 `l12_balanced` | k=8 mean + gate | 1, **balanced** | 0.5 / 0.5, **balanced** | `balanced` |
+
+L2→L1 NLL stays 2. Both JS terms stay 0.1 and stay unweighted. L1 and L2 cross-entropy stay `balanced`, as in A3. The L12 weights are inverse-frequency on the eight L12 classes, so `B_Plasma` is no longer pulled back to its 3.5% prior by an unweighted L12 term. Mechanism and the `none` default that leaves A0–A7 families unchanged: [`code/Hist2Pheno_pkg/README.md`](../Hist2Pheno_pkg/README.md#2026-11-16-a8-class-weighted-l12-opt-in).
+
+This run does not overwrite A3. Outputs:
+
+- `data/PanCancer/result_uni2_A8_l12_balanced_paired_v2_seed42/`
+- checkpoint directory `cross_dataset_cv/A8_l12_balanced/`
+- log `code/log/pancancer_section_uni2_A8_l12_balanced_paired_v2_seed42.log`
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8
+```
+
+Fill the pooled OOF L2, the B / Plasma table, and the chosen fold into this section after the job finishes. Do not deploy A8, and do not run `3_demo_pred.sh uni2 A8`, until that OOF number is in hand. NPC predict after that is `code/External_val/NPC/demo_uni2_A8.sh`.
 
 ### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
 

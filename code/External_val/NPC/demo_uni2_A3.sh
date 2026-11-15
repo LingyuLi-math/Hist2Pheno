@@ -8,7 +8,7 @@
 ##
 ## 2026.10.27 STAR_PROB_MIN=0.40, the valley cutoff. UNI2 A2 is demo_uni2.sh.
 ## 2026.10.28 the output folder follows STAR_PROB_MIN (0.40 -> ..._prob0.40).
-## STAR_PROB_MIN=0 keeps the unsuffixed unfiltered tree.
+## STAR_PROB_MIN=0 (default since 2026.11.15) keeps the unsuffixed unfiltered tree.
 ##
 ## Does not rewrite:
 ##   data/Visium/NPC/project_all_UNI2
@@ -31,8 +31,9 @@ CUDA_DEVICE="${CUDA_DEVICE:-2}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 
 export UNI2_CKPT="${REPO}/data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate_paired_v2_seed42/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt"
-export STAR_PROB_MIN="${STAR_PROB_MIN:-0.40}"
-# 2026.10.28, one directory per cutoff / 默认 0.40 仍是 ..._prob0.40
+# 2026.11.15, default 0 like demo_uni2.sh / A5 / A6 and the NPC notebooks
+export STAR_PROB_MIN="${STAR_PROB_MIN:-0}"
+# 2026.10.28, one directory per cutoff / 0.40 写入 ..._prob0.40
 PROB_TAG="$(awk -v v="${STAR_PROB_MIN}" 'BEGIN {
   if (v !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/) exit 2
   x = v + 0

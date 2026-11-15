@@ -185,8 +185,14 @@ cmd_uni2() {
       log="$REPO/code/log/pancancer_section_uni2_A6_l12_links_2_predict.log"
       extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
       ;;
+    A8)
+      ckpt="$OUT/result_uni2_A8_l12_balanced/cross_dataset_cv/A8_l12_balanced/best_mlp_gpu.pt"
+      root="$OUT/pred_uni2_A8_l12_balanced"
+      log="$REPO/code/log/pancancer_section_uni2_A8_l12_balanced_predict.log"
+      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+      ;;
     *)
-      die "uni2 predict must be A0 | A1 | A2 | A3 | A5 | A6"
+      die "uni2 predict must be A0 | A1 | A2 | A3 | A5 | A6 | A8"
       ;;
   esac
   # 2026.10.26, rewrite onto paired_v2_seed42 / 上面的无后缀路径是重训前的目录
@@ -226,8 +232,8 @@ case "${1:-}" in
     ;;
   uni2)
     case "${2:-}" in
-      A0|A1|A2|A3|A5|A6) cmd_uni2 "$2" ;;
-      *) die "uni2 steps: A0 | A1 | A2 | A3 | A5 | A6" ;;
+      A0|A1|A2|A3|A5|A6|A8) cmd_uni2 "$2" ;;
+      *) die "uni2 steps: A0 | A1 | A2 | A3 | A5 | A6 | A8" ;;
     esac
     ;;
   *) die "unknown command '$1' (section | celltype | uni2)" ;;
