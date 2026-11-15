@@ -80,3 +80,5 @@ SAMPLE=Patient_1 bash code/External_val/Prostate/demo.sh all
 ## UNI2 paired_v2 best weights
 
 A2 is fold 1 (`result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/.../best_mlp_gpu.pt`). A3 is fold 0 (`result_uni2_A3_adjacent_spatial_k8mean_gate_paired_v2_seed42/.../best_mlp_gpu.pt`). `demo_uni2.sh` forwards to A2. Predictions go to `data/Visium/Prostate/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. The existing `*_uni2.ipynb` files and `*_uni2_A3.ipynb` read A3; `*_uni2_A2.ipynb` reads A2.
+
+2026-11-15. A6 is fold 1 of the A2 trunk with L12 links = 2 (`result_uni2_A6_l12_links_2_paired_v2_seed42/cross_dataset_cv/A6_l12_links_2/best_mlp_gpu.pt`, pooled OOF L2 macro AUROC 0.8882). `Pred_visual_prostate_patient1_H2_uni2_A6.ipynb` and `demo_uni2_A6.sh` write `pred_uni2_A6_bestmlp_paired_v2_seed42/`.

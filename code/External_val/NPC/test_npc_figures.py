@@ -8,12 +8,17 @@ import unittest
 import numpy as np
 import pandas as pd
 
+import matplotlib.pyplot as plt
+
 from npc_figures import (
     group_fraction,
     keep_leftmost_foci,
+    l2_group_means,
     load_tls_xy,
     map_l2,
     nuclei_in_contours,
+    plot_abundance_maps,
+    plot_nucleus_abundance_confidence,
     spline_closed,
     tls_score_row,
 )
@@ -79,6 +84,39 @@ class NpcFigureHelperTests(unittest.TestCase):
         self.assertEqual(xy.tolist(), [[0.0, 10.0], [100.0, 10.0]])
         self.assertAlmostEqual(pitch, 100.0)
         self.assertAlmostEqual(spot_r, 20.0)
+
+    def test_l2_group_means_and_abundance_map(self):
+        mean = np.array([[0.1, 0.2, 0.7], [0.0, 0.0, 1.0]])
+        out = l2_group_means(mean, ["B_cell", "Plasma", "Tumor"], groups=("B", "tumor"))
+        np.testing.assert_allclose(out, [[0.3, 0.7], [0.0, 1.0]])
+        xy = np.array([[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]])
+        h2p = np.array([[0.2], [0.4], [0.6], [0.8]])
+        c2l = np.array([[1.0], [2.0], [3.0], [np.nan]])
+        fig, tab = plot_abundance_maps(
+            xy, h2p, c2l, ["B"], radius=2.0, sample="toy", dpi=80,
+        )
+        self.assertEqual(int(tab["n_spots"].iloc[0]), 3)
+        self.assertAlmostEqual(float(tab["spearman"].iloc[0]), 1.0)
+        plt.close(fig)
+
+    def test_nucleus_abundance_confidence_pages(self):
+        rng = np.random.default_rng(0)
+        xy = rng.normal(size=(40, 2))
+        abundance = rng.random((40, 3)).astype(np.float32)
+        abundance /= abundance.sum(axis=1, keepdims=True)
+        confidence = rng.random((40, 3)).astype(np.float32)
+        figs = plot_nucleus_abundance_confidence(
+            xy, abundance, confidence, ["Tumor", "B_cell", "Tregs"],
+            sample="toy", dpi=60, per_figure=2,
+        )
+        self.assertEqual(len(figs), 2)
+        self.assertEqual(figs[0].axes[0].get_title().split()[0], "Tumor")
+        ylabels = [ax.get_ylabel() for ax in figs[0].axes]
+        self.assertEqual(ylabels.count("softmax"), 2)
+        self.assertEqual(ylabels.count("confidence"), 2)
+        self.assertEqual(figs[1].axes[0].get_title().split()[0], "Tregs")
+        for fig in figs:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

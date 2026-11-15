@@ -42,6 +42,10 @@ __all__ = [
     "map_l2",
     "nuclei_in_contours",
     "save_figure",
+    "l2_group_means",
+    "load_aligned_l2_probs",
+    "plot_abundance_maps",
+    "plot_nucleus_abundance_confidence",
     "spline_closed",
     "tls_score_row",
     "tls_smooth_contours",
@@ -288,6 +292,236 @@ def nuclei_in_contours(xy, contours):
             continue
         inside |= MplPath(poly).contains_points(xy)
     return inside
+
+## 2026-11-11 — Per-nucleus L2 confidence (do not only argmax)
+def l2_group_means(mean_probs, class_names, groups=None, mapping=None) -> np.ndarray:
+    """Sum per-spot mean L2 probabilities into cell2location groups.
+
+    Classes that do not map onto ``groups`` (Endothelial, Neural) are left
+    out. The columns are not renormalized, so a row need not sum to 1.
+    """
+    groups = list(C2L_TYPES if groups is None else groups)
+    mapping = L2_TO_C2L if mapping is None else mapping
+    mean_probs = np.asarray(mean_probs, dtype=np.float64)
+    class_names = [str(name) for name in class_names]
+    if mean_probs.ndim != 2 or mean_probs.shape[1] != len(class_names):
+        raise ValueError(
+            f"mean_probs {mean_probs.shape} does not match {len(class_names)} classes"
+        )
+    out = np.zeros((len(mean_probs), len(groups)), dtype=np.float64)
+    for j, group in enumerate(groups):
+        cols = [i for i, name in enumerate(class_names) if mapping.get(name) == group]
+        if cols:
+            out[:, j] = mean_probs[:, cols].sum(axis=1)
+    return out
+
+
+def load_aligned_l2_probs(pred_h5ad, probs_npz):
+    """L2 softmax in the same row order as ``obsm['spatial_HE']``."""
+    import anndata as ad
+
+    adata = ad.read_h5ad(pred_h5ad, backed="r")
+    try:
+        xy = np.asarray(adata.obsm["spatial_HE"], dtype=np.float64).copy()
+        names = np.asarray(adata.obs_names.astype(str))
+    finally:
+        closer = getattr(adata, "file", None)
+        if closer is not None:
+            closer.close()
+    with np.load(probs_npz, allow_pickle=True) as z:
+        probs = np.asarray(z["probs"], dtype=np.float64)
+        classes = [str(name) for name in z["class_names"]]
+        obs = np.asarray(z["obs_names"]).astype(str) if "obs_names" in z.files else None
+    if probs.ndim != 2 or probs.shape[1] != len(classes):
+        raise ValueError(f"{probs_npz} probs {probs.shape} vs {len(classes)} classes")
+    if obs is None:
+        if len(probs) != len(names):
+            raise ValueError(
+                f"{probs_npz} has {len(probs)} rows and the prediction has {len(names)}"
+            )
+    elif not np.array_equal(obs, names):
+        order = pd.Index(obs).get_indexer(names)
+        if np.any(order < 0):
+            raise KeyError("L2 probability rows do not cover the prediction nuclei")
+        probs = probs[order]
+    return xy, probs, classes
+
+
+def plot_abundance_maps(spot_xy, h2p, c2l, groups, *, radius, sample, dpi=200):
+    """Hist2Pheno mean softmax (top) and cell2location counts (bottom).
+
+    Each panel is scaled to its own 99th percentile. Spots with no value are
+    gray. Returns the figure and a per-type Spearman table. The two rows are
+    different units, so the rank correlation is the comparison, not the color.
+    """
+    import matplotlib.pyplot as plt
+    from scipy.stats import spearmanr
+
+    spot_xy = np.asarray(spot_xy, dtype=np.float64)
+    h2p = np.asarray(h2p, dtype=np.float64)
+    c2l = np.asarray(c2l, dtype=np.float64)
+    groups = list(groups)
+    if h2p.shape != c2l.shape or h2p.shape[1] != len(groups):
+        raise ValueError(f"h2p {h2p.shape}, c2l {c2l.shape}, groups {len(groups)}")
+    if len(spot_xy) != len(h2p):
+        raise ValueError(f"spots {len(spot_xy)} != rows {len(h2p)}")
+
+    def _spearman(a, b):
+        ok = np.isfinite(a) & np.isfinite(b)
+        n = int(ok.sum())
+        if n < 3:
+            return float("nan"), n
+        result = spearmanr(a[ok], b[ok])
+        rho = result.statistic if hasattr(result, "statistic") else result[0]
+        return float(rho), n
+
+    def _fill(ax, values):
+        values = np.asarray(values, dtype=np.float64)
+        finite = values[np.isfinite(values)]
+        vmax = float(np.percentile(finite, 99)) if finite.size else 1.0
+        if not np.isfinite(vmax) or vmax <= 0:
+            vmax = 1.0
+        colors = np.full((len(values), 4), (0.93, 0.93, 0.93, 1.0))
+        ok = np.isfinite(values)
+        colors[ok] = mpl.colormaps["magma"](np.clip(values[ok] / vmax, 0.0, 1.0))
+        patches = [Circle((float(x), float(y)), radius) for x, y in spot_xy]
+        ax.add_collection(
+            PatchCollection(patches, facecolors=colors, edgecolors="none", rasterized=True)
+        )
+        return vmax
+
+    fig, axes = plt.subplots(
+        2, len(groups), figsize=(2.15 * len(groups), 5.6), dpi=dpi, squeeze=False,
+    )
+    rows = []
+    for j, group in enumerate(groups):
+        rho, n = _spearman(h2p[:, j], c2l[:, j])
+        both = np.isfinite(h2p[:, j]) & np.isfinite(c2l[:, j])
+        h_vmax = _fill(axes[0, j], h2p[:, j])
+        c_vmax = _fill(axes[1, j], c2l[:, j])
+        axes[0, j].set_title(f"{group}\nρ = {rho:.2f}" if np.isfinite(rho) else group, fontsize=9)
+        axes[0, j].text(
+            0.02, 0.98, f"p99 {h_vmax:.2f}", transform=axes[0, j].transAxes,
+            ha="left", va="top", fontsize=7, color="0.25",
+        )
+        axes[1, j].text(
+            0.02, 0.98, f"p99 {c_vmax:.2f}", transform=axes[1, j].transAxes,
+            ha="left", va="top", fontsize=7, color="0.25",
+        )
+        rows.append({
+            "group": group,
+            "spearman": rho,
+            "n_spots": n,
+            "h2p_p50": float(np.median(h2p[both, j])) if both.any() else float("nan"),
+            "h2p_p99": h_vmax,
+            "c2l_p50": float(np.median(c2l[both, j])) if both.any() else float("nan"),
+            "c2l_p99": c_vmax,
+        })
+    pad = 2.0 * float(radius)
+    for ax in axes.ravel():
+        ax.set_xlim(spot_xy[:, 0].min() - pad, spot_xy[:, 0].max() + pad)
+        ax.set_ylim(spot_xy[:, 1].max() + pad, spot_xy[:, 1].min() - pad)
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+    axes[0, 0].set_ylabel("Hist2Pheno\nmean softmax", fontsize=9)
+    axes[1, 0].set_ylabel("cell2location\ncounts", fontsize=9)
+    fig.suptitle(
+        f"{sample}   per-type abundance\n"
+        "each panel scaled to its own 99th percentile; gray = no value",
+        fontsize=11,
+    )
+    fig.tight_layout()
+    return fig, pd.DataFrame(rows)
+
+
+def plot_nucleus_abundance_confidence(
+    xy,
+    abundance,
+    confidence,
+    class_names,
+    *,
+    sample,
+    dpi=200,
+    marker_s=0.15,
+    per_figure=5,
+):
+    """Patient-level single-nucleus maps, one row per L2 type.
+
+    Left is that type's softmax on ``turbo``, 0–1, the scale UTOPIA uses for
+    predicted magnitude. Right is conformal confidence on ``hot``, 0–1.
+    Each panel has its own colorbar. Returns one figure per page.
+    """
+    import matplotlib.pyplot as plt
+
+    xy = np.asarray(xy, dtype=np.float64)
+    abundance = np.asarray(abundance, dtype=np.float32)
+    confidence = np.asarray(confidence, dtype=np.float32)
+    class_names = [str(name) for name in class_names]
+    if abundance.shape != confidence.shape or abundance.shape[1] != len(class_names):
+        raise ValueError(
+            f"abundance {abundance.shape}, confidence {confidence.shape}, names {len(class_names)}"
+        )
+    if len(xy) != len(abundance):
+        raise ValueError(f"nuclei {len(xy)} != rows {len(abundance)}")
+    winner = abundance.argmax(axis=1)
+    pad = 0.02 * max(float(np.ptp(xy[:, 0])), float(np.ptp(xy[:, 1])), 1.0)
+    xlim = (float(xy[:, 0].min()) - pad, float(xy[:, 0].max()) + pad)
+    ylim = (float(xy[:, 1].max()) + pad, float(xy[:, 1].min()) - pad)
+
+    def _panel(fig, ax, values, cmap, label):
+        order = np.argsort(values, kind="stable")
+        sc = ax.scatter(
+            xy[order, 0],
+            xy[order, 1],
+            c=values[order],
+            s=marker_s,
+            cmap=cmap,
+            vmin=0.0,
+            vmax=1.0,
+            linewidths=0,
+            rasterized=True,
+        )
+        ax.set_xlim(*xlim)
+        ax.set_ylim(*ylim)
+        ax.set_aspect("equal")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label(label, fontsize=8)
+        cbar.ax.tick_params(labelsize=7, length=2)
+        return sc
+
+    figs = []
+    n_pages = int(np.ceil(len(class_names) / per_figure))
+    for page in range(n_pages):
+        names = class_names[page * per_figure : (page + 1) * per_figure]
+        fig, axes = plt.subplots(
+            len(names), 2, figsize=(11.2, 2.85 * len(names)), dpi=dpi,
+            squeeze=False, layout="constrained",
+        )
+        for row, name in enumerate(names):
+            j = class_names.index(name)
+            abu = abundance[:, j]
+            conf = confidence[:, j]
+            n_arg = int((winner == j).sum())
+            n_hi = int((conf >= 0.5).sum())
+            _panel(fig, axes[row, 0], abu, "turbo", "softmax")
+            _panel(fig, axes[row, 1], conf, "hot", "confidence")
+            axes[row, 0].set_title(f"{name}\nsoftmax   argmax {n_arg:,}", fontsize=9)
+            axes[row, 1].set_title(f"{name}\nconfidence   ≥0.5 {n_hi:,}", fontsize=9)
+            print(
+                f"{name:20}  argmax {n_arg:7,d}  softmax p50 {float(np.median(abu)):.3f} "
+                f"p99 {float(np.quantile(abu, 0.99)):.3f}   "
+                f"confidence p50 {float(np.median(conf)):.3f}  ≥0.5 {n_hi:,}",
+                flush=True,
+            )
+        fig.suptitle(
+            f"{sample}   single nuclei    softmax (turbo, 0–1)  |  confidence (hot, 0–1)",
+            fontsize=12,
+        )
+        figs.append(fig)
+    return figs
 
 
 def tls_score_row(df, sample: str) -> dict:

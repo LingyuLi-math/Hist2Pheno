@@ -16,11 +16,13 @@ This module does **not** retrain the MLP. It scores the existing output:
    Pan-cancer OOF cells (``oof_predictions.npz``) are the calibration set.
    For each class ``c`` the null is "``c`` is absent". Nuclei whose predicted
    ``P(c)`` is larger than the OOF false-positive scores get a small p-value.
-   Raw conformal p-values convert to a ``[0, 1]`` confidence. Presence is
-   a calibrated FPR gate vs OOF non-class cells (``P(c)`` above the
-   ``1-α`` null quantile). Whole-slide BH on 1e5 nuclei is stored as
-   ``p_adj`` but is not the map threshold: UTOPIA BH is per histology
-   cluster, and OOF softmax false positives already reach ~1.
+   Raw conformal p-values convert to a ``[0, 1]`` confidence. When a slide's
+   UNI2 StarDist embeddings are supplied, confidence is instead the same
+   stretch of the BH p-value computed inside each histology cluster
+   (UTOPIA ``get_adj_pvals``), with the medium batch-effect tolerance.
+   ``correct_predictions_by_he`` also clusters the calibration embeddings
+   and zeroes a class wherever that cluster's BH p-value is above the FDR.
+   Presence is a separate calibrated FPR gate vs OOF non-class cells.
 
 NPC has no nucleus GT, so conformal calibration must come from the training
 OOF, not from the NPC slide. That is the out-of-subject setting in UTOPIA.
@@ -112,6 +114,16 @@ UNLABELED = "low_confidence"
 # (Jin et al. 2026, UTOPIA/inference/confidence.py).
 UTOPIA_P_MIN = 0.01
 UTOPIA_P_MAX = 0.5
+# UTOPIA/img_process/histology_clustering.py and demo/utopia_config.
+UTOPIA_N_CLUSTERS = 15
+UTOPIA_PCA_DIM = 80
+_BATCH_QUANTILES = {
+    "weak": np.array([0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99]),
+    "medium": np.array([0.001, 0.005, 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99, 0.995, 0.999]),
+    "strong": np.array(
+        [0.001, 0.005, 0.01, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99, 0.995, 0.999]
+    ),
+}
 
 
 def load_l2_probs(path: str | Path) -> tuple[list[str], np.ndarray]:
@@ -290,6 +302,214 @@ def confidence_from_p(
     return np.clip(scores, 0.0, 1.0).astype(np.float32)
 
 
+def cluster_histology_embeddings(
+    embeddings: np.ndarray,
+    *,
+    n_clusters: int = UTOPIA_N_CLUSTERS,
+    pca_dim: int = UTOPIA_PCA_DIM,
+    random_state: int = 42,
+) -> np.ndarray:
+    """UTOPIA histology clusters: PCA to ``pca_dim``, then KMeans.
+
+    The input is one nucleus per row (UNI2 StarDist, 1536-d). Labels are
+    ``0 .. n_clusters-1`` in the row order of ``embeddings``.
+    """
+    from sklearn.cluster import KMeans
+    from sklearn.decomposition import PCA
+
+    x = np.asarray(embeddings, dtype=np.float64)
+    if x.ndim != 2:
+        raise ValueError(f"embeddings must be [n, d], got {x.shape}")
+    if n_clusters < 2 or x.shape[0] < n_clusters:
+        raise ValueError(f"need at least {n_clusters} nuclei to cluster, got {x.shape[0]}")
+    if not np.isfinite(x).all():
+        raise ValueError("embeddings contain non-finite values")
+    if x.shape[1] > pca_dim:
+        x = PCA(n_components=pca_dim, random_state=random_state).fit_transform(x)
+    labels = KMeans(
+        n_clusters=n_clusters, random_state=random_state, n_init=10
+    ).fit_predict(x)
+    return np.asarray(labels, dtype=np.int32)
+
+
+def match_histology_clusters(
+    test_embeddings: np.ndarray,
+    calib_embeddings: np.ndarray,
+    *,
+    n_clusters: int = UTOPIA_N_CLUSTERS,
+    pca_dim: int = UTOPIA_PCA_DIM,
+    random_state: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Put test and calibration nuclei in one H&E cluster space.
+
+    PCA and KMeans are fit on every test nucleus plus an equal-sized draw
+    of calibration nuclei, then applied to the full calibration matrix.
+    Cluster ids are the UTOPIA histology match: a test nucleus is scored
+    against calibration nuclei of the same morphology.
+    """
+    from sklearn.cluster import KMeans
+    from sklearn.decomposition import PCA
+
+    test = np.asarray(test_embeddings, dtype=np.float64)
+    calib = np.asarray(calib_embeddings, dtype=np.float64)
+    if test.ndim != 2 or calib.ndim != 2 or test.shape[1] != calib.shape[1]:
+        raise ValueError(
+            f"test {getattr(test, 'shape', None)} and calibration {getattr(calib, 'shape', None)} "
+            "embeddings must share a feature dimension"
+        )
+    if test.shape[0] < 2 or calib.shape[0] < 2:
+        raise ValueError("need at least two test and two calibration embeddings")
+    if not np.isfinite(test).all() or not np.isfinite(calib).all():
+        raise ValueError("embeddings contain non-finite values")
+    rng = np.random.default_rng(random_state)
+    n_fit = min(calib.shape[0], test.shape[0])
+    take = (
+        np.arange(calib.shape[0])
+        if n_fit == calib.shape[0]
+        else rng.choice(calib.shape[0], size=n_fit, replace=False)
+    )
+    fit = np.vstack([test, calib[take]])
+    if n_clusters < 2 or fit.shape[0] < n_clusters:
+        raise ValueError(f"need at least {n_clusters} nuclei to fit the clusters")
+    if fit.shape[1] > pca_dim:
+        n_components = min(pca_dim, fit.shape[0] - 1, fit.shape[1])
+        pca = PCA(n_components=n_components, random_state=random_state)
+        fit_z = pca.fit_transform(fit)
+        test_z = pca.transform(test)
+        calib_z = pca.transform(calib)
+    else:
+        test_z = test
+        calib_z = calib
+        fit_z = fit
+    kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init=10)
+    kmeans.fit(fit_z)
+    return (
+        kmeans.predict(test_z).astype(np.int32),
+        kmeans.predict(calib_z).astype(np.int32),
+    )
+
+
+def histology_tolerance(
+    calib_yhat: np.ndarray,
+    calib_y: np.ndarray,
+    test_yhat: np.ndarray,
+    null: float,
+    magnitude: str | float = "medium",
+) -> float:
+    """UTOPIA ``compute_tolerance``. Non-positive. 0 when the null is rare.
+
+    A negative tolerance shifts calibration conformity scores down, so a
+    test slide whose scores sit higher than the calibration pool is not
+    called significant just for that shift.
+    """
+    if isinstance(magnitude, (int, float)) and not isinstance(magnitude, bool):
+        return float(magnitude)
+    calib_yhat = np.asarray(calib_yhat, dtype=np.float64)
+    calib_y = np.asarray(calib_y, dtype=np.float64)
+    test_yhat = np.asarray(test_yhat, dtype=np.float64)
+    if calib_yhat.size == 0 or test_yhat.size == 0:
+        return 0.0
+    absent_fraction = float(np.mean(calib_y <= null))
+    if absent_fraction <= 0.1:
+        return 0.0
+    try:
+        quantiles = _BATCH_QUANTILES[str(magnitude)]
+    except KeyError as exc:
+        raise ValueError("magnitude must be a number or weak/medium/strong") from exc
+    calib_cut = float(np.quantile(calib_yhat, absent_fraction))
+    test_cut = float(np.quantile(test_yhat, absent_fraction))
+    calib_low = calib_yhat[calib_yhat <= calib_cut]
+    test_low = test_yhat[test_yhat <= test_cut]
+    if calib_low.size == 0 or test_low.size == 0:
+        return 0.0
+    shift = np.quantile(test_low, quantiles) - np.quantile(calib_low, quantiles)
+    return float(-np.max(np.clip(shift, 0.0, None)))
+
+
+def utopia_conformal_bh(
+    calib_y: np.ndarray,
+    calib_yhat: np.ndarray,
+    test_yhat: np.ndarray,
+    *,
+    null: float = 0.0,
+    tolerance: float = 0.0,
+) -> np.ndarray:
+    """UTOPIA ``conformal_pvals``: clip score, left rank, BH on these rows.
+
+    The denominator counts every calibration row, including true positives
+    (their conformity is ``+inf`` and never ranks below a finite test score).
+    """
+    calib_y = np.asarray(calib_y, dtype=np.float64)
+    calib_yhat = np.asarray(calib_yhat, dtype=np.float64)
+    test_yhat = np.asarray(test_yhat, dtype=np.float64)
+    calib_scores = np.full(calib_y.shape[0], np.inf, dtype=np.float64)
+    absent = calib_y <= null
+    calib_scores[absent] = -calib_yhat[absent]
+    order = np.sort(calib_scores + float(tolerance))
+    n = order.size
+    if n == 0:
+        return np.ones(test_yhat.shape[0], dtype=np.float64)
+    rank = np.searchsorted(order, -test_yhat, side="left")
+    return bh_adjust((rank + 1).astype(np.float64) / (n + 1))
+
+
+def cluster_adjusted_pvalues(
+    calib_y: np.ndarray,
+    calib_yhat: np.ndarray,
+    test_yhat: np.ndarray,
+    test_clusters: np.ndarray,
+    *,
+    calib_clusters: np.ndarray | None = None,
+    null: float = 0.0,
+    correct_batch_effect: bool = True,
+    magnitude: str | float = "medium",
+    min_calib_pts: int | None = None,
+) -> np.ndarray:
+    """UTOPIA ``get_adj_pvals``. BH is inside one histology cluster at a time.
+
+    Nuclei whose cluster has fewer than ``max(200, 1% of the test cluster)``
+    calibration rows stay at p = 1. ``calib_clusters is None`` reuses the
+    same calibration pool in every cluster: the NPC OOF cells are not nuclei
+    of this slide, so they are not split by this slide's StarDist clusters.
+    The batch tolerance still sees that cluster's own test scores.
+    """
+    calib_y = np.asarray(calib_y, dtype=np.float64)
+    calib_yhat = np.asarray(calib_yhat, dtype=np.float64)
+    test_yhat = np.asarray(test_yhat, dtype=np.float64)
+    test_clusters = np.asarray(test_clusters)
+    if test_clusters.shape[0] != test_yhat.shape[0]:
+        raise ValueError(
+            f"test clusters {test_clusters.shape[0]} vs test scores {test_yhat.shape[0]}"
+        )
+    if calib_clusters is not None:
+        calib_clusters = np.asarray(calib_clusters)
+        if calib_clusters.shape[0] != calib_y.shape[0]:
+            raise ValueError("calibration clusters do not match calibration rows")
+    adjusted = np.ones(test_yhat.shape[0], dtype=np.float64)
+    for cluster in np.unique(test_clusters):
+        test_mask = test_clusters == cluster
+        n_test = int(test_mask.sum())
+        if n_test == 0:
+            continue
+        if calib_clusters is None:
+            cy, chat = calib_y, calib_yhat
+        else:
+            keep = calib_clusters == cluster
+            cy, chat = calib_y[keep], calib_yhat[keep]
+        need = max(200, int(np.ceil(0.01 * n_test))) if min_calib_pts is None else int(min_calib_pts)
+        if chat.size < need:
+            continue
+        tolerance = (
+            histology_tolerance(chat, cy, test_yhat[test_mask], null, magnitude)
+            if correct_batch_effect
+            else 0.0
+        )
+        adjusted[test_mask] = utopia_conformal_bh(
+            cy, chat, test_yhat[test_mask], null=null, tolerance=tolerance
+        )
+    return adjusted
+
+
 def conformal_pvalues(
     calib_y: np.ndarray,
     calib_yhat: np.ndarray,
@@ -325,12 +545,12 @@ def _subsample_null_scores(
     *,
     max_calib: int,
     seed: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Keep all true positives; downsample the null pool used for conformal p-values."""
     y = np.asarray(present, dtype=np.float64)
     scores = np.asarray(scores, dtype=np.float64)
     if max_calib <= 0 or y.size <= max_calib:
-        return y, scores
+        return y, scores, np.arange(y.shape[0])
     rng = np.random.default_rng(seed)
     pos = np.flatnonzero(y > 0)
     neg = np.flatnonzero(y == 0)
@@ -338,7 +558,7 @@ def _subsample_null_scores(
     if n_neg < len(neg):
         neg = rng.choice(neg, size=n_neg, replace=False)
     keep = np.concatenate([pos, neg]) if pos.size else neg
-    return y[keep], scores[keep]
+    return y[keep], scores[keep], keep
 
 
 def conformal_from_oof(
@@ -356,6 +576,10 @@ def conformal_from_oof(
     fpr: float = 0.1,
     oof_labels: np.ndarray | None = None,
     oof_probs: np.ndarray | None = None,
+    test_clusters: np.ndarray | None = None,
+    calib_clusters: np.ndarray | None = None,
+    batch_magnitude: str | float = "medium",
+    correct_batch_effect: bool = True,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Calibrate each requested class (or group) on pan-cancer OOF cells.
 
@@ -363,13 +587,15 @@ def conformal_from_oof(
     ``groups={"B_Plasma": ("B_cell", "Plasma")}`` to test coarser targets —
     UTOPIA's result that TLS-level types are more confident than CD4/B alone.
 
-    Presence is **not** whole-slide BH. On ~1e5 nuclei, BH requires
-    ``p < α/n`` (``~7e-7`` at ``α=0.10``), which no softmax can beat once
-    OOF false positives reach ``P(c)≈1``. UTOPIA BH is per histology
-    cluster. Here ``present`` is a calibrated FPR gate: ``score`` at least
-    the ``(1-fpr)`` quantile of OOF cells whose true label is not ``c``.
-    ``confidence`` is the UTOPIA log-stretch of the *raw* conformal p.
-    ``p_adj`` is global BH, kept only as a diagnostic.
+    ``present`` is a calibrated FPR gate: ``score`` at least the
+    ``(1-fpr)`` quantile of OOF cells whose true label is not ``c``.
+    Without ``test_clusters``, ``confidence`` is the log-stretch of the
+    raw conformal p, and ``p_adj`` is whole-slide BH (a diagnostic only).
+    With ``test_clusters``, ``p_adj`` and ``confidence`` follow UTOPIA:
+    clip-score p-values, the medium batch tolerance, and BH inside each
+    histology cluster. ``calib_clusters`` restricts that null to calibration
+    nuclei in the same H&E cluster. Without it, every cluster reuses the
+    full calibration pool.
     """
     if oof_labels is None or oof_probs is None:
         labels, oof_probs = load_oof_head(oof_npz, head=head)
@@ -384,6 +610,18 @@ def conformal_from_oof(
     test_names = [str(x) for x in class_names]
     if test_probs.shape[1] != len(test_names):
         raise ValueError("test_probs width does not match class_names")
+    if test_clusters is not None:
+        test_clusters = np.asarray(test_clusters)
+        if test_clusters.shape[0] != test_probs.shape[0]:
+            raise ValueError(
+                f"test clusters {test_clusters.shape[0]} vs nuclei {test_probs.shape[0]}"
+            )
+    if calib_clusters is not None:
+        calib_clusters = np.asarray(calib_clusters)
+        if calib_clusters.shape[0] != labels.shape[0]:
+            raise ValueError(
+                f"calibration clusters {calib_clusters.shape[0]} vs calibration rows {labels.shape[0]}"
+            )
 
     targets: dict[str, Sequence[str]] = {}
     if groups:
@@ -403,11 +641,26 @@ def conformal_from_oof(
         oof_score = oof_probs[:, oof_cols].sum(axis=1)
         test_score = np.asarray(test_probs[:, test_cols], dtype=np.float64).sum(axis=1)
         present = np.isin(labels, np.asarray(oof_cols, dtype=np.int64))
-        y, yhat = _subsample_null_scores(
+        y, yhat, keep = _subsample_null_scores(
             present, oof_score, max_calib=max_calib, seed=seed
         )
         p = conformal_pvalues(y, yhat, test_score, null=null)
-        p_adj = bh_adjust(p)
+        if test_clusters is None:
+            p_adj = bh_adjust(p)
+            confidence = confidence_from_p(p)
+        else:
+            used = None if calib_clusters is None else calib_clusters[keep]
+            p_adj = cluster_adjusted_pvalues(
+                y,
+                yhat,
+                test_score,
+                test_clusters,
+                calib_clusters=used,
+                null=null,
+                magnitude=batch_magnitude,
+                correct_batch_effect=correct_batch_effect,
+            )
+            confidence = confidence_from_p(p_adj)
         absent = y <= null
         null_scores = yhat[absent]
         if null_scores.size == 0:
@@ -420,7 +673,7 @@ def conformal_from_oof(
         out[target] = {
             "p": p.astype(np.float32),
             "p_adj": p_adj.astype(np.float32),
-            "confidence": confidence_from_p(p),
+            "confidence": confidence,
             "discover_fdr": p_adj.astype(np.float32),
             "score": test_score.astype(np.float32),
             "threshold": np.float32(threshold),
@@ -430,6 +683,89 @@ def conformal_from_oof(
     if not out:
         raise ValueError("none of the requested classes/groups match the OOF names")
     return out
+
+
+def correct_predictions_by_he(
+    test_probs: np.ndarray,
+    class_names: Sequence[str],
+    test_embeddings: np.ndarray,
+    calib_probs: np.ndarray,
+    calib_labels: np.ndarray,
+    calib_embeddings: np.ndarray,
+    *,
+    n_clusters: int = UTOPIA_N_CLUSTERS,
+    pca_dim: int = UTOPIA_PCA_DIM,
+    fdr: float = 0.10,
+    seed: int = 42,
+    max_calib: int = 200_000,
+    batch_magnitude: str | float = "medium",
+    correct_batch_effect: bool = True,
+    unlabeled: str = UNLABELED,
+) -> dict[str, np.ndarray]:
+    """Drop predicted mass that H&E-matched conformal inference does not support.
+
+    Jin et al., bioRxiv 2026.03.01.708850 (UTOPIA). Test and calibration
+    nuclei are clustered on their H&E embeddings. Inside each cluster, BH
+    p-values use only the calibration nuclei of that morphology. A class
+    probability is kept where ``p_adj <= fdr`` and set to 0 otherwise.
+    Rows with no remaining mass are labeled ``low_confidence``.
+    """
+    names = [str(x) for x in class_names]
+    test_probs = np.asarray(test_probs, dtype=np.float32)
+    calib_probs = np.asarray(calib_probs, dtype=np.float32)
+    if test_probs.ndim != 2 or test_probs.shape[1] != len(names):
+        raise ValueError("test_probs width does not match class_names")
+    if calib_probs.shape[1] != len(names):
+        raise ValueError("calibration probabilities do not match class_names")
+    if not 0.0 < float(fdr) <= 1.0:
+        raise ValueError("fdr must be in (0, 1]")
+    test_clusters, calib_clusters = match_histology_clusters(
+        test_embeddings,
+        calib_embeddings,
+        n_clusters=n_clusters,
+        pca_dim=pca_dim,
+        random_state=seed,
+    )
+    packs = conformal_from_oof(
+        test_probs,
+        names,
+        Path("."),
+        classes=names,
+        oof_labels=np.asarray(calib_labels),
+        oof_probs=calib_probs,
+        oof_class_names=names,
+        test_clusters=test_clusters,
+        calib_clusters=calib_clusters,
+        max_calib=max_calib,
+        seed=seed,
+        fpr=fdr,
+        batch_magnitude=batch_magnitude,
+        correct_batch_effect=correct_batch_effect,
+    )
+    order = [name for name in names if name in packs]
+    confidence = np.column_stack(
+        [np.asarray(packs[name]["confidence"], dtype=np.float32) for name in order]
+    )
+    p_adj = np.column_stack(
+        [np.asarray(packs[name]["p_adj"], dtype=np.float32) for name in order]
+    )
+    corrected = test_probs.copy()
+    index = {name: i for i, name in enumerate(names)}
+    for column, name in enumerate(order):
+        keep = p_adj[:, column] <= float(fdr)
+        corrected[~keep, index[name]] = 0.0
+    peak = corrected.max(axis=1)
+    top = corrected.argmax(axis=1)
+    labels_out = np.array([names[i] for i in top], dtype=object)
+    labels_out[peak <= 0] = unlabeled
+    return {
+        "test_clusters": test_clusters,
+        "calib_clusters": calib_clusters,
+        "confidence": confidence.astype(np.float32),
+        "p_adj": p_adj.astype(np.float32),
+        "corrected_probs": corrected.astype(np.float32),
+        "corrected_label": labels_out,
+    }
 
 
 def hierarchy_groups(
@@ -630,6 +966,113 @@ def ensure_conformal_npz(
             payload[f"threshold_{name}"] = np.asarray(pack["threshold"])
         sidecar.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(sidecar, **payload)
+    return sidecar
+
+
+def load_stardist_embeddings(
+    features_h5ad: str | Path,
+    obs_names: Sequence[str],
+) -> np.ndarray:
+    """UNI2 matrix ``X`` from ``*_stardist_features.h5ad``, in ``obs_names`` order."""
+    import h5py
+
+    features_h5ad = Path(features_h5ad)
+    with h5py.File(features_h5ad, "r") as handle:
+        raw = handle["obs"]["cell_id"][:]
+        ids = np.array(
+            [x.decode() if isinstance(x, (bytes, np.bytes_)) else str(x) for x in raw]
+        )
+        matrix = np.asarray(handle["X"][:], dtype=np.float32)
+    wanted = np.asarray(list(obs_names), dtype=str)
+    if matrix.shape[0] != ids.shape[0]:
+        raise ValueError(f"{features_h5ad}: X {matrix.shape} vs {ids.shape[0]} cell ids")
+    if np.array_equal(ids, wanted):
+        return matrix
+    order = pd.Index(ids).get_indexer(wanted)
+    if np.any(order < 0):
+        raise KeyError(f"{features_h5ad} does not cover every probability nucleus")
+    return matrix[order]
+
+
+def ensure_cluster_conformal_npz(
+    l2_probs: str | Path,
+    oof_npz: str | Path,
+    features_h5ad: str | Path,
+    sidecar: str | Path,
+    classes: Sequence[str],
+    *,
+    n_clusters: int = UTOPIA_N_CLUSTERS,
+    pca_dim: int = UTOPIA_PCA_DIM,
+    seed: int = 42,
+    fpr: float = 0.1,
+    batch_magnitude: str | float = "medium",
+) -> Path:
+    """Cluster UNI2 StarDist embeddings, then BH inside each cluster.
+
+    The sidecar is separate from the raw-p ``*_confidence_all_l2.npz``.
+    ``confidence_{class}`` is the log-stretch of the cluster-wise BH p-value.
+    """
+    sidecar = Path(sidecar)
+    wanted = [str(c) for c in classes]
+    names, probs = load_l2_probs(l2_probs)
+    with np.load(l2_probs, allow_pickle=True) as stored:
+        obs = (
+            np.asarray(stored["obs_names"]).astype(str)
+            if "obs_names" in stored.files
+            else np.array([str(i) for i in range(len(probs))])
+        )
+    stamp = f"utopia_cluster_bh_k{n_clusters}_pca{pca_dim}_seed{seed}_{batch_magnitude}"
+    if sidecar.is_file():
+        with np.load(sidecar, allow_pickle=True) as stored:
+            ready = "confidence_source" in stored.files and "he_cluster" in stored.files
+            if ready:
+                source = stored["confidence_source"]
+                source_text = (
+                    source.item() if getattr(source, "shape", None) == () else str(source)
+                )
+                ready = (
+                    source_text == stamp
+                    and len(stored["he_cluster"]) == len(probs)
+                    and all(f"confidence_{c}" in stored.files for c in wanted)
+                )
+        if ready:
+            return sidecar
+    embeddings = load_stardist_embeddings(features_h5ad, obs)
+    if len(embeddings) != len(probs):
+        raise ValueError(f"embeddings {len(embeddings)} vs probabilities {len(probs)}")
+    labels = cluster_histology_embeddings(
+        embeddings, n_clusters=n_clusters, pca_dim=pca_dim, random_state=seed
+    )
+    counts = np.bincount(labels, minlength=n_clusters)
+    print(
+        "histology clusters "
+        + ", ".join(f"{i}:{int(n)}" for i, n in enumerate(counts))
+    )
+    packs = conformal_from_oof(
+        probs,
+        names,
+        oof_npz,
+        classes=wanted,
+        fpr=fpr,
+        seed=seed,
+        test_clusters=labels,
+        batch_magnitude=batch_magnitude,
+    )
+    payload: dict[str, object] = {
+        "he_cluster": labels.astype(np.int16),
+        "n_clusters": np.int32(n_clusters),
+        "pca_dim": np.int32(pca_dim),
+        "confidence_source": np.array(stamp),
+    }
+    for name, pack in packs.items():
+        payload[f"present_{name}"] = pack["present"]
+        payload[f"confidence_{name}"] = pack["confidence"]
+        payload[f"p_{name}"] = pack["p"]
+        payload[f"p_adj_{name}"] = pack["p_adj"]
+        payload[f"score_{name}"] = pack["score"]
+        payload[f"threshold_{name}"] = np.asarray(pack["threshold"])
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(sidecar, **payload)
     return sidecar
 
 
@@ -879,8 +1322,7 @@ def plot_bcell_presence_figure(
     _conf_colorbar(fig, left=0.915)
     if save:
         out = cohort.pred_root / "figures" / f"{sample}_spatial_B_confidence.png"
-        _save_png_pdf(fig, out, dpi=save_dpi)
-        print(out.with_suffix(".pdf"), flush=True)
+        save_figure(fig, out, dpi=save_dpi)
     return fig
 
 
@@ -936,8 +1378,7 @@ def plot_class_argmax_vs_gated(
     _conf_colorbar(fig, left=0.90)
     if save:
         out = cohort.pred_root / "figures" / f"{sample}_spatial_{class_name}_confidence.png"
-        _save_png_pdf(fig, out, dpi=save_dpi)
-        print(out.with_suffix(".pdf"), flush=True)
+        save_figure(fig, out, dpi=save_dpi)
     return fig
 
 
@@ -1010,8 +1451,7 @@ def plot_trusted_spatial(
     fig.subplots_adjust(bottom=0.22, top=0.93, hspace=0.28)
     if save:
         out = cohort.pred_root / "figures" / f"{sample}_spatial_L1_L12_L2_trusted.png"
-        _save_png_pdf(fig, out, dpi=save_dpi)
-        print(out.with_suffix(".pdf"), flush=True)
+        save_figure(fig, out, dpi=save_dpi)
     return fig
 
 

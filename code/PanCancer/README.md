@@ -96,7 +96,7 @@ Full pooling is memory-heavy (~5.5M cells × 1024-d float32 ≈ 22 GB embeddings
 
 ## 2026-10-26 UNI2 run order
 
-The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A6. A4 (k=8 attention) is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
+The filename prefix is the order. Env: `conda activate SeededNTM`. One UNI2 job at a time. A0 must finish its UNI2 cache (`data/PanCancer/uni2_aligned/`) before A1–A7. A4 (k=8 attention) is not part of this choice. `demo.sh` still dispatches the older published UNI section/celltype pipeline.
 
 ### 1. Train and internal cross-validation — [`1_demo_train.sh`](1_demo_train.sh)
 
@@ -108,13 +108,14 @@ CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
 CUDA_DEVICE=1 bash code/PanCancer/1_demo_train.sh uni2 A6
+CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
 ```
 
 Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. The log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). It is not an external test set.
 
 ### 2. Choose the architecture — [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)
 
-Compare A0–A3, then A5/A6, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. This notebook does not call predict, and those cohorts are not a held-out test set.
+Compare A0–A3, then A5/A6/A7, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. This notebook does not call predict, and those cohorts are not a held-out test set.
 
 Numbers below are the **2026-10-27 `paired_v2_seed42` retrain** (named-layer init, split-seed 42, L2→L1 NLL weight 2). A 2026-10-26 morning A3 of 0.8907 used L2→L1 NLL weight 1 and those checkpoints were removed.
 
@@ -153,6 +154,37 @@ Weights:
 - A6 fold 1: `data/PanCancer/result_uni2_A6_l12_links_2_paired_v2_seed42/cross_dataset_cv/A6_l12_links_2/best_mlp_gpu.pt`
 
 Logs: `code/log/pancancer_section_uni2_A5_l12_links_1_paired_v2_seed42.log` (wall 3:32), `...A6_l12_links_2...` (wall 3:24). NPC maps: [`Pred_visual_npc_uni2_A5.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A5.ipynb), [`Pred_visual_npc_uni2_A6.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A6.ipynb).
+
+### 2026-11-12 — A7 sampler + focal (finished; no improvement)
+
+Same UNI2 cache and A2 trunk (k=8 mean, **no gate**, L12 weights unchanged). Training-side balance only:
+
+| | sampler | `class_weight_mode` | L2 focal γ |
+|--|---------|---------------------|------------|
+| A2 (reference) | off | `balanced` | 0 |
+| A7 `bal_focal` | hierarchical L1→L12→L2 | `none` | **1** |
+
+A7 finished 2026-11-12 00:19 (wall 2:46). Pooled OOF L2 is **0.8581**, level with **A0** (0.8580), **0.031** below A2. Fold-mean L12 AUROC 0.7846 is also below A0. Mean best epoch 5.8 vs A2 10.4.
+
+| | spatial | pooled OOF L2 | fold-mean L2 AUROC | fold-mean L12 AUROC | L2 macro-F1 | L1 macro-F1 | `best_mlp` fold |
+|--|---------|---------------|--------------------|---------------------|-------------|-------------|-----------------|
+| A3 k=8 mean+gate | gate | **0.8897** | **0.8805** | **0.8282** | **0.3013 ± 0.029** | 0.4225 ± 0.044 | 0 |
+| A2 k=8 mean | mean | 0.8894 | 0.8798 | 0.8272 | 0.2941 ± 0.030 | 0.4181 ± 0.042 | 1 |
+| A7 sampler + focal | mean | 0.8581 | 0.8579 | 0.7846 | 0.2410 ± 0.020 | 0.3697 ± 0.014 | 0 |
+| A0 legacy, no spatial | none | 0.8580 | 0.8453 | 0.7874 | 0.2287 ± 0.017 | 0.3390 ± 0.020 | 0 |
+
+The intended B / Plasma lift is recall-only and does not survive AUROC or F1 (same 5.6M OOF argmax):
+
+| L2 / L12 | A2 AUROC | A7 AUROC | A2 recall | A7 recall | A2 F1 | A7 F1 | A2 n_pred | A7 n_pred |
+|----------|----------|----------|-----------|-----------|-------|-------|-----------|-----------|
+| `B_cell` | 0.802 | 0.787 | 0.282 | **0.316** | 0.309 | 0.284 | 112,102 | 166,685 |
+| `Plasma` | 0.871 | 0.813 | 0.198 | **0.234** | 0.171 | 0.141 | 79,949 | 141,419 |
+| `Tregs` | 0.907 | 0.892 | 0.485 | 0.183 | 0.398 | 0.252 | 462,903 | 145,523 |
+| L12 `B_Plasma` | 0.796 | 0.758 | 0.182 | **0.325** | 0.264 | 0.256 | 74,837 | 304,373 |
+
+Mean softmax `P(B)` does rise (A2 0.030 → A7 0.042). Extra mass is not concentrated on B: Endothelial argmax goes 254,110 → **1,957,081** (recall 0.184 → 0.635), Macrophage 192,611 → **4,910** (recall 0.096 → 0.002), Tumor recall 0.655 → 0.466. Keep **A3** for deployment. Do not run `3_demo_pred.sh uni2 A7`.
+
+Weight: fold 0 `data/PanCancer/result_uni2_A7_bal_focal_paired_v2_seed42/cross_dataset_cv/A7_bal_focal/best_mlp_gpu.pt`. Log: `code/log/pancancer_section_uni2_A7_bal_focal_paired_v2_seed42.log`.
 
 ### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
 

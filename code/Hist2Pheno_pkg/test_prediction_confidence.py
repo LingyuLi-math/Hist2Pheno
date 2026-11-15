@@ -11,11 +11,15 @@ from prediction_confidence import (
     annotate_nuclei,
     attach_to_obs,
     bh_adjust,
+    cluster_adjusted_pvalues,
     confidence_from_p,
     conformal_from_oof,
     conformal_pvalues,
+    correct_predictions_by_he,
+    ensure_cluster_conformal_npz,
     gated_from_npz,
     highlight_labels,
+    histology_tolerance,
     load_l2_probs,
     softmax_entropy,
     softmax_margin,
@@ -159,6 +163,142 @@ class ConformalTests(unittest.TestCase):
         self.assertEqual(list(labels), ["B_cell", "Tumor", "low_confidence", "low_confidence"])
         self.assertAlmostEqual(float(peak[0]), 0.9, places=5)
         self.assertEqual(float(peak[2]), 0.0)
+
+
+class HistologyClusterTests(unittest.TestCase):
+    def test_tolerance_is_negative_when_the_test_slide_scores_higher(self):
+        rng = np.random.default_rng(0)
+        calib_y = np.zeros(800)
+        calib_yhat = rng.uniform(0.0, 0.2, size=800)
+        test_yhat = rng.uniform(0.25, 0.45, size=400)
+        tol = histology_tolerance(calib_yhat, calib_y, test_yhat, 0.0, "medium")
+        self.assertLess(tol, 0.0)
+        flat = histology_tolerance(calib_yhat, calib_y, calib_yhat, 0.0, "medium")
+        self.assertEqual(flat, 0.0)
+
+    def test_cluster_bh_separates_a_high_score_group(self):
+        rng = np.random.default_rng(0)
+        calib_y = np.zeros(500)
+        calib_yhat = rng.uniform(0.0, 0.05, size=500)
+        test_yhat = np.concatenate([np.full(30, 0.9), np.full(30, 0.02)])
+        clusters = np.array([0] * 30 + [1] * 30)
+        adj = cluster_adjusted_pvalues(
+            calib_y, calib_yhat, test_yhat, clusters, correct_batch_effect=False
+        )
+        self.assertLess(float(adj[:30].max()), 0.05)
+        self.assertGreater(float(adj[30:].min()), 0.2)
+
+    def test_small_calibration_cluster_stays_at_one(self):
+        calib_y = np.zeros(10)
+        calib_yhat = np.full(10, 0.01)
+        test_yhat = np.full(40, 0.9)
+        clusters = np.zeros(40, dtype=np.int32)
+        adj = cluster_adjusted_pvalues(
+            calib_y, calib_yhat, test_yhat, clusters, correct_batch_effect=False
+        )
+        self.assertTrue(np.all(adj == 1.0))
+
+    def test_embedding_clusters_roundtrip(self):
+        import h5py
+
+        rng = np.random.default_rng(1)
+        n, d = 60, 12
+        names = ["B_cell", "Tumor"]
+        labels = np.array([0] * 80 + [1] * 420)
+        oof = np.zeros((500, 2), dtype=np.float32)
+        oof[labels == 0, 0] = rng.uniform(0.6, 0.95, size=80)
+        oof[labels == 0, 1] = 1.0 - oof[labels == 0, 0]
+        oof[labels == 1, 1] = rng.uniform(0.6, 0.95, size=420)
+        oof[labels == 1, 0] = 1.0 - oof[labels == 1, 1]
+        probs = np.zeros((n, 2), dtype=np.float32)
+        probs[:, 0] = 0.02
+        probs[:, 1] = 0.98
+        probs[:8, 0] = 0.95
+        probs[:8, 1] = 0.05
+        obs = np.array([f"n{i:03d}" for i in range(n)], dtype=object)
+        emb = np.vstack(
+            [
+                rng.normal(loc=0.0, scale=0.1, size=(30, d)),
+                rng.normal(loc=4.0, scale=0.1, size=(30, d)),
+            ]
+        ).astype(np.float32)
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            feat = root / "features.h5ad"
+            with h5py.File(feat, "w") as handle:
+                handle.create_dataset("X", data=emb)
+                handle.create_dataset("obs/cell_id", data=obs.astype("S"))
+            oof_path = root / "oof_predictions.npz"
+            np.savez(oof_path, l2_labels=labels, l2_probs=oof)
+            probs_path = root / "sample_l2_probs.npz"
+            np.savez(
+                probs_path,
+                probs=probs,
+                class_names=np.array(names, dtype=object),
+                obs_names=obs,
+            )
+            sidecar = root / "confidence_he_cluster.npz"
+            ensure_cluster_conformal_npz(
+                probs_path,
+                oof_path,
+                feat,
+                sidecar,
+                names,
+                n_clusters=2,
+                pca_dim=4,
+                seed=0,
+            )
+            with np.load(sidecar) as stored:
+                clusters = np.asarray(stored["he_cluster"])
+                conf = np.asarray(stored["confidence_B_cell"])
+            self.assertEqual(len(np.unique(clusters)), 2)
+            self.assertGreater(float(conf[:8].mean()), float(conf[30:].mean()))
+            again = ensure_cluster_conformal_npz(
+                probs_path, oof_path, feat, sidecar, names, n_clusters=2, pca_dim=4, seed=0
+            )
+            self.assertEqual(again, sidecar)
+
+    def test_he_match_drops_a_score_that_is_normal_for_that_morphology(self):
+        rng = np.random.default_rng(0)
+        names = ["B_cell", "Tumor"]
+        n_null, n_pos, n_test = 220, 30, 24
+
+        def blob(center, n):
+            return rng.normal(loc=center, scale=0.05, size=(n, 8)).astype(np.float32)
+
+        calib_emb = np.vstack([blob(0.0, n_null + n_pos), blob(4.0, n_null + n_pos)])
+        test_emb = np.vstack([blob(0.0, n_test), blob(4.0, n_test)])
+        calib_y = np.array(
+            [0] * n_null + [0] * n_pos + [1] * n_null + [1] * n_pos, dtype=np.int64
+        )
+        # Positives are the first class in blob 0 and the second class in blob 1.
+        calib_y[: n_null + n_pos] = np.array([1] * n_null + [0] * n_pos)
+        calib_p = np.zeros((len(calib_y), 2), dtype=np.float32)
+        calib_p[:n_null, 0] = 0.02
+        calib_p[n_null : n_null + n_pos, 0] = 0.85
+        calib_p[n_null + n_pos : n_null + n_pos + n_null, 0] = rng.uniform(
+            0.75, 0.98, size=n_null
+        )
+        calib_p[:, 1] = 1.0 - calib_p[:, 0]
+        test_p = np.zeros((2 * n_test, 2), dtype=np.float32)
+        test_p[:, 0] = 0.90
+        out = correct_predictions_by_he(
+            test_p,
+            names,
+            test_emb,
+            calib_p,
+            calib_y,
+            calib_emb,
+            n_clusters=2,
+            pca_dim=4,
+            seed=0,
+            max_calib=0,
+            correct_batch_effect=False,
+        )
+        kept = out["corrected_probs"][:, 0] > 0
+        self.assertGreater(int(kept[:n_test].sum()), n_test // 2)
+        self.assertEqual(int(kept[n_test:].sum()), 0)
+        self.assertTrue(np.all(out["corrected_label"][n_test:] == "low_confidence"))
 
 
 if __name__ == "__main__":

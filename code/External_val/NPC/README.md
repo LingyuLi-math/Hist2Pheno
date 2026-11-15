@@ -77,6 +77,20 @@ UNI2 maps reuse `project_all_UNI2` and a separate checkpoint:
 
 Predict writes `{sample}_stardist_pred.h5ad` and `{sample}_l2_probs.npz`. `obs['conf_L2']` is the max softmax of the argmax class. The notebooks plot `pred_CT`. Confidence maps (below) are extra; they do not replace `pred_CT`.
 
+## 2026-11-15 Per-type abundance vs cell2location
+
+Yes. A per-type abundance map is the right way to put Hist2Pheno next to cell2location on these two slides. The nuclei / pseudo-spot / cell2location cell in `Pred_visual_npc_uni2_A2.ipynb` draws one winner per spot: Hist2Pheno `pred_CT`, the majority L2 inside the Visium disc, and `argmax` of the cell2location counts. A type appears only where it is the largest. On patient1 the seven cell2location counts in `Annotation/sp.obs.csv` sum to about 7–55 per spot (median about 21). Tumor’s median is about 4.2 and B’s is about 2.2, so B is often present and still loses the argmax. That is the scale problem: one shared winner hides every type whose mass is smaller than the winner.
+
+Hist2Cell does the same kind of display. Zhao, Liang, Huang, Huang, and Yu plot predicted cell-type abundance from H&E, one map per type, rather than a single label map (Hist2Cell: Deciphering fine-grained cellular architectures from histology images. *Cell Genomics* 6, 101137, 2026. [doi:10.1016/j.xgen.2025.101137](https://doi.org/10.1016/j.xgen.2025.101137)).
+
+What Hist2Pheno can actually put on that map is the mean L2 softmax of the StarDist nuclei that fall inside the Visium spot (`nuclei_to_spots(..., values=probs)`), then summed with `L2_TO_C2L` into the seven shared types (`tumor`, `normal`, `fibroblast`, `T`, `Treg`, `B`, `Myeloid`). `B` is `B_cell` + `Plasma`. `T` is `CD4_T` + `CD8_T` + `NK`. Endothelial and Neural stay out, so a spot’s seven numbers need not sum to 1. The hard `fraction_*` columns written by the previous cell are argmax counts; they are not this abundance.
+
+The following cell of `Pred_visual_npc_uni2_A2.ipynb` draws that mean-softmax row against the cell2location counts. Each panel is colored from 0 to its own 99th percentile (gray = no nuclei, or no cell2location row). A large type and a small type are both readable. The number on each column is Spearman on the spots that have both values. `npc_figures.plot_abundance_maps` builds the figure; the table is `{sample}_abundance_spearman.csv`.
+
+Read the colors as spatial patterns. Hist2Pheno is a probability in [0, 1]. cell2location is an expected cell count. Rank correlation is unchanged by scaling one whole map, and it does change if each spot is divided by its own total, so the figure keeps the raw count. DCIS is mapped to `normal` in `L2_TO_C2L`, so a DCIS call raises `normal`. This is a spatial comparison of two spot profiles. These slides have no nucleus ground truth, so the figure is a pattern check and stops short of a ROC.
+
+On `20210809-C-AH4199551` every one of the 1,331 in-tissue spots has both a captured nucleus and a cell2location row. Spearman is tumor 0.25, normal 0.07, fibroblast −0.32, T 0.04, Treg −0.24, B −0.06, Myeloid −0.22. The maps can be compared type by type. On this slide they do not line up. Re-running the cell writes the same numbers to `{sample}_abundance_spearman.csv` for both patients.
+
 ## 2026-11-11 Per-nucleus confidence (`prediction_confidence.py`)
 
 Code lives in [`code/Hist2Pheno_pkg/prediction_confidence.py`](../../Hist2Pheno_pkg/prediction_confidence.py). Tests: [`test_prediction_confidence.py`](../../Hist2Pheno_pkg/test_prediction_confidence.py). Package overview: [`Hist2Pheno_pkg/README.md`](../../Hist2Pheno_pkg/README.md#2026-11-11-per-nucleus-cell-type-confidence). Method: Jin et al., bioRxiv 2026.03.01.708850 ([UTOPIA](https://github.com/kaitianjin/UTOPIA)).
@@ -133,6 +147,7 @@ PDF/PNG export, the cell2location grouping, and the expert-TLS outline are in [`
 |----------|----------|
 | `save_figure` | PDF (editable text) and PNG |
 | `map_l2`, `group_fraction`, `legend_handles`, `draw_spot_circles` | nuclei / pseudo-spot / cell2location |
+| `l2_group_means`, `load_aligned_l2_probs`, `plot_abundance_maps` | per-type Hist2Pheno softmax vs cell2location counts |
 | `load_tls_xy`, `keep_leftmost_foci`, `tls_smooth_contours`, `draw_tls`, `nuclei_in_contours` | expert TLS outline |
 | `tls_score_row` | abundance TLS vs spatial TLS |
 

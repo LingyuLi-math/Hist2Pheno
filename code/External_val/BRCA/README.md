@@ -2,7 +2,8 @@
 
 2026.10.07 — GSM OME TIFF.  
 2026.10.15 — two SpatialVDJ pathology HE JPEGs (same cohort as Zenodo
-`Breast_Cancer_Visium_samples.xlsx` pathology annotations).
+`Breast_Cancer_Visium_samples.xlsx` pathology annotations).  
+2026.11.15 — 10x Human Breast Cancer Block A Section 1 (Space Ranger fullres TIFF).
 
 Shared steps live in `code/Hist2Pheno_pkg/external_validation.py`. BRCA is **not**
 a `_SIMPLE_COHORTS` row anymore: mixed HE suffixes and per-sample µm/px are handled
@@ -13,6 +14,7 @@ in [`brca_external.py`](brca_external.py).
 | `GSM7782699_tissue_image` | `HE_images/….tif` (21571 × 19505) | — | OME PhysicalSize ~**0.548** | 281,051 |
 | `200715_BC_SA2_C_D_V19F24-113.B1-Spot000001` | `HE_images/….jpg` (48640 × 47104) | **`V10F24-113_B1`** | Visium × HE÷SR ~**0.172** | ~372k |
 | `200219_BC_SA3_V19T26-031_CE_V4-Spot000001` | `HE_images/….jpg` (52736 × 52736) | **`V19T26-031_D1`** | Visium × HE÷SR ~**0.172** | ~391k |
+| `V1_Breast_Cancer_Block_A_Section_1_image` | `10x_data` fullres TIFF (this file **is** SR fullres) | `V1_Breast_Cancer_Block_A_Section_1` | `65/spot_diameter` ~**0.366** | 423,162 |
 
 StarDist tables:
 `data/Visium/BRCA/StarDist_Segment/{sample}/{sample}_Float_prob0.01_nms_0.3.csv`
@@ -50,6 +52,23 @@ training grid; `patch_size=16` → **8 µm**.
 
 For spot mapping later, scale `tissue_positions` by the same HE÷SR factor (or
 downscale nuclei); StarDist centroids are on the large HE, not SR fullres.
+
+### 10x fullres TIFF (~0.366 µm/px)
+
+`V1_Breast_Cancer_Block_A_Section_1_image.tif` is the Space Ranger fullres image
+under `data/Visium/BRCA/10x_data`. HE÷SR = 1, so µm/px =
+`65 / spot_diameter_fullres` ≈ **0.366**. There is no OME `PhysicalSize`.
+Spatial files are `10x_data/spatial/`. UNI rescales by `0.366/0.5 ≈ 0.732`.
+
+Downloaded from the
+[10x Genomics Human Breast Cancer (Block A Section 1)](https://www.10xgenomics.com/datasets/human-breast-cancer-block-a-section-1-1-standard-1-1-0)
+dataset (Space Ranger 1.1.0). `10x_data/metadata.tsv` is the pathologist spot
+annotation used by Long et al., *Nat Commun* 2023
+([GraphST](https://www.nature.com/articles/s41467-023-36796-3)): `annot_type`
+(Healthy, Invasive, Surrounding tumor) and `fine_annot_type` (20 regions).
+Those labels are Visium spots, not StarDist nucleus GT.
+[`Pred_visual_brca_uni2_A2.ipynb`](Pred_visual_brca_uni2_A2.ipynb) plots this
+slide with the other three.
 
 ## Checkpoint
 

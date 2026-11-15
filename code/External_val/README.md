@@ -1,6 +1,6 @@
 # External validation (new HE + StarDist, no cell-type GT)
 
-Apply the pan-cancer **cross-section** checkpoint to a cancer that was not in training. Each cohort has HE and StarDist nuclei only: no 10x `tissue_positions` / `scalefactors` JSON and no ground-truth cell type. There is no ROC. The readout is L1 / L12 / L2 plus TLS / SRI / TNI.
+Apply the pan-cancer **cross-section** checkpoint to a cancer that was not in training. Each cohort has HE and StarDist nuclei and no nucleus-level cell-type GT, so there is no ROC. The readout is L1 / L12 / L2 plus TLS / SRI / TNI. The 10x breast slide is the exception that ships Space Ranger `spatial/` plus pathologist spot labels (`data/Visium/BRCA/10x_data/metadata.tsv`); those spots are not the StarDist GT.
 
 Shared implementation: [`code/Hist2Pheno_pkg/external_validation.py`](../Hist2Pheno_pkg/external_validation.py). NPC, CRC, HCC, and HCC_NATURE are rows in `_SIMPLE_COHORTS`; `demo.sh` calls `external_validation.py <COHORT> <step>`. Prostate, BRCA, and BRCA_ST keep their own scripts (`*_external.py`) because HE suffix and/or µm/px are not one flat folder + one global factor.
 
@@ -18,7 +18,7 @@ For OME TIFF / BigTIFF (NPC, CRC; BRCA GSM slide), `ome_um_per_px` opens the fil
 
 For JPEG (HCC) there is no OME block. Pass the scanner calibration as `MPP_UM`. Mixed Nature TIFFs (`HCC_nature`) resolve µm/px **per slide**: plausible OME `PhysicalSize` (0.05–5 µm/px), else Aperio `MPP`, else fallback 0.5. A 300 dpi OME tag (84.67 µm/px on `L-8015`) is skipped. `geometry` records `mpp_source` as `OME PhysicalSize`, `Aperio MPP`, `cohort mpp_um`, or `cohort mpp_um fallback`.
 
-BRCA also has two SpatialVDJ pathology JPEGs: µm/px comes from Visium `scalefactors_json.json` **divided by HE÷SR fullres** (~3.333), ≈0.172 µm/px — see [`BRCA/brca_external.py`](BRCA/brca_external.py). Do not use raw `65/spot_diameter` on those HE files.
+BRCA also has two SpatialVDJ pathology JPEGs: µm/px comes from Visium `scalefactors_json.json` **divided by HE÷SR fullres** (~3.333), ≈0.172 µm/px — see [`BRCA/brca_external.py`](BRCA/brca_external.py). Do not use raw `65/spot_diameter` on those HE files. The fourth BRCA slide, `V1_Breast_Cancer_Block_A_Section_1_image`, is the 10x Space Ranger fullres TIFF in `data/Visium/BRCA/10x_data` (HE÷SR = 1), so µm/px is raw `65/spot_diameter` ≈ 0.366. Spot labels in `10x_data/metadata.tsv` are the GraphST pathologist annotation, not nucleus GT.
 
 `Image_feature_extraction.py` resizes OME TIFF and JPEG/PNG in uint8. StarDist `centroid_x` / `centroid_y` are native full-resolution pixels. The `.pth` filename stores the scaled coordinate divided by `scale`, so the later h5ad match uses the original CSV coordinates (1 px tolerance). `obsm['spatial_HE']` stays on that native grid, so niche radius 55 µm is converted with the same µm/px.
 
@@ -92,7 +92,7 @@ BRCA_ST (36 HER2ST slides) is the same `FORCE=1 predict` pattern; pin its own `C
 | Cohort | Data | HE | Slides | Nuclei | µm/px | GPU default |
 |--------|------|----|--------|--------|-------|-------------|
 | NPC | `data/Visium/NPC` | OME TIFF | 2 | 142,184 + 120,888 | read by `ome_um_per_px` (~0.465) | `CUDA_DEVICE` default 0 |
-| BRCA | `data/Visium/BRCA` | OME TIFF + 2 pathology JPEG | 3 (GSM + `V10F24-113_B1` / `V19T26-031_D1`) | ~281k + ~372k + ~391k | GSM: OME ~0.548; JPEGs: Visium×HE÷SR ~0.172 (`brca_external.py`) | `CUDA_DEVICE` default 0 |
+| BRCA | `data/Visium/BRCA` | OME TIFF + 2 pathology JPEG + 10x fullres TIFF | 4 (GSM + `V10F24-113_B1` / `V19T26-031_D1` + `V1_Breast_Cancer_Block_A_Section_1`) | ~281k + ~372k + ~391k + 423,162 | GSM: OME ~0.548; JPEGs: Visium×HE÷SR ~0.172; 10x fullres: `65/spot_diameter` ~0.366 (`brca_external.py`) | `CUDA_DEVICE` default 0 |
 | HCC | `data/Visium/HCC` | JPEG | 7 (`P1_N` `P1_T` `P2_N` `P3_T` `P5_N` `P5_T` `P7_T`) | ~1.34M | `MPP_UM` (required; 96 dpi is not a pixel size) | `CUDA_DEVICE` default **2** |
 | HCC_nature | `data/Visium/HCC/nature_data` | TIFF + OME TIFF | 17 (`L-8001_HE` … `L-8017_1_HE.ome`) | ~3.68M | per slide (OME ~0.501 / Aperio / fallback 0.5) | `CUDA_DEVICE` default 0 |
 | CRC | `data/Visium/CRC` | OME BigTIFF | 1 (`Visium_V2_Human_Colon_Cancer_P2_tissue_image`) | 579,587 | read by `ome_um_per_px` (~0.274) | `CUDA_DEVICE` default 0 |
