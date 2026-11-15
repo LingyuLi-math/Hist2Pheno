@@ -674,12 +674,42 @@ def load_or_build_index(ctx: PooledCtx, index_csv: Path | None) -> pd.DataFrame:
         if ctx.datasets:
             idx = idx[idx["dataset"].isin(ctx.datasets)].copy()
         print(f"  index {path}  rows={len(idx)}", flush=True)
-        return idx
+        return _append_extra_sections(idx, ctx.datasets or None, path)
     print("  section_index.csv missing — discovering h5ads", flush=True)
     rows = discover_h5ads(ctx.datasets or None)
     df = pd.DataFrame(rows)
     df["ok"] = True
     return df
+
+
+def _append_extra_sections(idx: pd.DataFrame, datasets: list[str] | None, path: Path) -> pd.DataFrame:
+    """Add CRC/GBM sections that are on disk but missing from an older index.
+
+    Schurch cores are CRC. Hoefflin sections are GBM. Existing section_ids
+    and their fold assignments stay as they are.
+    """
+    discovered = pd.DataFrame(discover_h5ads(datasets))
+    if discovered.empty or "section_id" not in idx.columns:
+        return idx
+    have = set(idx["section_id"].astype(str))
+    fresh = discovered.loc[~discovered["section_id"].astype(str).isin(have)].copy()
+    if fresh.empty:
+        return idx
+    fresh["ok"] = True
+    counts = fresh.groupby(["dataset", "pan_organ"]).size()
+    detail = ", ".join(f"{ds}/{organ} +{int(n)}" for (ds, organ), n in counts.items())
+    print(f"  index append {len(fresh)} sections ({detail})", flush=True)
+    merged = pd.concat([idx, fresh], ignore_index=True)
+    if path.name == "section_index.csv" and path.is_file():
+        # ``idx`` may be a --datasets subset. Splice new rows into the full file.
+        full = pd.read_csv(path)
+        full_have = set(full["section_id"].astype(str)) if "section_id" in full.columns else set()
+        add = fresh.loc[~fresh["section_id"].astype(str).isin(full_have)]
+        if len(add):
+            updated = pd.concat([full, add], ignore_index=True)
+            updated.to_csv(path, index=False)
+            print(f"  wrote {path}  rows={len(updated)}", flush=True)
+    return merged
 
 
 def step_index(ctx: PooledCtx) -> None:

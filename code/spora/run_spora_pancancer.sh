@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # SPORA -> pan-cancer UNI2 A2.
 #
-# Adds schurch2020coordinated (Schurch) and hoefflin2026spatial (Hoefflin)
-# beside the seven public cohorts. The published 7-cohort checkpoint is not
-# overwritten: training writes data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/.
+# schurch2020coordinated is extra CRC sections. hoefflin2026spatial is extra
+# GBM sections. Both stay inside the seven cohort names. This script writes
+# data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/. A8 reads the same
+# enlarged CRC and GBM through section_index.csv.
 #
 # GT centroids come from the supplied 1 µm instance masks (prepare, CPU).
 # StarDist is a separate all-nuclei pass and is the step that uses 4 GPUs
@@ -17,7 +18,7 @@
 #   bash code/spora/run_spora_pancancer.sh uni2
 #   CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh train
 #
-# Smoke, two epochs, Schurch + Hoefflin only, 2k cells/section:
+# Smoke, two epochs, CRC + GBM (Xenium/WangLab plus the SPORA sections), 2k cells/section:
 #   CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh smoke
 #
 # GPUS="0 1 2 3" is the default shard. One tissue per card, round-robin.
@@ -31,7 +32,7 @@ CONDA_BASE="${CONDA_BASE:-/opt/anaconda3}"
 CONDA_ENV="${CONDA_ENV:-SeededNTM}"
 GPUS=(${GPUS:-0 1 2 3})
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
-BASE_DATASETS=(Lung BRCA CRC HCC PDAC GIST GBM Schurch Hoefflin)
+BASE_DATASETS=(Lung BRCA CRC HCC PDAC GIST GBM)
 
 cd "${REPO}"
 # shellcheck disable=SC1091
@@ -52,7 +53,7 @@ Usage:
   CUDA_DEVICE=${CUDA_DEVICE} bash code/spora/run_spora_pancancer.sh smoke
 
 prepare is CPU. segment and uni2 each fill every listed GPU.
-train is the README UNI2 A2 recipe on the seven cohorts plus Schurch and Hoefflin.
+train is the README UNI2 A2 recipe. CRC includes the Schurch TMA and GBM includes Hoefflin.
 EOF
 }
 
@@ -166,7 +167,7 @@ cmd_smoke() {
   run_train \
     "result_uni2_smoke_spora_paired_v2_seed${TRAIN_SEED:-42}" \
     "smoke_spora" \
-    --datasets Schurch Hoefflin \
+    --datasets CRC GBM \
     --max-cells-per-section 2000 \
     --cv-k 2 --max-epochs 2 --patience 2
 }

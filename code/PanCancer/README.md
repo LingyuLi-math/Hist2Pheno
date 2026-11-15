@@ -145,7 +145,7 @@ A3 remains the best finished architecture on pooled OOF L2 (**0.8897**). Its dep
 
 ### 2026-11-16 Training L2 label mix
 
-Ground-truth L2 counts on the 5,627,071 training cells (896 sections, seven cohorts). Counted from `l2_labels` in `data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/oof_predictions.npz`. Each cell is held out once, so this file is the full training label mix, not an A2 prediction. A0–A8 train on the same cells. Column order is the workbook L2 order (`ontology_class_names`); this archive has no `l2_class_names` key.
+Ground-truth L2 counts on the 5,627,071 training cells (896 sections, seven cohorts). Counted from `l2_labels` in `data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/oof_predictions.npz`. Each cell is held out once, so this file is the full training label mix, not an A2 prediction. Finished A0–A7 checkpoints used these cells. A8, and any later prepare, also trains on the SPORA sections that are now part of CRC and GBM (140 Schürch cores + 30 Hoefflin sections; 1,066 sections once `section_index.csv` has been appended). Column order is the workbook L2 order (`ontology_class_names`); this archive has no `l2_class_names` key.
 
 `B_cell` is 135,794 cells, **2.41%**, 12th of 20 classes by count. `Plasma` is 61,271, **1.09%**. Together they are the L12 family `B_Plasma`: 197,065 cells, **3.50%**. That is the empirical prior the unweighted L12 term pulls toward. They are scarce next to Fibroblast (15.14%) and Tumor (14.94%), and they are not the smallest classes: Neural (0.19%), NK (0.21%), and Injury_epithelial (0.25%) are smaller.
 
@@ -246,7 +246,7 @@ Same UNI2 cache and the **A3** trunk: k=8 mean, learned spatial gate, scalar los
 
 L2→L1 NLL stays 2. Both JS terms stay 0.1 and stay unweighted. L1 and L2 cross-entropy stay `balanced`, as in A3. The L12 weights are inverse-frequency on the eight L12 classes, so `B_Plasma` is no longer pulled back to its 3.5% prior by an unweighted L12 term. Mechanism and the `none` default that leaves A0–A7 families unchanged: [`code/Hist2Pheno_pkg/README.md`](../Hist2Pheno_pkg/README.md#2026-11-16-a8-class-weighted-l12-opt-in).
 
-This run does not overwrite A3. Outputs:
+This run writes its own result directory. CRC in this run is the 3 Xenium sections plus 140 Schürch TMA cores. GBM is the 2 WangLab sections plus 30 Hoefflin sections. The seven column names stay Lung, BRCA, CRC, HCC, PDAC, GIST, GBM. Prepare appends any of those sections missing from `data/PanCancer/section_index.csv` and leaves existing section ids in place. Outputs:
 
 - `data/PanCancer/result_uni2_A8_l12_balanced_paired_v2_seed42/`
 - checkpoint directory `cross_dataset_cv/A8_l12_balanced/`

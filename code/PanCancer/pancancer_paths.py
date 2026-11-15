@@ -79,28 +79,33 @@ COHORTS: dict[str, CohortSpec] = {
         cases_root=_REPO_ROOT / "data/CODEX/GBM/Cases",
         h5ad_glob="*/*_matched_features.h5ad",
     ),
-    # SPORA add-ons. Kept out of COHORT_ORDER so the published 7-cohort
-    # command does not pick them up. code/spora/run_spora_pancancer.sh passes
-    # them explicitly and writes a separate result directory.
-    "Schurch": CohortSpec(
-        name="Schurch",
+}
+
+# Same seven names. These sections are extra roots of CRC and GBM:
+# schurch2020coordinated (CRC TMA) and hoefflin2026spatial (IDH-mutant glioma).
+# ``dataset`` stays CRC / GBM so section CV and A0–A8 count them there.
+EXTRA_SECTIONS: tuple[CohortSpec, ...] = (
+    CohortSpec(
+        name="CRC",
         tech="CODEX",
         pan_organ="codex_crc_spora",
         cases_root=_REPO_ROOT / "data/CODEX/spora/prepared/schurch2020coordinated",
         h5ad_glob="*/*_matched_features.h5ad",
     ),
-    "Hoefflin": CohortSpec(
-        name="Hoefflin",
+    CohortSpec(
+        name="GBM",
         tech="CODEX",
         pan_organ="codex_glioma_spora",
         cases_root=_REPO_ROOT / "data/CODEX/spora/prepared/hoefflin2026spatial",
         h5ad_glob="*/*_matched_features.h5ad",
     ),
-}
+)
 
-# Display / CLI order: 3 Xenium then 4 CODEX. SPORA cohorts stay opt-in.
+# Old opt-in names. Discovery folds them into CRC and GBM.
+DATASET_ALIASES = {"Schurch": "CRC", "Hoefflin": "GBM"}
+
+# Display / CLI order: 3 Xenium then 4 CODEX.
 COHORT_ORDER = ["Lung", "BRCA", "CRC", "HCC", "PDAC", "GIST", "GBM"]
-SPORA_COHORT_ORDER = ["Schurch", "Hoefflin"]
 
 DEFAULT_DATA_ROOT = _REPO_ROOT / "data/PanCancer"
 
@@ -120,44 +125,79 @@ def section_id(dataset: str, h5ad_path: Path) -> str:
     return f"{dataset}::{h5ad_path.parent.name}"
 
 
+def _section_rows(spec: CohortSpec, paths: list[Path]) -> list[dict]:
+    rows: list[dict] = []
+    for p in paths:
+        rows.append(
+            {
+                "dataset": spec.name,
+                "tech": spec.tech,
+                "pan_organ": spec.pan_organ,
+                "sample": p.parent.name,
+                "section_id": section_id(spec.name, p),
+                "h5ad": str(p.resolve()),
+                "native_col": spec.native_col,
+            }
+        )
+    return rows
+
+
+def _matched_h5ads(spec: CohortSpec, *, labeled_crc_only: bool) -> list[Path]:
+    root = spec.cases_root
+    if not root.is_dir():
+        print(f"  skip {spec.name} ({spec.pan_organ}): missing {root}", flush=True)
+        return []
+    paths = sorted(root.glob(spec.h5ad_glob))
+    paths = [p for p in paths if p.name.endswith("_matched_features.h5ad")]
+    paths = [p for p in paths if not p.name.endswith("_matched_features_stardist.h5ad")]
+    if spec.name == "PDAC" and spec.pan_organ == "codex_pdac":
+        paths = [p for p in paths if _coverslip_ok(p, PDAC_COVERSLIPS)]
+    elif spec.name == "GIST" and spec.pan_organ == "codex_gist":
+        paths = [p for p in paths if _coverslip_ok(p, GIST_COVERSLIPS)]
+    elif labeled_crc_only and spec.pan_organ == "xenium_crc":
+        # Labeled HE in the training CV: P1CRC, P2CRC, P5CRC.
+        paths = [p for p in paths if p.parent.name in {"P1CRC", "P2CRC", "P5CRC"}]
+    return paths
+
+
 def discover_h5ads(
     datasets: list[str] | None = None,
     *,
     skip_crc_unlabeled: bool = True,
+    include_extra: bool = True,
 ) -> list[dict]:
-    """Return one dict per matched HE h5ad (does not open the file)."""
-    names = list(datasets) if datasets else list(COHORT_ORDER)
+    """Return one dict per matched HE h5ad (does not open the file).
+
+    ``Schurch`` and ``Hoefflin`` are accepted as aliases of CRC and GBM.
+    Extra SPORA roots are included when that parent cohort is requested.
+    """
+    requested = list(datasets) if datasets else list(COHORT_ORDER)
+    names: list[str] = []
+    for name in requested:
+        canon = DATASET_ALIASES.get(name, name)
+        if canon != name:
+            print(f"  {name} counts as {canon}", flush=True)
+        if canon not in COHORTS:
+            known = ", ".join(COHORT_ORDER)
+            raise KeyError(f"Unknown dataset {name!r}; choose from {known}")
+        if canon not in names:
+            names.append(canon)
     rows: list[dict] = []
     for name in names:
-        if name not in COHORTS:
-            raise KeyError(f"Unknown dataset {name!r}; choose from {COHORT_ORDER}")
         spec = COHORTS[name]
-        root = spec.cases_root
-        if not root.is_dir():
-            print(f"  skip {name}: missing cases root {root}", flush=True)
+        rows.extend(
+            _section_rows(
+                spec,
+                _matched_h5ads(spec, labeled_crc_only=name == "CRC" and skip_crc_unlabeled),
+            )
+        )
+        if not include_extra:
             continue
-        paths = sorted(root.glob(spec.h5ad_glob))
-        # ignore StarDist twins
-        paths = [p for p in paths if not p.name.endswith("_matched_features_stardist.h5ad")]
-        paths = [p for p in paths if p.name.endswith("_matched_features.h5ad")]
-        if name == "PDAC":
-            paths = [p for p in paths if _coverslip_ok(p, PDAC_COVERSLIPS)]
-        elif name == "GIST":
-            paths = [p for p in paths if _coverslip_ok(p, GIST_COVERSLIPS)]
-        elif name == "CRC" and skip_crc_unlabeled:
-            # Labeled HE in the training CV: P1CRC, P2CRC, P5CRC.
-            paths = [p for p in paths if p.parent.name in {"P1CRC", "P2CRC", "P5CRC"}]
-        for p in paths:
-            rows.append(
-                {
-                    "dataset": name,
-                    "tech": spec.tech,
-                    "pan_organ": spec.pan_organ,
-                    "sample": p.parent.name,
-                    "section_id": section_id(name, p),
-                    "h5ad": str(p.resolve()),
-                    "native_col": spec.native_col,
-                }
+        for extra in EXTRA_SECTIONS:
+            if extra.name != name:
+                continue
+            rows.extend(
+                _section_rows(extra, _matched_h5ads(extra, labeled_crc_only=False))
             )
     return rows
 
@@ -176,7 +216,7 @@ def discover_crc_predict_extras(existing_samples: set[str] | None = None) -> lis
     """
     have = {str(s) for s in (existing_samples or set())}
     extra = []
-    for rec in discover_h5ads(["CRC"], skip_crc_unlabeled=False):
+    for rec in discover_h5ads(["CRC"], skip_crc_unlabeled=False, include_extra=False):
         if rec["sample"] in have:
             continue
         if rec["sample"] in {"P1CRC", "P2CRC"}:

@@ -108,19 +108,18 @@ IDH 突变胶质瘤，25 个病人、30 张组织，H&E 与 CODEX 全部 `exact`
 
 ## 训练
 
-这些别名已经写进 `code/Hist2Pheno_pkg/dataset/build_pancancer_celltype_v1.py`。`Schurch` 和 `Hoefflin` 登记在 `code/PanCancer/pancancer_paths.py`，但不在默认的七队列名单里，所以原来的 `1_demo_train.sh uni2 A2` 不会带上它们，也不会覆盖已有权重。
+这些别名已经写进 `code/Hist2Pheno_pkg/dataset/build_pancancer_celltype_v1.py`。schurch2020coordinated 的切片算作 **CRC**，hoefflin2026spatial 算作 **GBM**，队列名仍然是原来的七个。`1_demo_train.sh uni2 A8` 和下面的 train 都会在读 `section_index.csv` 时把缺的切片补进去。已经训完的 A0–A7 权重对应补进去之前的 896 张切片。
 
-GT 质心来自 1 µm 实例分割，不是 StarDist。StarDist 是另一条全核分割，用 4 张 GPU 并行。UNI2 也按同样的 4 张卡切开。训练配方和 README 里的 UNI2 A2 相同（adjacent loss，k=8 mean，section 5-fold），结果目录是 `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`。
+GT 质心来自 1 µm 实例分割。训练用这些质心上的 UNI2 token。配方和 README 里的 UNI2 A2 相同（adjacent loss，k=8 mean，section 5-fold）。`run_spora_pancancer.sh train` 的结果目录是 `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`。A8 写到 `result_uni2_A8_l12_balanced_paired_v2_seed42/`。
 
 ```bash
 cd /home/lingyu/ssd2/Python/Hist2Pheno
 bash code/spora/run_spora_pancancer.sh prepare
-bash code/spora/run_spora_pancancer.sh segment    # GPU 0–3
-bash code/spora/run_spora_pancancer.sh uni2       # GPU 0–3，等 segment 结束后再开
+bash code/spora/run_spora_pancancer.sh uni2       # GPU 0–3
 CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh train
 ```
 
-`segment` 和 `uni2` 都占满 4 张卡，不要同时开。只想先看两个新队列能不能跑通：
+只想先看 CRC 和 GBM（含这两批新切片）能不能跑通：
 
 ```bash
 CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh smoke

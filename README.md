@@ -21,6 +21,7 @@ Raw images and embeddings are **not** shipped in this repository. Each dataset f
 - **Shared modeling stack** in [`code/Hist2Pheno_pkg/`](code/Hist2Pheno_pkg/) — matching, AnnData I/O, spatial kNN fusion, training, palettes, CV helpers, and the TLS / SRI / TNI engine
 - **Shared embedder** [`code/Image_feature_extraction.py`](code/Image_feature_extraction.py) — per-cell UNI / UNI2-h / H-optimus-1 / HIPT / Virchow2 patches from H&E. Weights are gated and **not** in git; see the checkpoint READMEs below.
 - **Multi-cohort pipelines** — Xenium lung / BRCA / CRC plus CODEX HCC, ESCC, PDAC, GIST, and GBM; optional **joint pan-cancer** three-head model on the shared 20/8/5 ontology ([`code/PanCancer/`](code/PanCancer/))
+- **SPORA additions inside CRC and GBM** — the CRC TMA ([Schürch et al., *Cell* 2020](https://doi.org/10.1016/j.cell.2020.07.005); 140 cores) is extra CRC sections, and the IDH-mutant glioma ([Hoefflin et al., bioRxiv 2026](https://doi.org/10.64898/2026.03.12.709536); 30 sections) is extra GBM sections. Same 20 L2, same seven cohort names, including A8. The multiplexed 3D CRC atlas is [Lin et al., *Cell* 2023](https://www.cell.com/cell/fulltext/S0092-8674(22)01571-9).
 - **StarDist external validation** — train on GT nuclei, evaluate / infer on all segmented nuclei. The pan-cancer **section-CV** checkpoint is applied to (i) **new cancers** with HE + StarDist and no GT ([`code/External_val/`](code/External_val/): NPC, Visium BRCA / CRC / HCC, HCC Nature / TIMES, HER2ST, prostate) and (ii) **unlabeled leftovers** from the training cohorts (Lung Incomplete, CODEX HCC rest, PDAC Incomplete_Cases; no niches)
 - **Internal fold-0 validation** — same checkpoint on the 182 held-out training sections ([`code/Internal_val/`](code/Internal_val/)); 4×3 GT / pred / ROC / StarDist-all panels plus composition
 - **s1167 TMAs done** — PDAC (278 annotated + 195 unlabeled cores) and GIST (550 annotated) share one TMA root but keep separate StarDist trees, pooled weights, and clinical notebooks
@@ -52,6 +53,8 @@ flowchart LR
 | CODEX PDAC (s1167 Pancreas TMA) | [`code/CODEX_pdac/`](code/CODEX_pdac/) | 278 annotated / 195 unlabeled cores | three-head | `codex_pdac` | **full** (train + Pred + niche) |
 | CODEX GIST (s1167 GIST TMA) | [`code/CODEX_gist/`](code/CODEX_gist/) | 550 annotated cores | three-head | `codex_gist` | **full** (train + Pred + niche) |
 | CODEX GBM ([Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0)) | [`code/CODEX_gbm/`](code/CODEX_gbm/) | Initial `P174511` + Recurrent `P179161` | three-head (16 L2 subcluster / 9 L12 SN / 5 L1 cell_type) | `codex_gbm` | train + Pred |
+| CODEX CRC TMA, inside CRC ([Schürch et al., *Cell* 2020](https://doi.org/10.1016/j.cell.2020.07.005)) | [`code/spora/`](code/spora/) | 140 annotated cores / 35 patients | flat `cell_type`, remapped onto the 20 L2 | `codex_crc_spora` | counted as **CRC** |
+| CODEX IDH-mutant glioma, inside GBM ([Hoefflin et al., bioRxiv 2026](https://doi.org/10.64898/2026.03.12.709536)) | [`code/spora/`](code/spora/) | 30 sections | flat `cell_type`; malignant states collapse to Tumor | `codex_glioma_spora` | counted as **GBM** |
 | Pan-cancer joint (7 public cohorts; ESCC omitted) | [`code/PanCancer/`](code/PanCancer/) | ~5.5M kept cells / 896 CV sections | three-head (20 L2 / 8 L12 / 5 L1) | `pancancer` | joint train + Pred |
 | Internal validation, fold 0 (same 7 cohorts) | [`code/Internal_val/`](code/Internal_val/) | 182 held-out sections | predicted L1 / L12 / L2 vs native GT | `pancancer` | predict + notebooks |
 | External validation, no GT (NPC, Visium BRCA / CRC / HCC / HCC Nature, HER2ST, prostate) | [`code/External_val/`](code/External_val/) | NPC 2; BRCA 4; CRC 1; HCC 7; HCC Nature 17; HER2ST 36; prostate 35 | predicted L1 / L12 / L2 from the UNI2 A2 `best_mlp` | `pancancer` | predict + TLS / SRI / TNI |
@@ -63,7 +66,7 @@ Start from the dataset README, then follow that folder’s `demo.sh`. Joint 7-co
 
 A pan-cancer Hist2Pheno (same idea as Fu et al. / Kather et al., *Nat Cancer* 2020: one H&E model across organs) needs a **shared 3-level label space**. Native hierarchies stay as they are; they are mapped onto that space rather than rewritten.
 
-**CODEX ESCC is omitted** (in-house NCRT). The seven public-cohort ground-truth hierarchies:
+**CODEX ESCC is omitted** (in-house NCRT). The seven public-cohort ground-truth hierarchies, plus the two SPORA releases that map onto the same v1 space:
 
 | Cancer | GT hierarchy (repo-relative) | Sheet | Native L2 / L12 / L1 (train) | GT cells on HE | Native L1 |
 |--------|------------------------------|-------|------------------------------|----------------|-----------|
@@ -74,6 +77,8 @@ A pan-cancer Hist2Pheno (same idea as Fu et al. / Kather et al., *Nat Cancer* 20
 | PDAC | [`data/CODEX/HCC/Michael_data_transfer/s1167/raw_metadata_updated.xlsx`](data/CODEX/HCC/Michael_data_transfer/s1167/raw_metadata_updated.xlsx) | `Celltype` (`cohort=Pancreas TMA`) | 11 / 6 / 4 | 1,504,982 | Epithelial, Immune, Stromal, Endothelial |
 | GIST | same s1167 workbook | `Celltype` (`cohort=GIST TMA`) | 11 / 6 / 4 | 1,785,460 | Epithelial, Immune, Stromal, Endothelial |
 | GBM | [`data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx`](data/CODEX/GBM/WangLab/3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx) | `Celltype` | 16 / 9 SN / 5 | 175,210 | Tumor, Myeloid, Lymph, Oligo, Vascular |
+| CRC TMA (SPORA, counted as CRC) | [`data/CODEX/spora/schurch2020coordinated/`](data/CODEX/spora/schurch2020coordinated/) | `cell_type` | flat → v1 | 205,264 kept / 257,702 | Epithelial, Immune, Stromal, Endothelial |
+| Glioma (SPORA, counted as GBM) | [`data/CODEX/spora/hoefflin2026spatial/`](data/CODEX/spora/hoefflin2026spatial/) | `cell_type` | flat → v1 | 1,633,273 kept / 2,448,212 | Tumor, Immune, Endothelial (Oligo / Astro / Neuron dropped) |
 
 Per-cell GT (coordinates + labels) still lives in each dataset’s Cases / Complete_Cases CSVs; the files above are the **multi-level class lists** used at match / train time.
 
@@ -119,6 +124,7 @@ Hist2Pheno/
 │   ├── CODEX_pdac/              # s1167 Pancreas TMA (shared mapping + niche engine)
 │   ├── CODEX_gist/              # s1167 GIST TMA (thin wrappers + notebooks)
 │   ├── CODEX_gbm/               # WangLab microscope HE + Visium HD labels
+│   ├── spora/                   # SPORA CRC TMA + IDH-mutant glioma (prepare + UNI2)
 │   ├── PanCancer/               # joint 7-cohort 3-head model (sheet celltype_pancancer)
 │   ├── Internal_val/            # fold-0 hold-out of the 7 training cohorts
 │   └── External_val/            # new cancers (no GT; includes HCC Nature / TIMES) + unlabeled leftovers (Lung Incomplete, HCC rest, PDAC Incomplete)
@@ -324,6 +330,17 @@ Do not mix Visium HD 8 µm bin coordinates with Xenium HE pixels without the pap
 ## Pan-cancer joint model (7 public cohorts)
 
 [`code/PanCancer/`](code/PanCancer/) trains **one** three-head MLP on sheet `celltype_pancancer` (20 L2 / 8 L12 / 5 L1; ESCC omitted). Native labels are remapped on read; UNI embeddings stay in each cohort `*_matched_features.h5ad`. Command index: [`demo.sh`](code/PanCancer/demo.sh). Details: [`code/PanCancer/README.md`](code/PanCancer/README.md).
+
+Two SPORA releases are additional sections of the same seven names. `schurch2020coordinated` ([Schürch et al., *Cell* 2020](https://doi.org/10.1016/j.cell.2020.07.005)) adds 140 CRC TMA cores (35 patients, 205,264 kept cells) to the 3 Xenium CRC sections. `hoefflin2026spatial` ([Hoefflin et al., bioRxiv 2026](https://doi.org/10.64898/2026.03.12.709536)) adds 30 IDH-mutant glioma sections (1,633,273 kept cells; cAC / cOPC / cMES collapsed to Tumor) to the 2 GBM sections. Prepare still prints seven dataset columns; the CRC and GBM counts go up. A0–A7 checkpoints already on disk were fit on the earlier 896 sections. The next prepare, including `uni2 A8` and `run_spora_pancancer.sh train`, appends these 170 sections to `section_index.csv` and trains on 1,066 sections. The multiplexed 3D CRC atlas is a separate study: [Lin et al., *Cell* 2023](https://www.cell.com/cell/fulltext/S0092-8674(22)01571-9). `run_spora_pancancer.sh train` writes `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`. A8 writes `result_uni2_A8_l12_balanced_paired_v2_seed42/`.
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+bash code/spora/run_spora_pancancer.sh prepare
+bash code/spora/run_spora_pancancer.sh uni2          # GPUs 0–3
+CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh train
+```
+
+Screening notes: [`code/spora/spora_CellData.md`](code/spora/spora_CellData.md) and [`spora_celltype_training_screen.ipynb`](code/spora/spora_celltype_training_screen.ipynb). Phillips CTCL, Haist HNSCC lymph nodes, and Hickey intestine stay out of this run.
 
 2026-11-15 integrity fixes do not change existing checkpoints or a finished run's OOF AUROC. They stop evaluation, confidence caches, and prediction archives from attaching a score to the wrong class, the wrong L1 parent, or a stale file. The record is in [`code/Hist2Pheno_pkg/README.md`](code/Hist2Pheno_pkg/README.md#2026-11-15-integrity-fixes) and [`code/PanCancer/README.md`](code/PanCancer/README.md#2026-11-15-oof-archive-contract). Archives from before that date pick up the new fields only after the next train or predict.
 
@@ -537,6 +554,7 @@ This repo tracks **code only**. Point each pipeline at your local copy:
 | CODEX HCC | `data/CODEX/HCC/Michael_data_transfer/s4769/` | `HE/s4769_he_mapping_updated_Visium.xlsx` sheet `Celltype` | Visium-aligned HE + CODEX; [Wu et al., bioRxiv 2025](https://doi.org/10.1101/2025.06.11.656869), processed data on [Zenodo](https://doi.org/10.5281/zenodo.15392699) |
 | CODEX PDAC / GIST | `data/CODEX/HCC/Michael_data_transfer/s1167/` | `raw_metadata_updated.xlsx` sheet `Celltype` (split by `cohort`) | Same TMA root; split by coverslip (`c001`–`c007` PDAC, `c009`–`c013` GIST). Metadata: sheet `Clinical_info` |
 | CODEX GBM | `data/CODEX/GBM/WangLab/` | `3_Annotation_Table/GBM_sc_seg_celltypes_hierarchy.xlsx` sheet `Celltype` | [Tang et al., *Cancer Cell* 2025](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0); microscope HE + single-nucleus labels; Cases / Results under `data/CODEX/GBM/` |
+| SPORA CRC TMA / IDH-mutant glioma | `data/CODEX/spora/schurch2020coordinated/`, `data/CODEX/spora/hoefflin2026spatial/` | native `cell_type`, remapped in [`build_pancancer_celltype_v1.py`](code/Hist2Pheno_pkg/dataset/build_pancancer_celltype_v1.py) | Counted as CRC and GBM (140 + 30 sections). [Schürch et al., *Cell* 2020](https://doi.org/10.1016/j.cell.2020.07.005); [Hoefflin et al., bioRxiv 2026](https://doi.org/10.64898/2026.03.12.709536); CRC 3D atlas [Lin et al., *Cell* 2023](https://www.cell.com/cell/fulltext/S0092-8674(22)01571-9). Prepared sections: `data/CODEX/spora/prepared/`. |
 | CODEX ESCC | `data/CODEX/ESCC/` | in-house (`codex_meta_celltype_*.csv`); **not** in the pan-cancer ontology | NCRT remains the cohort path name |
 | Pan-cancer joint | `data/PanCancer/` | [`PanCancerCellType.xlsx`](code/Hist2Pheno_pkg/dataset/PanCancerCellType.xlsx) sheet `celltype_pancancer` | Index / fold plans / section-CV + cell-stratified checkpoints / `pred_all_spatial/` (UNI). The A2 comparison weights are `result_uni_A2/`, `result_virchow2_A2/`, and `result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/`. Deployment preds are `pred_uni_A2_deployment/`, `pred_virchow2_A2_deployment/`, and `pred_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42_deployment/`. Embeddings stay in cohort `embeddings.h5ad` files. See [`code/PanCancer/README.md`](code/PanCancer/README.md) |
 | Internal validation | `data/PanCancer/pred_all_spatial/` | native GT on matched nuclei | Fold-0 4×3 panels + composition. See [`code/Internal_val/README.md`](code/Internal_val/README.md) |
@@ -572,6 +590,9 @@ If you use this code, please cite the associated publication (TBD), the **histol
 - **Prostate Visium (external validation)** — Erickson A, He M, Berglund E, et al. Spatially resolved clonal copy number alterations in benign and malignant tissue. *Nature* **608**, 360–367 (2022). [doi:10.1038/s41586-022-05023-2](https://doi.org/10.1038/s41586-022-05023-2). Mendeley: [svw96g68dv](https://doi.org/10.17632/svw96g68dv). Pixel size from [HEST-1k](https://github.com/mahmoodlab/HEST).
 - **Xenium CRC / Visium HD** — Oliveira MF, Romero JP, Chung M, et al. High-definition spatial transcriptomic profiling of immune cell populations in colorectal cancer. *Nat Genet* **57**, 1512–1523 (2025). [doi:10.1038/s41588-025-02193-3](https://www.nature.com/articles/s41588-025-02193-3). GEO: [GSE280318](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE280318). 10x: [Visium HD Human CRC](https://www.10xgenomics.com/products/visium-hd-spatial-gene-expression/dataset-human-crc).
 - **CODEX GBM** — Tang J, Fan W, Ruan Y, et al. Protein-based classification reveals an immune-hot subtype in IDH mutant astrocytoma with worse prognosis. *Cancer Cell* (2025). [doi:10.1016/j.ccell.2025.08.006](https://www.cell.com/cancer-cell/fulltext/S1535-6108(25)00363-0).
+- **CODEX CRC TMA (SPORA)** — Schürch CM, Bhate SS, Barlow GL, et al. Coordinated cellular neighborhoods orchestrate antitumoral immunity at the colorectal cancer invasive front. *Cell* **182**, 1341–1359 (2020). [doi:10.1016/j.cell.2020.07.005](https://doi.org/10.1016/j.cell.2020.07.005).
+- **CRC 3D atlas** — Lin JR, Wang S, Coy S, et al. Multiplexed 3D atlas of state transitions and immune interaction in colorectal cancer. *Cell* **186**, 363–381 (2023). [doi:10.1016/j.cell.2022.12.028](https://doi.org/10.1016/j.cell.2022.12.028). [Full text](https://www.cell.com/cell/fulltext/S0092-8674(22)01571-9).
+- **IDH-mutant glioma (SPORA)** — Hoefflin R, Greenwald AC, Darnell NG, et al. Spatial analysis reveals the evolving organization of low-grade and high-grade IDH-mutant glioma. *bioRxiv* (2026). [doi:10.64898/2026.03.12.709536](https://doi.org/10.64898/2026.03.12.709536).
 - **Pan-cancer H&E (design refs)** — Fu Y, Jung AW, Torne RV, et al. Pan-cancer computational histopathology reveals mutations, tumor composition and prognosis. *Nat Cancer* **1**, 800–810 (2020). [doi:10.1038/s43018-020-0085-8](https://doi.org/10.1038/s43018-020-0085-8). Kather JN, Heij LR, Grabsch HI, et al. Pan-cancer image-based detection of clinically actionable genetic alterations. *Nat Cancer* **1**, 789–799 (2020). [doi:10.1038/s43018-020-0087-6](https://doi.org/10.1038/s43018-020-0087-6).
 
 ## License
