@@ -8,11 +8,13 @@ Schurch and Hoefflin already have 1 µm instance masks whose labels match
 Outputs, per tissue, under ``data/CODEX/spora/prepared/<dataset>/<tissue>/``:
 
 - ``<tissue>_he.tif`` RGB uint8 at 1 µm/pixel
-- ``<tissue>_cells_with_pixel.csv`` kept cells, ``centroid_x`` = row, ``centroid_y`` = column
+- ``<tissue>_cells_with_pixel.csv`` kept cells, ``centroid_x`` = column, ``centroid_y`` = row
 - ``<tissue>_matched_features.h5ad`` ``obs['final_CT']`` and ``obsm['spatial_HE']``
 
-``centroid_x`` is the row so it matches ``Image_feature_extraction.py`` and the
-pan-cancer UNI2 aligner, which both treat ``centroid_x`` as ``pxl_row``.
+``Image_feature_extraction.py`` crops with the first coordinate as the horizontal
+pixel (image width) and the second as the vertical pixel (image height). The
+column is still named ``pxl_row_in_fullres`` after that file's historical swap.
+``centroid_x`` is therefore the column, and ``centroid_y`` is the row.
 """
 
 from __future__ import annotations
@@ -130,7 +132,8 @@ def prepare_tissue(dataset: str, tissue: str, force: bool) -> str:
         mask = handle["mask"]
     label, row, col = _centroids(mask)
     del mask
-    lookup = pd.DataFrame({"cell_id": label.astype(np.int64), "centroid_x": row, "centroid_y": col})
+    # centroid_x is horizontal (column). The extractor compares it with image width.
+    lookup = pd.DataFrame({"cell_id": label.astype(np.int64), "centroid_x": col, "centroid_y": row})
     merged = cells.merge(lookup, on="cell_id", how="inner")
     if merged.empty:
         return f"skip {tissue}: no mask hits"
@@ -152,6 +155,57 @@ def _job(payload: tuple[str, str, bool]) -> str:
         return f"FAIL {tissue}: {exc}"
 
 
+def _extractor_outside(horizontal: np.ndarray, vertical: np.ndarray, width: int, height: int, half: int = 7) -> np.ndarray:
+    """Cells whose patch the extractor rejects. horizontal is compared with width."""
+    return (horizontal < half) | (vertical < half) | (horizontal + half > width) | (vertical + half > height)
+
+
+def fix_centroid_axis(dataset: str) -> str:
+    """Turn centroid_x into the horizontal pixel on exports that stored the row there.
+
+    The H&E TIFF is not rewritten. Returns a one-line status.
+    """
+    import tifffile
+
+    root = PREPARED / dataset
+    tissues = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
+    swapped = already = 0
+    for tissue_dir in tissues:
+        tissue = tissue_dir.name
+        csv_path = tissue_dir / f"{tissue}_cells_with_pixel.csv"
+        h5ad_path = tissue_dir / f"{tissue}_matched_features.h5ad"
+        tif_path = tissue_dir / f"{tissue}_he.tif"
+        frame = pd.read_csv(csv_path)
+        with tifffile.TiffFile(tif_path) as tif:
+            shape = tuple(int(v) for v in tif.series[0].shape)
+        if len(shape) == 3 and shape[-1] in (3, 4):
+            height, width = shape[0], shape[1]
+        elif len(shape) == 3 and shape[0] in (3, 4):
+            height, width = shape[1], shape[2]
+        else:
+            raise ValueError(f"{tif_path} shape {shape} is not RGB")
+        horizontal = frame["centroid_x"].to_numpy(dtype=np.float64)
+        vertical = frame["centroid_y"].to_numpy(dtype=np.float64)
+        wrong = int(_extractor_outside(horizontal, vertical, width, height).sum())
+        right = int(_extractor_outside(vertical, horizontal, width, height).sum())
+        if wrong <= right:
+            already += 1
+            continue
+        frame["centroid_x"], frame["centroid_y"] = frame["centroid_y"], frame["centroid_x"]
+        frame.to_csv(csv_path, index=False)
+        import anndata as ad
+
+        adata = ad.read_h5ad(h5ad_path)
+        adata.obs["centroid_x"] = frame["centroid_x"].to_numpy()
+        adata.obs["centroid_y"] = frame["centroid_y"].to_numpy()
+        order = adata.obs["cell_id"].astype(str).to_numpy()
+        aligned = frame.set_index(frame["cell_id"].astype(str)).loc[order]
+        adata.obsm["spatial_HE"] = aligned[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
+        adata.write_h5ad(h5ad_path)
+        swapped += 1
+    return f"{dataset}: swapped {swapped}, already horizontal {already}"
+
+
 def tissues_of(dataset: str) -> list[str]:
     cells = pd.read_parquet(
         DATA_ROOT / dataset / dataset / "metadata" / "cells.parquet",
@@ -167,7 +221,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="Stop after this many tissues per dataset. 0 means all.")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--fix-centroid-axis",
+        action="store_true",
+        help="Rewrite existing tables so centroid_x is the horizontal pixel. Does not re-read the OME-Zarr.",
+    )
     args = parser.parse_args(argv)
+    if args.fix_centroid_axis:
+        for dataset in args.datasets:
+            if dataset not in DATASETS:
+                raise SystemExit(f"unknown dataset {dataset}")
+            print(fix_centroid_axis(dataset), flush=True)
+        return 0
 
     jobs: list[tuple[str, str, bool]] = []
     for dataset in args.datasets:

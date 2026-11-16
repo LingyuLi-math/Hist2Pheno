@@ -112,6 +112,8 @@ IDH 突变胶质瘤，25 个病人、30 张组织，H&E 与 CODEX 全部 `exact`
 
 GT 质心来自 1 µm 实例分割。训练用这些质心上的 UNI2 token。当前索引用 1,066 张切片：CRC 143（原来 3 张 Xenium + 140 张 Schürch），GBM 32（原来 2 张 + 30 张 Hoefflin）。
 
+`centroid_x` 是横向像素（列），`centroid_y` 是纵向像素（行）。提取器用第一个数和图像宽度比、第二个数和高度比。早先把行写进了 `centroid_x`，14×14 的 patch 裁到了对角位置，超出宽或高的细胞没有 token。表已经改回正确方向。旧的 UNI2 不能留，必须重新提取后才能训练。
+
 先把 Schürch 里漏掉的 `CD8+ T cells` 和 `plasma cells` 写回细胞表，并在 GPU 0–3 上重提 UNI2。普通 `prepare` 和 `uni2` 会跳过已有文件，所以用这一条。Hoefflin 不重写。
 
 ```bash

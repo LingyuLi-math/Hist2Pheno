@@ -75,6 +75,17 @@ def _ensure_spatial_ctx_device(spatial_ctx, device):
     spatial_ctx["_pinned_device"] = str(dest)
     return spatial_ctx
 
+########################################################
+# 2026.11.16 LLY, add function for store_dtype
+########################################################
+def store_dtype():
+    """Storage dtype for large file-backed feature copies (float32 default)."""
+    name = os.environ.get("HIST2PHENO_STORE_DTYPE", "float32").lower()
+    if name not in ("float32", "float16"):
+        raise ValueError("HIST2PHENO_STORE_DTYPE must be float32 or float16")
+    return np.dtype(name)
+########################################################
+
 
 def _scale_split_float32(X_f, tr_idx, va_idx, *, build_all=False):
     """Train-only StandardScaler; float32 train/val/all (no extra full-matrix float64)."""
@@ -93,7 +104,8 @@ def _scale_split_float32(X_f, tr_idx, va_idx, *, build_all=False):
         for start in range(0,len(tr_idx),8192):scaler.partial_fit(X_f[tr_idx[start:start+8192]])
         def transform(rows):
             fd,path=tempfile.mkstemp(prefix="hist2pheno_scaled_",suffix=".npy",dir=folder);os.close(fd)
-            out=np.lib.format.open_memmap(path,mode="w+",dtype=np.float32,shape=(len(rows),X_f.shape[1]))
+            # 2026.11.16, HIST2PHENO_STORE_DTYPE=float16 halves disk/page cache; AMP casts inputs to fp16 anyway
+            out=np.lib.format.open_memmap(path,mode="w+",dtype=store_dtype(),shape=(len(rows),X_f.shape[1]))
             for start in range(0,len(rows),8192):out[start:start+8192]=scaler.transform(X_f[rows[start:start+8192]])
             return out
         X_tr,X_va=transform(tr_idx),transform(va_idx)

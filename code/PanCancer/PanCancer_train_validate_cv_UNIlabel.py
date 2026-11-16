@@ -468,6 +468,48 @@ def _reencode_fixed(cv: dict, classes: dict[str, list[str]]) -> dict:
     return cv
 
 
+########################################################
+# 2026.11.16, one shared copy of the pooled features / 多进程共享特征
+# Every fold process used to keep its own private X_f in RAM, so four
+# folds (or A8/A9/A10 side by side) held four copies and pushed the
+# server into swap; GPU utilisation then sits near 0%. The pooled matrix
+# is written once to a .npy and opened read-only with mmap, so all
+# processes on the machine share one page-cache copy. Values are
+# unchanged. HIST2PHENO_SHARED_POOLED=0 restores the old behaviour.
+########################################################
+def _share_pooled_features(cv: dict, cache_dir: Path | None, encoder_protocol) -> dict:
+    if cache_dir is None or os.environ.get("HIST2PHENO_SHARED_POOLED", "1") == "0":
+        return cv
+    X = cv["X_f"]
+    if isinstance(X, np.memmap):
+        return cv
+    n = int(X.shape[0])
+    probe = np.asarray(X[:: max(1, n // 4096)])
+    key = digest(cv.get("sample_names", []), np.asarray(cv["cell_id_f"])[:: max(1, n // 65536)],
+                 np.asarray(cv["groups_f"]), probe, str(X.dtype), X.shape, str(encoder_protocol))
+    folder = Path(cache_dir) / "pooled_features"
+    path = folder / f"X_{key[:32]}.npy"
+    with file_lock(folder / f"X_{key[:32]}.lock"):
+        if path.is_file():
+            shared = np.load(path, mmap_mode="r")
+            if shared.shape != X.shape or shared.dtype != X.dtype:
+                raise RuntimeError(f"Shared pooled features do not match: {path}")
+        else:
+            tmp = folder / f".{path.name}.{os.getpid()}.tmp"
+            out = np.lib.format.open_memmap(tmp, mode="w+", dtype=X.dtype, shape=X.shape)
+            for start in range(0, n, 65536):
+                out[start:start + 65536] = X[start:start + 65536]
+            out.flush()
+            del out
+            os.replace(tmp, path)
+            shared = np.load(path, mmap_mode="r")
+    cv["X_f"] = shared
+    del X
+    gc.collect()
+    print(f"  pooled features shared via {path} ({shared.nbytes / 1e9:.1f} GB, mmap)", flush=True)
+    return cv
+
+
 def prepare_pooled_cv_data(
     index: pd.DataFrame,
     classes: dict[str, list[str]],
@@ -563,6 +605,7 @@ def prepare_pooled_cv_data(
     cv["embedding_protocol"] = encoder_protocol
     cv["cell_id_f"] = np.concatenate(cell_id_parts)[cv["mask"]]
     cv = _reencode_fixed(cv, classes)
+    cv = _share_pooled_features(cv, cache_dir, encoder_protocol)
     g2s = {i: s for i, s in enumerate(sample_names)}
     cv["sample_names"] = sample_names
     cv["sample_to_group"] = {s: i for i, s in enumerate(sample_names)}

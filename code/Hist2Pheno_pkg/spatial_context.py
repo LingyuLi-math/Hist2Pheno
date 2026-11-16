@@ -102,14 +102,18 @@ def prepare_runtime(cv,result,config):
     if mode!='mean':raise ValueError('Supported spatial modes are mean and attention')
     key=digest(cv['_data_fingerprint'],asdict(cfg),*[a for g in gs for a in g])
     folder=Path(cfg.cache_dir);folder.mkdir(parents=True,exist_ok=True)
-    path=folder/(key+'.npy');geom_path=folder/(key+'.geometry.npy')
+    # 2026.11.16, optional float16 cache (HIST2PHENO_STORE_DTYPE); dtype is part of the file name
+    sdt=np.dtype(os.environ.get('HIST2PHENO_STORE_DTYPE','float32').lower())
+    if sdt not in (np.float32,np.float16):raise ValueError('HIST2PHENO_STORE_DTYPE must be float32 or float16')
+    tag='' if sdt==np.float32 else '.f16'
+    path=folder/(key+tag+'.npy');geom_path=folder/(key+'.geometry.npy')
     if not path.is_file() or not geom_path.is_file():
         import shutil
-        required=n*len(gs)*d*4+n*len(gs)*3*4
+        required=n*len(gs)*d*sdt.itemsize+n*len(gs)*3*4
         if shutil.disk_usage(folder).free < required+10*1024**2:
             raise OSError(f'Context cache needs {required/1e9:.2f} GB free; choose a larger cache directory')
         fd,tmp=tempfile.mkstemp(prefix=key,dir=folder);os.close(fd)
-        cache=np.lib.format.open_memmap(tmp,mode='w+',dtype=np.float32,shape=(n,len(gs),d))
+        cache=np.lib.format.open_memmap(tmp,mode='w+',dtype=sdt,shape=(n,len(gs),d))
         geo=np.zeros((n,len(gs)*3),np.float32)
         try:
             for s,(idx,dist) in enumerate(gs):
@@ -139,7 +143,7 @@ def prepare_runtime(cv,result,config):
 def runtime_batch(runtime,rows,device):
     cfg=config_of(runtime['config']);rows=rows.detach().cpu().numpy();s=runtime['scaler']
     if runtime['mode']=='mean':
-        c=np.array(runtime['contexts'][rows],copy=True)
+        c=np.array(runtime['contexts'][rows],dtype=np.float32,copy=True)
         c=(c-s.mean_.astype(np.float32))/s.scale_.astype(np.float32)
         return {'contexts':torch.as_tensor(c,device=device),
                 'geometry':torch.as_tensor(np.array(runtime['geometry'][rows],copy=True),device=device)}

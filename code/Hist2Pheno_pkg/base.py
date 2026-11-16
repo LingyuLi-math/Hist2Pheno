@@ -6078,6 +6078,57 @@ def result_has_level12_head_labels(result):
 ######################################
 
 
+
+########################################################
+# 2026.11.16, batch-level row loading / 整批取行
+# The default DataLoader calls TensorDataset[i] once per row (4096 calls and
+# a torch.stack per batch). On memmap-backed features that is CPU and page-
+# fault bound, so the GPU sits near 0%. Here the sampler yields a whole batch
+# of indices and each tensor is gathered once, rows sorted for memmap
+# locality. Same sampler, same generator, same batches as before, so the
+# checkpoint protocol (batch_size, sampler, weights) is unchanged.
+########################################################
+class _RowBatchDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset):
+        self.tensors = dataset.tensors
+
+    def __len__(self):
+        return len(self.tensors[0])
+
+    def __getitem__(self, rows):
+        rows = torch.as_tensor(rows, dtype=torch.long)
+        rows = torch.sort(rows).values
+        return tuple(t[rows].float() if t.dtype == torch.float16 else t[rows] for t in self.tensors)
+
+
+class RowBatchLoader:
+    """DataLoader stand-in exposing ``dataset``, ``sampler`` and ``batch_size``."""
+
+    def __init__(self, dataset, sampler, batch_size, num_workers=0, pin_memory=False, generator=None):
+        from torch.utils.data import BatchSampler
+        self.dataset = dataset
+        self.sampler = sampler
+        self.batch_size = int(batch_size)
+        self._loader = DataLoader(
+            _RowBatchDataset(dataset),
+            sampler=BatchSampler(sampler, self.batch_size, drop_last=False),
+            batch_size=None,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            generator=generator,
+        )
+
+    def __len__(self):
+        return len(self._loader)
+
+    def __iter__(self):
+        return iter(self._loader)
+
+
+def _use_row_batches():
+    return os.environ.get("HIST2PHENO_ROW_BATCH", "1") != "0"
+########################################################
+
 def loader_train_test(
     result,
     batch_size_cuda=1024,
@@ -6122,8 +6173,10 @@ def loader_train_test(
 
     g = torch.Generator().manual_seed(seed)
 
-    X_train_tensor = torch.as_tensor(X_train_scaled, dtype=torch.float32)
-    X_test_tensor = torch.as_tensor(X_test_scaled, dtype=torch.float32)
+    # 2026.11.16, a float16 memmap stays lazy; rows are cast to float32 per batch
+    _keep = _use_row_batches() and getattr(X_train_scaled, "dtype", None) == np.float16
+    X_train_tensor = torch.as_tensor(X_train_scaled, dtype=None if _keep else torch.float32)
+    X_test_tensor = torch.as_tensor(X_test_scaled, dtype=None if _keep else torch.float32)
     y_train_l2_tensor = torch.as_tensor(y_train_encoded, dtype=torch.long)
     y_test_l2_tensor = torch.as_tensor(y_test_encoded, dtype=torch.long)
     y_train_l1_tensor = torch.as_tensor(y_train_level1_encoded, dtype=torch.long)
@@ -6293,14 +6346,24 @@ def loader_train_test(
             replacement=True,
             generator=g,
         )
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            sampler=train_sampler,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-        )
+        ## 2026.11.16 LLY, add condition for store_dtype
+        if _use_row_batches():
+            train_loader = RowBatchLoader(train_dataset, train_sampler, batch_size,
+                                          num_workers, pin_memory)
+        else:
+            train_loader = DataLoader(
+                train_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                sampler=train_sampler,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+            )
+    elif _use_row_batches():
+        from torch.utils.data import RandomSampler
+        train_loader = RowBatchLoader(train_dataset, RandomSampler(train_dataset, generator=g),
+                                      batch_size, num_workers, pin_memory, generator=g)
+    ######################################################
     else:
         train_loader = DataLoader(
             train_dataset,
@@ -6310,28 +6373,25 @@ def loader_train_test(
             pin_memory=pin_memory,
             generator=g,
         )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        generator=g,
-    )
 
+    ## 2026.11.16 LLY, add condition for store_dtype
+    def _eval_loader(ds):
+        if _use_row_batches():
+            from torch.utils.data import SequentialSampler
+            return RowBatchLoader(ds, SequentialSampler(ds), batch_size * 2,
+                                  num_workers, pin_memory, generator=g)
+        return DataLoader(ds, batch_size=batch_size * 2, shuffle=False,
+                          num_workers=num_workers, pin_memory=pin_memory, generator=g)
+
+    val_loader = _eval_loader(val_dataset)
+
+    ######################################################
     val_eval_dataset = (
         TensorDataset(X_test_tensor, y_test_l2_tensor, val_gidx)
         if use_spatial
         else TensorDataset(X_test_tensor, y_test_l2_tensor)
     )
-    val_loader_eval = DataLoader(
-        val_eval_dataset,
-        batch_size=batch_size * 2,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        generator=g,
-    )
+    val_loader_eval = _eval_loader(val_eval_dataset)
 
     print(f"Train dataset size: {len(train_dataset)}")
     if train_balance_sampler:
