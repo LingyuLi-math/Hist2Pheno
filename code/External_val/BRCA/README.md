@@ -133,3 +133,15 @@ CUDA_DEVICE=1 bash code/External_val/BRCA/demo_uni2_A3.sh predict
 ```
 
 Outputs: `data/Visium/BRCA/pred_uni2_A2_bestmlp_paired_v2_seed42/` and `pred_uni2_A3_bestmlp_paired_v2_seed42/`. `Pred_visual_brca_uni2.ipynb` and `Pred_visual_brca_uni2_A3.ipynb` read A3. `Pred_visual_brca_uni2_A2.ipynb` reads A2.
+
+2026-11-16. A8 is fold 0 of the 1,066-section run (`result_uni2_A8_l12_balanced_paired_v2_seed42/cross_dataset_cv/A8_l12_balanced/best_mlp_gpu.pt`, k=8 mean with gate, balanced L12, pooled OOF L2 macro AUROC 0.9002). `Pred_visual_brca_uni2_A8.ipynb` and `demo_uni2_A8.sh` write `pred_uni2_A8_bestmlp_paired_v2_seed42/`.
+
+```bash
+CUDA_DEVICE=0 bash code/External_val/BRCA/demo_uni2_A8.sh predict
+```
+
+2026-11-17. A7 is fold 4 of the 1,066-section bf16 run (`result_uni2_A2_l12_balanced_new1066_paired_v2_seed42/cross_dataset_cv/A2_l12_balanced/best_mlp_gpu.pt`, k=8 mean, no gate, balanced L12, pooled OOF L2 macro AUROC 0.9035). `Pred_visual_brca_uni2_A7.ipynb` and `demo_uni2_A7.sh` write `pred_uni2_A7_new1066_paired_v2_seed42/`.
+
+```bash
+bash code/External_val/BRCA/demo_uni2_A7.sh predict
+```

@@ -1,4 +1,3 @@
 #!/usr/bin/env bash
-## A11 (neighbour composition plus tissue compartment) across four GPUs.
-##   bash code/PanCancer/run_a11_4gpu.sh
-exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run_uni2_4gpu.sh" A11
+echo "A11 was removed. The tissue head did not improve L2 macro-F1." >&2
+exit 1

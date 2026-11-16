@@ -76,6 +76,8 @@ UNI2 maps reuse `project_all_UNI2` and a separate checkpoint:
 | A5 L12 links = 1 | `demo_uni2_A5.sh` | `Pred_visual_npc_uni2_A5.ipynb` |
 | A6 L12 links = 2 | `demo_uni2_A6.sh` | `Pred_visual_npc_uni2_A6.ipynb` |
 | A8 balanced L12, k=8 mean+gate | `demo_uni2_A8.sh` | `Pred_visual_npc_uni2_A8.ipynb` |
+| A7 balanced L12, k=8 mean, no gate, 1,066 sections | `demo_uni2_A7.sh` | `Pred_visual_npc_uni2_A7.ipynb` |
+| A7 `stratified_section`, same recipe, fold 1 | `demo_uni2_A7_stratsec.sh` | `Pred_visual_npc_uni2_A7_stratsec.ipynb` |
 
 Predict writes `{sample}_stardist_pred.h5ad` and `{sample}_l2_probs.npz`. `obs['conf_L2']` is the max softmax of the argmax class. The notebooks plot `pred_CT`. Confidence maps (below) are extra; they do not replace `pred_CT`.
 
@@ -89,7 +91,9 @@ What Hist2Pheno can actually put on that map is the mean L2 softmax of the StarD
 
 The following cell of `Pred_visual_npc_uni2_A2.ipynb` draws that mean-softmax row against the cell2location counts. Each panel is colored from 0 to its own 99th percentile (gray = no nuclei, or no cell2location row). A large type and a small type are both readable. The number on each column is Spearman on the spots that have both values. `npc_figures.plot_abundance_maps` builds the figure; the table is `{sample}_abundance_spearman.csv`.
 
-Read the colors as spatial patterns. Hist2Pheno is a probability in [0, 1]. cell2location is an expected cell count. Rank correlation is unchanged by scaling one whole map, and it does change if each spot is divided by its own total, so the figure keeps the raw count. DCIS is mapped to `normal` in `L2_TO_C2L`, so a DCIS call raises `normal`. This is a spatial comparison of two spot profiles. These slides have no nucleus ground truth, so the figure is a pattern check and stops short of a ROC.
+Read the colors as spatial patterns. Hist2Pheno is a probability in [0, 1]. cell2location is an expected cell count. Rank correlation is unchanged by scaling one whole map, and it does change if each spot is divided by its own total. The Spearman numbers in the next paragraph come from that older cell: softmax against raw counts, a 65 µm disc, and `DCIS` mapped to `normal`. These slides have no nucleus ground truth, so the figure is a pattern check and stops short of a ROC.
+
+2026-11-16. `npc_figures.L2_TO_C2L["DCIS"]` is `tumor`. DCIS is neoplastic, so a DCIS call now raises `tumor`. The replacement comparison is [`Pred_visual_npc_uni2_A8_validation.ipynb`](Pred_visual_npc_uni2_A8_validation.ipynb) and [`visium_validation.py`](../../Hist2Pheno_pkg/visium_validation.py). Proportion is compared with proportion (`proportions` of the cell2location counts) and count with count (`count_*` = sum of the grouped softmax inside the spot). The capture radius is `spot_diameter_fullres × 55/65 / 2`: Space Ranger's diameter is a 65 µm spot, and the capture area is 55 µm. Slide-level cell fractions sum the abundances; they are not the fraction of spots where a type wins the argmax. When `filtered_feature_bc_matrix.h5` is present, `marker_scores` adds an RNA reference (MS4A1/CD79A for B, MZB1/JCHAIN for plasma, CD3D/CD3E for T) that does not use cell2location.
 
 On `20210809-C-AH4199551` every one of the 1,331 in-tissue spots has both a captured nucleus and a cell2location row. Spearman is tumor 0.25, normal 0.07, fibroblast −0.32, T 0.04, Treg −0.24, B −0.06, Myeloid −0.22. The maps can be compared type by type. On this slide they do not line up. Re-running the cell writes the same numbers to `{sample}_abundance_spearman.csv` for both patients.
 

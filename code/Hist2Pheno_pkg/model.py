@@ -154,6 +154,8 @@ _PREASSIGNED_SPLITTERS = frozenset(
         "stratified_group_kfold",
         "dataset_section",
         "cross_dataset_section",
+        "stratified_section",      # 2026.11.16, L2-balanced section folds
+        "l2_stratified_section",
     }
 ) | _CELL_STRATIFIED_SPLITTERS
 

@@ -76,6 +76,12 @@ from pancancer_cv import (  # noqa: E402
     CELL_STRAT_RESULT_DIR,
     assign_cell_stratified_folds,
     assign_section_folds,
+    assign_stratified_section_folds,
+    fold_balance_score,
+    fold_balance_table,
+    is_stratified_section_splitter,
+    section_label_counts,
+    splitter_family,
     cache_path_for,
     fold_plan_frame,
     is_cell_stratified_splitter,
@@ -523,6 +529,7 @@ def prepare_pooled_cv_data(
     fold_of: dict[str, int] | None = None,
     embedder: str = "uni",
     uni2_cache_dir: Path | None = None,
+    section_units: dict[str, str] | None = None,
 ) -> dict:
     ok = index.loc[ok_mask(index)].copy()
     if ok.empty:
@@ -624,6 +631,35 @@ def prepare_pooled_cv_data(
         print(
             "  fold assignment: cell_stratified StratifiedKFold on L1|L12|L2 "
             "(sections mixed; every fold keeps all abundant cell types)",
+            flush=True,
+        )
+    elif is_stratified_section_splitter(group_splitter):
+        # 2026.11.16, whole sections held out; folds balanced on L2 counts
+        counts = section_label_counts(
+            cv["groups_f"], cv["y_encoded_f"], len(sample_names), len(cv["class_names"])
+        )
+        units = None
+        if section_units:
+            units = [section_units[s] for s in sample_names]
+        existing = {s: f for s, f in (fold_of or {}).items() if s in set(sample_names)}
+        fold_of = assign_stratified_section_folds(
+            sample_names, datasets, counts, n_splits=cv_k, seed=seed,
+            existing=existing or None, units=units,
+        )
+        rr = assign_section_folds(sample_names, datasets, n_splits=cv_k, seed=seed)
+        rr_ids = [rr[s] for s in sample_names]
+        st_ids = [fold_of[s] for s in sample_names]
+        cv["fold_id_f"] = np.asarray(
+            [fold_of[g2s[int(g)]] for g in cv["groups_f"]], dtype=np.int64
+        )
+        cv["fold_mode"] = "stratified_section"
+        cv["section_fold_of"] = dict(fold_of)
+        cv["section_l2_counts"] = counts
+        print(
+            "  fold assignment: stratified_section (whole sections; L2-balanced). "
+            f"max |share-1/k| per class, mean over classes: "
+            f"round-robin {fold_balance_score(counts, rr_ids):.3f} -> "
+            f"stratified {fold_balance_score(counts, st_ids):.3f}",
             flush=True,
         )
     else:
@@ -778,6 +814,19 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     )
     index = load_or_build_index(ctx, index_csv)
     plan_path = ctx.result_dir / "fold_plan.csv"
+    # 2026.11.16, never mix fold plans from different splitters in one result dir
+    family = splitter_family(ctx.group_splitter)
+    stratified = family == "stratified_section"
+    if plan_path.is_file():
+        _old = pd.read_csv(plan_path)
+        _old_family = (str(_old["splitter"].dropna().iloc[0])
+                       if "splitter" in _old and _old["splitter"].notna().any()
+                       else "cross_dataset_section")
+        if "stratified_section" in (family, _old_family) and _old_family != family:
+            raise ValueError(
+                f"{plan_path} was written by {_old_family}, not {family}. "
+                "Use a new --save-result (e.g. SPLITTER=stratified_section in 1_demo_train.sh)."
+            )
     existing = load_existing_folds(plan_path)
     plan = fold_plan_frame(
         index,
@@ -787,7 +836,14 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
     )
     # 2026.10.24, optional patient-grouped outer folds / 患者级隔离需真实元数据
     patient_lookup = None
-    if ctx.patient_map is not None:
+    if ctx.patient_map is not None and stratified:
+        patients = pd.read_csv(ctx.patient_map, dtype=str)
+        if not {"section_id","patient_id"}.issubset(patients) or patients.section_id.duplicated().any() or patients.patient_id.isna().any():
+            raise ValueError("patient map needs unique section_id and nonempty patient_id")
+        patient_lookup = dict(zip(patients.section_id, patients.patient_id))
+        plan["patient_id"] = plan.section_id.map(patient_lookup)
+        if plan.patient_id.isna().any(): raise ValueError("patient map missing indexed sections")
+    elif ctx.patient_map is not None:
         from sklearn.model_selection import GroupKFold
         patients = pd.read_csv(ctx.patient_map, dtype=str)
         if not {"section_id","patient_id"}.issubset(patients) or patients.section_id.duplicated().any() or patients.patient_id.isna().any():
@@ -797,16 +853,20 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         if plan.patient_id.isna().any(): raise ValueError("patient map missing indexed sections")
         for fold,(_,va) in enumerate(GroupKFold(ctx.cv_k).split(plan, groups=plan.patient_id)):
             plan.loc[plan.index[va],"fold"] = fold
-    tmp_plan = plan_path.with_suffix(".csv.tmp")
-    plan.to_csv(tmp_plan, index=False)
-    os.replace(tmp_plan, plan_path)
-    fold_of = {
-        str(s): int(f)
-        for s, f in zip(plan["section_id"], plan["fold"])
-        if pd.notna(f)
-    }
+    if stratified:
+        # Folds come from L2 counts after loading; keep only an earlier stratified plan.
+        fold_of = {str(s): int(f) for s, f in existing.items()}
+    else:
+        tmp_plan = plan_path.with_suffix(".csv.tmp")
+        plan.to_csv(tmp_plan, index=False)
+        os.replace(tmp_plan, plan_path)
+        fold_of = {
+            str(s): int(f)
+            for s, f in zip(plan["section_id"], plan["fold"])
+            if pd.notna(f)
+        }
     print(f"\n[Prepare] {index['dataset'].nunique() if len(index) else 0} datasets", flush=True)
-    if not plan.empty:
+    if not plan.empty and not stratified:
         print(pd.crosstab(plan["fold"], plan["dataset"]).reindex(columns=COHORT_ORDER).fillna(0).astype(int), flush=True)
     cv = prepare_pooled_cv_data(
         index,
@@ -819,7 +879,25 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
         fold_of=fold_of,
         embedder=ctx.embedder,
         uni2_cache_dir=ctx.data_root / (ctx.embedder+"_aligned"),
+        section_units=patient_lookup if stratified else None,
     )
+    if stratified:
+        plan["fold"] = plan["section_id"].astype(str).map(cv["section_fold_of"])
+        plan["splitter"] = "stratified_section"
+        tmp_plan = plan_path.with_suffix(".csv.tmp")
+        plan.to_csv(tmp_plan, index=False)
+        os.replace(tmp_plan, plan_path)
+        print(pd.crosstab(plan["fold"], plan["dataset"]).reindex(columns=COHORT_ORDER).fillna(0).astype(int), flush=True)
+        names = list(cv["sample_names"])
+        bal = fold_balance_table(cv["section_l2_counts"], [cv["section_fold_of"][n] for n in names],
+                                 cv["class_names"])
+        bal.to_csv(ctx.result_dir / "fold_plan_l2_balance.csv", index=False)
+        wide = bal.pivot_table(index="class", columns="fold", values="share_of_class")
+        print("  share of each L2 class held out per fold (ideal 1/k):", flush=True)
+        print(wide.round(3), flush=True)
+        lost = bal.loc[~bal["train_has_class"], ["fold", "class"]]
+        if len(lost):
+            print(f"  WARNING: a fold's training side lacks a class:\n{lost}", flush=True)
     if is_cell_stratified_splitter(ctx.group_splitter):
         cell_plan = summarize_cell_stratified_folds(
             cv["y_level1_f"], cv["y_level12_f"], cv["y_f"], cv["fold_id_f"]
@@ -1045,6 +1123,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="cross_dataset_section",
         help=(
             "cross_dataset_section (default; each HE section wholly train or val) | "
+            "stratified_section (whole sections, folds balanced on L2 composition; "
+            "use a new --save-result) | "
             "cell_stratified (mix cells; StratifiedKFold on L1|L12|L2; "
             "writes result_cell_stratified_spatial/) | "
             "group_kfold | shuffle"
@@ -1147,8 +1227,8 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--tissue-comp-weight must be >= 0 and --tissue-comp-k >= 2")
     if args.group_splitter == "shuffle":
         raise ValueError("PanCancer OOF CLI requires unique folds; use cross_dataset_section or group_kfold")
-    if args.patient_map is not None and args.group_splitter != "cross_dataset_section":
-        raise ValueError("Patient-map requires the default cross_dataset_section preassigned splitter")
+    if args.patient_map is not None and splitter_family(args.group_splitter) not in ("cross_dataset_section", "stratified_section"):
+        raise ValueError("Patient-map requires cross_dataset_section or stratified_section")
     spatial_options = vars(SpatialConfig(k=args.spatial_k, radii_um=tuple(args.spatial_radii_um),
         mpp=args.spatial_mpp, coordinates_um=args.spatial_coordinates_um or args.mpp_map is not None,
         weighting=args.spatial_weighting, sigma_um=args.spatial_sigma_um,

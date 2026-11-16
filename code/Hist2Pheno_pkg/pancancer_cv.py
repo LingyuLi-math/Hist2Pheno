@@ -15,6 +15,8 @@ CELL_STRATIFIED_SPLITTERS = frozenset(
         "mixed_cell",
     }
 )
+# 2026.11.16, whole sections held out, folds balanced on L2 composition
+STRATIFIED_SECTION_SPLITTERS = frozenset({"stratified_section", "l2_stratified_section"})
 PREASSIGNED_SPLITTERS = frozenset(
     {
         "preassigned",
@@ -22,7 +24,7 @@ PREASSIGNED_SPLITTERS = frozenset(
         "dataset_section",
         "cross_dataset_section",
     }
-) | CELL_STRATIFIED_SPLITTERS
+) | CELL_STRATIFIED_SPLITTERS | STRATIFIED_SECTION_SPLITTERS
 
 CELL_STRAT_RESULT_DIR = "result_cell_stratified_spatial"
 CELL_STRAT_ABLATION_TAG = "D_emph_L2_spatial_pancancer_cellstrat"
@@ -30,6 +32,19 @@ CELL_STRAT_ABLATION_TAG = "D_emph_L2_spatial_pancancer_cellstrat"
 
 def is_cell_stratified_splitter(name: str) -> bool:
     return str(name).strip().lower() in CELL_STRATIFIED_SPLITTERS
+
+
+def is_stratified_section_splitter(name: str) -> bool:
+    return str(name).strip().lower() in STRATIFIED_SECTION_SPLITTERS
+
+
+def splitter_family(name: str) -> str:
+    """Name written to ``fold_plan.csv``; plans of different families never mix."""
+    if is_stratified_section_splitter(name):
+        return "stratified_section"
+    if is_cell_stratified_splitter(name):
+        return "cell_stratified"
+    return "cross_dataset_section"
 
 
 def cache_path_for(section_id: str, cache_dir: Path) -> Path:
@@ -256,3 +271,181 @@ def summarize_cell_stratified_folds(
         parts.append(long)
     out = pd.concat(parts, ignore_index=True)
     return out.sort_values(["level", "fold", "class"]).reset_index(drop=True)
+
+
+########################################################
+# 2026.11.16, section-grouped folds balanced on L2 composition
+# 按 section 整块留出，同时让每个 fold 的 L2 组成尽量接近全体
+########################################################
+def _fold_costs(F, M, S, inv_T, w_c, inv_n_ds, w_d, inv_S, k, size_weight):
+    """Per-fold cost. F: fold×class counts, M: fold×dataset units, S: fold cells."""
+    class_term = ((F * inv_T * k - 1.0) ** 2) @ w_c
+    cohort_term = ((M * inv_n_ds * k - 1.0) ** 2) @ w_d
+    size_term = size_weight * (S * inv_S * k - 1.0) ** 2
+    return class_term + cohort_term + size_term
+
+
+def assign_stratified_section_folds(
+    section_ids,
+    datasets,
+    counts,
+    *,
+    n_splits: int = 5,
+    seed: int = 42,
+    existing: dict | None = None,
+    units=None,
+    cohort_weight: float = 1.0,
+    size_weight: float = 0.5,
+    swap_trials: int | None = None,
+) -> dict[str, int]:
+    """Map sections to folds so each fold holds out whole sections (or whole
+    ``units``, e.g. patients) and each fold's L2 composition stays close to the
+    pooled one.
+
+    ``counts`` is sections × L2 classes (cell counts). The cost is the squared
+    relative deviation of every fold from 1/k of each class (all classes
+    weighted equally, so rare classes such as B_cell or Plasma matter as much
+    as Tumor), of each cohort's units, and of the total cell count. Units are
+    placed greedily, rarest first; then random swaps between two units of the
+    same cohort are kept whenever they lower the cost (cohort counts per fold
+    do not change). Sections in ``existing`` keep their fold.
+    """
+    k = int(n_splits)
+    if k < 2:
+        raise ValueError(f"n_splits must be >= 2, got {k}")
+    sids = [str(s) for s in section_ids]
+    ds = [str(d) for d in datasets]
+    C = np.asarray(counts, dtype=np.float64)
+    if C.ndim != 2 or C.shape[0] != len(sids) or len(ds) != len(sids):
+        raise ValueError("section_ids, datasets and counts rows must align")
+    if len(set(sids)) != len(sids):
+        raise ValueError("duplicate section ids")
+    unit_of = [str(u) for u in (units if units is not None else sids)]
+    if len(unit_of) != len(sids):
+        raise ValueError("units must align with section_ids")
+    # Collapse sections into units (a unit never spans two folds).
+    u_names = list(dict.fromkeys(unit_of))
+    u_index = {u: i for i, u in enumerate(u_names)}
+    U = np.zeros((len(u_names), C.shape[1]))
+    np.add.at(U, [u_index[u] for u in unit_of], C)
+    u_ds = {}
+    for u, d in zip(unit_of, ds):
+        if u_ds.setdefault(u, d) != d:
+            raise ValueError(f"unit {u!r} spans two datasets")
+    ds_names = sorted(set(ds))
+    d_index = {d: i for i, d in enumerate(ds_names)}
+    u_d = np.asarray([d_index[u_ds[u]] for u in u_names])
+    u_size = U.sum(1)
+
+    T = U.sum(0)
+    present = T > 0
+    inv_T = np.where(present, 1.0 / np.maximum(T, 1e-12), 0.0)
+    w_c = present / max(int(present.sum()), 1)
+    n_ds = np.bincount(u_d, minlength=len(ds_names)).astype(float)
+    inv_n_ds = 1.0 / np.maximum(n_ds, 1.0)
+    w_d = np.full(len(ds_names), float(cohort_weight) / max(len(ds_names), 1))
+    inv_S = 1.0 / max(float(u_size.sum()), 1e-12)
+    args = (inv_T, w_c, inv_n_ds, w_d, inv_S, k, float(size_weight))
+
+    fold_u = np.full(len(u_names), -1, dtype=np.int64)
+    frozen = np.zeros(len(u_names), dtype=bool)
+    for sid, u in zip(sids, unit_of):
+        if existing and sid in existing:
+            f = int(existing[sid])
+            if not 0 <= f < k:
+                raise ValueError("Existing fold plan incompatible with requested cv_k; use a new output directory")
+            i = u_index[u]
+            if fold_u[i] not in (-1, f):
+                raise ValueError(f"unit {u!r} already split across folds in the existing plan")
+            fold_u[i] = f
+            frozen[i] = True
+
+    F = np.zeros((k, C.shape[1]))
+    M = np.zeros((k, len(ds_names)))
+    S = np.zeros(k)
+    for i in np.flatnonzero(frozen):
+        F[fold_u[i]] += U[i]; M[fold_u[i], u_d[i]] += 1; S[fold_u[i]] += u_size[i]
+
+    rng = np.random.default_rng(int(seed))
+    todo = np.flatnonzero(~frozen)
+    share = (U[todo] * inv_T).max(1) if len(todo) else np.zeros(0)
+    jitter = rng.random(len(todo))
+    order = todo[np.lexsort((jitter, -u_size[todo], -share))]
+    eye = np.eye(len(ds_names))
+    for i in order:
+        base = _fold_costs(F, M, S, *args)
+        new = _fold_costs(F + U[i], M + eye[u_d[i]], S + u_size[i], *args)
+        delta = new - base
+        f = int(np.argmin(delta + 1e-12 * np.arange(k)))
+        fold_u[i] = f
+        F[f] += U[i]; M[f, u_d[i]] += 1; S[f] += u_size[i]
+
+    movable = np.flatnonzero(~frozen)
+    if len(movable) > 1:
+        n_trials = int(swap_trials if swap_trials is not None else 60 * len(movable))
+        by_ds = {d: movable[u_d[movable] == d] for d in range(len(ds_names))}
+        cost = _fold_costs(F, M, S, *args)
+        pick = rng.integers(0, len(movable), size=n_trials)
+        for t in range(n_trials):
+            a = movable[pick[t]]
+            pool = by_ds[u_d[a]]
+            if len(pool) < 2:
+                continue
+            b = pool[rng.integers(0, len(pool))]
+            fa, fb = fold_u[a], fold_u[b]
+            if fa == fb:
+                continue
+            diff = U[b] - U[a]
+            ds_ = u_size[b] - u_size[a]
+            Fa, Fb = F[fa] + diff, F[fb] - diff
+            ca = _fold_costs(Fa[None], M[fa][None], np.array([S[fa] + ds_]), *args)[0]
+            cb = _fold_costs(Fb[None], M[fb][None], np.array([S[fb] - ds_]), *args)[0]
+            if ca + cb < cost[fa] + cost[fb] - 1e-12:
+                F[fa], F[fb] = Fa, Fb
+                S[fa] += ds_; S[fb] -= ds_
+                cost[fa], cost[fb] = ca, cb
+                fold_u[a], fold_u[b] = fb, fa
+    return {sid: int(fold_u[u_index[u]]) for sid, u in zip(sids, unit_of)}
+
+
+def section_label_counts(groups, labels, n_groups: int, n_classes: int) -> np.ndarray:
+    """sections × classes cell counts from per-cell group ids and encoded labels."""
+    g = np.asarray(groups, dtype=np.int64)
+    y = np.asarray(labels, dtype=np.int64)
+    ok = (y >= 0) & (y < n_classes)
+    flat = g[ok] * n_classes + y[ok]
+    return np.bincount(flat, minlength=n_groups * n_classes).reshape(n_groups, n_classes)
+
+
+def fold_balance_table(counts, fold_ids, class_names) -> pd.DataFrame:
+    """fold × class share of each class held out in that fold (ideal 1/k),
+    plus whether the fold's training side still has the class."""
+    C = np.asarray(counts, dtype=np.float64)
+    f = np.asarray(fold_ids, dtype=np.int64)
+    k = int(f.max()) + 1
+    F = np.zeros((k, C.shape[1]))
+    np.add.at(F, f, C)
+    T = F.sum(0)
+    rows = []
+    for fold in range(k):
+        for j, name in enumerate(class_names):
+            rows.append({
+                "fold": fold, "class": str(name), "n_val": int(F[fold, j]),
+                "share_of_class": float(F[fold, j] / T[j]) if T[j] > 0 else np.nan,
+                "val_fraction_in_fold": float(F[fold, j] / F[fold].sum()) if F[fold].sum() > 0 else np.nan,
+                "pooled_fraction": float(T[j] / T.sum()) if T.sum() > 0 else np.nan,
+                "train_has_class": bool(T[j] - F[fold, j] > 0),
+            })
+    return pd.DataFrame(rows)
+
+
+def fold_balance_score(counts, fold_ids) -> float:
+    """Mean over present classes of the max |share-1/k| across folds (0 = perfect)."""
+    C = np.asarray(counts, dtype=np.float64)
+    f = np.asarray(fold_ids, dtype=np.int64)
+    k = int(f.max()) + 1
+    F = np.zeros((k, C.shape[1]))
+    np.add.at(F, f, C)
+    T = F.sum(0)
+    ok = T > 0
+    return float(np.abs(F[:, ok] / T[ok] - 1.0 / k).max(0).mean())

@@ -121,16 +121,13 @@ cd /home/lingyu/ssd2/Python/Hist2Pheno
 bash code/spora/run_spora_pancancer.sh refresh-schurch
 ```
 
-然后再训练。A8–A11 各用四张 GPU：fold 0 先建空间缓存，fold 1–3 并行，fold 4 接在 fold 0 后面，最后一张卡写 `best_mlp_gpu.pt`。一次只跑一个。A10 会先写 `data/PanCancer/mpp_map.csv`，Schürch 和 Hoefflin 是 1.0 µm/px。
+然后再训练。A8 用四张 GPU：fold 0 先建空间缓存，fold 1–3 并行，fold 4 接在 fold 0 后面，最后一张卡写 `best_mlp_gpu.pt`。A9、A10、A11 已经从消融里拿掉，下面三条会直接退出。
 
 ```bash
 bash code/PanCancer/run_a8_4gpu.sh
-bash code/PanCancer/run_a9_4gpu.sh
-bash code/PanCancer/run_a10_4gpu.sh
-bash code/PanCancer/run_a11_4gpu.sh
 ```
 
-`run_spora_pancancer.sh train` 仍是单独的 A2，结果在 `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`。A8–A11 分别写到 `result_uni2_A8_l12_balanced_paired_v2_seed42/`、`result_uni2_A9_nbr_comp_paired_v2_seed42/`、`result_uni2_A10_nbr_comp_geom_paired_v2_seed42/`、`result_uni2_A11_nbr_tissue_paired_v2_seed42/`。说明在 `code/PanCancer/README.md`。
+`run_spora_pancancer.sh train` 仍是单独的 A2，结果在 `data/PanCancer/result_uni2_A2_spora9_paired_v2_seed42/`。A8 写到 `result_uni2_A8_l12_balanced_paired_v2_seed42/`。邻居头和组织头的结果目录已删除。说明在 `code/PanCancer/README.md`。
 
 只想先看 CRC 和 GBM（含这两批新切片）能不能跑通：
 

@@ -59,7 +59,7 @@ L2_TO_C2L = {
     "Epithelial": "normal",
     "Alveolar": "normal",
     "Injury_epithelial": "normal",
-    "DCIS": "normal",
+    "DCIS": "tumor",  # 2026.11.16, in-situ carcinoma is neoplastic, not normal epithelium
     "Myoepithelial": "normal",
     "Fibroblast": "fibroblast",
     "Myofibroblast": "fibroblast",

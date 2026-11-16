@@ -7,25 +7,21 @@
 ## and runs he_validate.
 ##
 ##   bash code/PanCancer/run_uni2_4gpu.sh A8
-##   bash code/PanCancer/run_uni2_4gpu.sh A9
-##   bash code/PanCancer/run_uni2_4gpu.sh A10
-##   bash code/PanCancer/run_uni2_4gpu.sh A11
-##   GPUS="0 1 2 3" bash code/PanCancer/run_uni2_4gpu.sh A9
 ##
-## A10 writes data/PanCancer/mpp_map.csv first. A finished hce_group_fold_N.pt
-## is reused. Delete that result's fold files before a clean rerun.
-## Do not start two of these at once: they share the four GPUs.
+## Neighbor and tissue heads were removed. A finished hce_group_fold_N.pt
+## is reused. Do not start two of these at once: they share the four GPUs.
 
 set -euo pipefail
 
 ARCH="${1:-}"
 case "$ARCH" in
   A8) TAG_BASE="A8_l12_balanced"; RESULT="result_uni2_A8_l12_balanced" ;;
-  A9) TAG_BASE="A9_nbr_comp"; RESULT="result_uni2_A9_nbr_comp" ;;
-  A10) TAG_BASE="A10_nbr_comp_geom"; RESULT="result_uni2_A10_nbr_comp_geom" ;;
-  A11) TAG_BASE="A11_nbr_tissue"; RESULT="result_uni2_A11_nbr_tissue" ;;
+  A9|A10|A11)
+    echo "${ARCH} was removed. The neighbor and tissue heads did not improve L2 macro-F1." >&2
+    exit 1
+    ;;
   *)
-    echo "Usage: bash code/PanCancer/run_uni2_4gpu.sh {A8|A9|A10|A11}" >&2
+    echo "Usage: bash code/PanCancer/run_uni2_4gpu.sh A8" >&2
     exit 1
     ;;
 esac
@@ -35,6 +31,10 @@ cd "$REPO"
 CONDA_ENV="${CONDA_ENV:-SeededNTM}"
 SEED="${TRAIN_SEED:-42}"
 SUFFIX="paired_v2_seed${SEED}"
+# 2026.11.16, must match 1_demo_train.sh: SPLITTER=stratified_section -> stratsec_ prefix
+if [[ "${SPLITTER:-cross_dataset_section}" != cross_dataset_section ]]; then
+  SUFFIX="stratsec_${SUFFIX}"
+fi
 TAG="${TAG_BASE}_${SUFFIX}"
 CKPT="$REPO/data/PanCancer/${RESULT}_${SUFFIX}/cross_dataset_cv/${TAG_BASE}"
 LOGDIR="$REPO/code/log"
@@ -44,11 +44,6 @@ read -r -a GPUS <<< "${GPUS:-0 1 2 3}"
 if [[ "${#GPUS[@]}" -ne 4 ]]; then
   echo "ERROR: GPUS must list 4 devices (got ${GPUS[*]})" >&2
   exit 1
-fi
-
-if [[ "$ARCH" == A10 ]]; then
-  echo "===== mpp map $(date '+%F %T') ====="
-  conda run --no-capture-output -n "$CONDA_ENV" python -u code/PanCancer/make_mpp_map.py
 fi
 
 shopt -s nullglob

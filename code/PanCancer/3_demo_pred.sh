@@ -192,31 +192,16 @@ cmd_uni2() {
       extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
       ;;
     A2L12)
-      ckpt="$OUT/result_uni2_A2_l12_balanced/cross_dataset_cv/A2_l12_balanced/best_mlp_gpu.pt"
-      root="$OUT/pred_uni2_A2_l12_balanced"
-      log="$REPO/code/log/pancancer_section_uni2_A2_l12_balanced_predict.log"
-      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+      die "renamed to A7. Use code/External_val/<cohort>/demo_uni2_A7.sh"
       ;;
-    A9)
-      ckpt="$OUT/result_uni2_A9_nbr_comp/cross_dataset_cv/A9_nbr_comp/best_mlp_gpu.pt"
-      root="$OUT/pred_uni2_A9_nbr_comp"
-      log="$REPO/code/log/pancancer_section_uni2_A9_nbr_comp_predict.log"
-      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+    A4)
+      die "attention predict was removed. The new A4 trains with run_uni2_new1066.sh A4"
       ;;
-    A10)
-      ckpt="$OUT/result_uni2_A10_nbr_comp_geom/cross_dataset_cv/A10_nbr_comp_geom/best_mlp_gpu.pt"
-      root="$OUT/pred_uni2_A10_nbr_comp_geom"
-      log="$REPO/code/log/pancancer_section_uni2_A10_nbr_comp_geom_predict.log"
-      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
-      ;;
-    A11)
-      ckpt="$OUT/result_uni2_A11_nbr_tissue/cross_dataset_cv/A11_nbr_tissue/best_mlp_gpu.pt"
-      root="$OUT/pred_uni2_A11_nbr_tissue"
-      log="$REPO/code/log/pancancer_section_uni2_A11_nbr_tissue_predict.log"
-      extra=(--embedder uni2 --spatial-k 8 --skip-figures --skip-existing)
+    A9|A10|A11)
+      die "${which} was removed from the ablation"
       ;;
     *)
-      die "uni2 predict must be A0 | A1 | A2 | A3 | A5 | A6 | A8 | A2L12 | A9 | A10 | A11"
+      die "uni2 predict must be A0 | A1 | A2 | A3 | A5 | A6 | A8"
       ;;
   esac
   # 2026.10.26, rewrite onto paired_v2_seed42 / 上面的无后缀路径是重训前的目录
@@ -256,8 +241,12 @@ case "${1:-}" in
     ;;
   uni2)
     case "${2:-}" in
-      A0|A1|A2|A3|A5|A6|A8|A2L12|A9|A10|A11) cmd_uni2 "$2" ;;
-      *) die "uni2 steps: A0 | A1 | A2 | A3 | A5 | A6 | A8 | A2L12 | A9 | A10 | A11" ;;
+      A0|A1|A2|A3|A5|A6|A8) cmd_uni2 "$2" ;;
+      A7) die "A7 is predicted from code/External_val/<cohort>/demo_uni2_A7.sh" ;;
+      A2L12) die "renamed to A7. Use code/External_val/<cohort>/demo_uni2_A7.sh" ;;
+      A4) die "attention predict was removed. The new A4 trains with run_uni2_new1066.sh A4" ;;
+      A9|A10|A11) die "${2} was removed from the ablation" ;;
+      *) die "uni2 steps: A0 | A1 | A2 | A3 | A5 | A6 | A8" ;;
     esac
     ;;
   *) die "unknown command '$1' (section | celltype | uni2)" ;;

@@ -5,14 +5,16 @@
 ##   bash code/PanCancer/1_demo_train.sh index
 ##   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
 ##   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A2L12|A9|A10|A11}
+##   bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A5|A6|A7|A8}
+## The 1,066-section ablation is run_uni2_new1066.sh A0–A8.
+## Do not train that index with this file's default suffix.
 ##   CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A3
 ##
 ## Published UNI section/celltype commands pin:
 ##   --embedder uni --hierarchy legacy --legacy-l2-l1-weight 2 --inner-val-fraction 0
 ## UNI2 ablations are cross-section, inner-val 0.2, class-weight balanced.
-## k=16 and k=32 attention are not commands: attention gathers (batch, k, 1536)
-## every step, and those widths were too slow. A4 is k=8 attention only.
+## k=8 attention was removed: the gather is too expensive. k=16 and k=32
+## were never commands. Neighbor and tissue auxiliary heads were removed.
 ## Do not start several uni2 prepares at once. The first one builds
 ## data/PanCancer/uni2_aligned/; the rest should wait until that cache exists.
 ## Predict commands are in 3_demo_pred.sh.
@@ -37,11 +39,9 @@
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A6
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
-# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8   # 2026.11.15 A3 + balanced L12
-# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A2L12  # A2 trunk + balanced L12 (no gate)
-# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A9   # A8 + neighbour composition (Hist2Prot)
-# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A10  # A9 + µm topology/density
-# CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A11  # A9 + tissue compartment (Hist2Prot)
+# 2026.11.17, the 1,066-section series is code/PanCancer/run_uni2_new1066.sh
+# CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A0
+# ... through A8. A2 is the model to use. See PanCancer/README.md.
 
 
 set -euo pipefail
@@ -59,7 +59,8 @@ Usage:
   bash code/PanCancer/1_demo_train.sh index
   bash code/PanCancer/1_demo_train.sh section  {smoke|train}
   bash code/PanCancer/1_demo_train.sh celltype {smoke|train}
-  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A2L12|A9|A10|A11}
+  bash code/PanCancer/1_demo_train.sh uni2 {smoke|A0|A1|A2|A3|A5|A6|A7|A8}
+  bash code/PanCancer/run_uni2_new1066.sh {A0|A1|A2|A3|A4|A5|A6|A7|A8}
 
 GPU: CUDA_DEVICE=${CUDA_DEVICE}   env: ${CONDA_ENV}
 Logs: data/PanCancer/train*.log and code/log/pancancer_section_uni2_<arch>.log
@@ -342,11 +343,22 @@ cmd_uni2() {
       )
       ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A2L12|A9|A10|A11"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A9|A10|A11|A2_l12_balanced"
       ;;
   esac
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
   local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
+  # 2026.11.16, SPLITTER=stratified_section: whole sections, L2-balanced folds.
+  # Results go to <save-result>_stratsec_<suffix>, never into the round-robin folder.
+  if [[ "${SPLITTER:-cross_dataset_section}" != cross_dataset_section ]]; then
+    local -a resplit=()
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[i]}" == --group-splitter ]]; then i=$((i+1)); continue; fi
+      resplit+=("${args[i]}")
+    done
+    args=("${resplit[@]}" --group-splitter "$SPLITTER")
+    suffix="stratsec_${suffix}"
+  fi
   for ((i=0; i<${#args[@]}; i++)); do
     if [[ "${args[i]}" == --save-result ]]; then args[i+1]="${args[i+1]}_${suffix}"; fi
   done
@@ -403,16 +415,15 @@ case "${1:-}" in
       A1) cmd_uni2 A1_adjacent_nospatial ;;
       A2) cmd_uni2 A2_adjacent_spatial_k8mean ;;
       A3) cmd_uni2 A3_adjacent_spatial_k8mean_gate ;;
-      A4) cmd_uni2 A4_adjacent_spatial_k8attention ;;
+      A4) die "A4 attention was removed; the k=8 gather is too expensive" ;;
       A5) cmd_uni2 A5_l12_links_1 ;;
       A6) cmd_uni2 A6_l12_links_2 ;;
       A7) cmd_uni2 A7_bal_focal ;;
       A8) cmd_uni2 A8_l12_balanced ;;
-      A2L12) cmd_uni2 A2_l12_balanced ;;
-      A9) cmd_uni2 A9_nbr_comp ;;
-      A10) cmd_uni2 A10_nbr_comp_geom ;;
-      A11) cmd_uni2 A11_nbr_tissue ;;
-      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A4 | A5 | A6 | A7 | A8 | A2L12 | A9 | A10 | A11" ;;
+      A2_l12_balanced) cmd_uni2 A2_l12_balanced ;;
+      A2L12) die "renamed to A7. CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A7" ;;
+      A9|A10|A11) die "${2} was removed. The neighbor and tissue heads did not improve L2 macro-F1." ;;
+      *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A5 | A6 | A7 | A8" ;;
     esac
     ;;
   *) die "unknown command '$1' (index | section | celltype | uni2)" ;;

@@ -803,8 +803,9 @@ def _main(args) -> int:
                 plan.loc[plan["fold"].astype(int) == int(args.fold), "sample"].astype(str),
             )
         )
+        # Series.sample is a method, so r.sample is not the sample column.
         index = index[
-            index.apply(lambda r: (str(r.dataset), str(r.sample)) in keys, axis=1)
+            index.apply(lambda r: (str(r["dataset"]), str(r["sample"])) in keys, axis=1)
         ].copy()
         print(f"  fold={int(args.fold)}  {len(index)} sections from {plan_path.name}", flush=True)
     want_crc = (not args.datasets) or ("CRC" in args.datasets)

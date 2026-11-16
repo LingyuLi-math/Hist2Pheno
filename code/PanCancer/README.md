@@ -129,11 +129,11 @@ CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
 CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A8
 ```
 
-Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. For A0–A7 the log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). A8 and the [A2 new1066 refit](#2026-11-16-a2-on-the-1066-section-index-finished) use the later 1,066-section run. It is not an external test set. A file written before 2026-11-15 has labels and probabilities only; the class-order fields in the [OOF archive contract](#2026-11-15-oof-archive-contract) appear after the next train.
+Each job is cross-section 5-fold. It writes `result_uni2_<arch>_paired_v2_seed42/validation_internal_metrics.csv` and `oof_predictions.npz`. For A0–A7 the log line `OOF L2 macro AUROC=` is the pooled out-of-fold score on the seven training cohorts (5,627,071 cells, 896 sections). A8, the [A2 new1066 refit](#2026-11-16-a2-on-the-1066-section-index-finished), and [A7](#2026-11-17-ablation-on-the-updated-index) use the later 1,066-section run. It is not an external test set. These `1_demo_train.sh` tokens are the 896-section dispatcher. A7 here is the focal sampler, not the 1,066-section A7. The series to run now is [`run_uni2_new1066.sh`](#2026-11-17-ablation-on-the-updated-index). A file written before 2026-11-15 has labels and probabilities only; the class-order fields in the [OOF archive contract](#2026-11-15-oof-archive-contract) appear after the next train.
 
 ### 2. Choose the architecture — [`2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb`](2_Pred_statistic_visual_pancancer_uni2_ablation.ipynb)
 
-Compare A0–A3, then A5/A6/A7, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. Those rows are the 896-section runs. A8 and the A2 refit finished on the enlarged 1,066-section set; their numbers are in [A8 balanced L12](#2026-11-16-a8-balanced-l12-finished) and [A2 on the 1,066-section index](#2026-11-16-a2-on-the-1066-section-index-finished). They are not rows of this table. This notebook does not call predict, and those cohorts are not a held-out test set.
+Compare A0–A3, then A5/A6/A7, on that pooled OOF L2 macro AUROC, plus the per-cohort and per-class breakdown of the same OOF cells. Those rows are the 896-section runs. A8, the A2 refit, and A7 (balanced L12, no gate) finished on the enlarged 1,066-section set; their numbers are in [A8 balanced L12](#2026-11-16-a8-balanced-l12-finished), [A2 on the 1,066-section index](#2026-11-16-a2-on-the-1066-section-index-finished), and [Ablation on the updated index](#2026-11-17-ablation-on-the-updated-index). They are not rows of this table. This notebook does not call predict, and those cohorts are not a held-out test set.
 
 Numbers below are the **2026-10-27 `paired_v2_seed42` retrain** (named-layer init, split-seed 42, L2→L1 NLL weight 2). A 2026-10-26 morning A3 of 0.8907 used L2→L1 NLL weight 1 and those checkpoints were removed.
 
@@ -141,16 +141,13 @@ On the 896-section set, A3 remains the best finished architecture on pooled OOF 
 
 `data/PanCancer/result_uni2_A3_adjacent_spatial_k8mean_gate_paired_v2_seed42/cross_dataset_cv/A3_adjacent_spatial_k8mean_gate/best_mlp_gpu.pt`
 
-0.8897 is the five-fold pooled OOF of the A3 recipe. It is not the score of this one file on every section.
+0.8897 is the five-fold pooled OOF of the A3 recipe on the 896-section index. It is not the score of this one file on every section. The series to train on the updated 1,066-section index, and which of those weights to keep, is in [Ablation on the updated index](#2026-11-17-ablation-on-the-updated-index).
 
-To refit A2 and A3 on the current 1,066-section index without opening those directories, [`run_uni2_new1066.sh`](run_uni2_new1066.sh) sets `RUN_SUFFIX=new1066_paired_v2_seed42`. A2 finished; its directory is `result_uni2_A2_adjacent_spatial_k8mean_new1066_paired_v2_seed42/`. A3 still writes `result_uni2_A3_adjacent_spatial_k8mean_gate_new1066_paired_v2_seed42/`. One GPU each:
+To refit A2 and A3 on the current 1,066-section index without opening those directories, [`run_uni2_new1066.sh`](run_uni2_new1066.sh) sets `RUN_SUFFIX=new1066_paired_v2_seed42`. A2 and A7 have finished. A3 still writes `result_uni2_A3_adjacent_spatial_k8mean_gate_new1066_paired_v2_seed42/`.
 
 ```bash
 CUDA_DEVICE=1 bash code/PanCancer/run_uni2_new1066.sh A3
-CUDA_DEVICE=2 bash code/PanCancer/run_uni2_new1066.sh A2L12
 ```
-
-`A2L12` is the A8 change (balanced L12) on the A2 trunk: k=8 mean, no spatial gate. It writes `result_uni2_A2_l12_balanced_new1066_paired_v2_seed42/` and does not open the finished A8 directory, the published A2 directory, or the finished new1066 A2 directory.
 
 ### 2026-11-16 A2 on the 1,066-section index (finished)
 
@@ -181,6 +178,58 @@ Macrophage stays the weak common class (AUROC 0.687, recall 0.072, 224,901 predi
 Weight: fold 4 `data/PanCancer/result_uni2_A2_adjacent_spatial_k8mean_new1066_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt`. Log: `code/log/pancancer_section_uni2_A2_adjacent_spatial_k8mean_new1066_paired_v2_seed42.log`. OOF archive: `oof_predictions.npz`.
 
 NPC maps: [`Pred_visual_npc_uni2_A2_new1066.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A2_new1066.ipynb), predict `code/External_val/NPC/demo_uni2_A2_new1066.sh`. Prostate Patient_1 H2: [`Pred_visual_prostate_patient1_H2_uni2_A2_new1066.ipynb`](../External_val/Prostate/Pred_visual_prostate_patient1_H2_uni2_A2_new1066.ipynb), predict `code/External_val/Prostate/demo_uni2_A2_new1066.sh`. Both write `pred_uni2_A2_new1066_paired_v2_seed42/` and leave the published A2 prediction trees in place.
+
+### 2026-11-17 Balanced L12 on the A2 trunk (finished; public name A7)
+
+The command token `A2L12` is retired. In the [updated-index ablation](#2026-11-17-ablation-on-the-updated-index) this run is **A7**. The weight directory below is unchanged.
+
+A7 is the A8 loss change on the A2 trunk: adjacent loss, L2→L1 NLL weight 2, spatial k=8 mean, **no gate**, `--l12-class-weight-mode balanced`. It does not open the finished A8 directory (A3 trunk + gate), the published 896-section A2 directory, or the finished new1066 A2 directory.
+
+The first fp16 attempt died on fold 2 epoch 7 (`RuntimeError: No finite optimizer update`). That fold's Neural L12 weight is 448. The finished run is `HIST2PHENO_AMP=bf16 CUDA_DEVICE=2 bash code/PanCancer/run_uni2_new1066.sh A7`. Start 2026-11-16 23:57, wall 1:20:25, end 2026-11-17 01:18, GPU 2. The log has no non-finite AMP warning. Fold 2 early-stopped at epoch 16 with its best checkpoint at epoch 6. The splitter is the default `cross_dataset_section`. Do not rerun that command after the 2026-11-16 code update: `model.py` is in the checkpoint protocol hash, so a rerun would retrain all five folds into the same directory. The numbers below stay the result for this split.
+
+| | index | spatial | pooled OOF L2 | fold-mean L2 AUROC | fold-mean L12 AUROC | L2 macro-F1 | L1 macro-F1 | `best_mlp` fold |
+|--|-------|---------|---------------|--------------------|---------------------|-------------|-------------|-----------------|
+| A2 new1066 | 1,066 sections, 7,461,039 cells | k=8 mean | 0.9053 | 0.8997 | 0.8547 | 0.2846 ± 0.0175 | 0.4172 ± 0.0124 | 4 |
+| **A7** | same cells | k=8 mean, balanced L12, bf16 | **0.9035** | 0.8974 ± 0.009 | 0.8456 ± 0.011 | 0.2815 ± 0.0181 | 0.4249 ± 0.0145 | 4 |
+| A8 `l12_balanced` | same cells | k=8 mean + gate, balanced L12 | 0.9002 | 0.8991 ± 0.006 | 0.8482 ± 0.004 | 0.2953 ± 0.008 | 0.4281 ± 0.010 | 0 |
+
+Fold L2 AUROC is 0.9084, 0.8910, 0.8867, 0.8986, 0.9025. Fold L12 AUROC is 0.8401, 0.8385, 0.8348, 0.8524, 0.8621. Best epochs are 12, 11, 6, 13, 8. Fold 4 is the selected weight (`three_tier_auc_sum` 2.6384, best epoch 8).
+
+0.9035, A2 new1066's 0.9053, and A8's 0.9002 are the same 7,461,039 OOF cells. Balanced L12 on the no-gate trunk lands between them on pooled L2. It moves L12 `B_Plasma` the way A8 does: recall 0.409 and 433,874 predicted cells, against A2 new1066's recall 0.186 and 91,654 predicted cells. `B_cell` is 148,662 true cells and `Plasma` is 69,571.
+
+| L2 / L12 | A7 AUROC | A2 new1066 AUROC | A8 AUROC | A7 recall | A7 F1 | A7 n_pred |
+|----------|------------:|-----------------:|---------:|-------------:|---------:|-------------:|
+| `B_cell` | 0.842 | 0.854 | 0.857 | 0.373 | 0.274 | 256,124 |
+| `Plasma` | 0.898 | 0.901 | 0.895 | 0.306 | 0.177 | 171,277 |
+| L12 `B_Plasma` | 0.841 | 0.851 | 0.846 | 0.409 | 0.274 | 433,874 |
+
+Macrophage stays weak (AUROC 0.682, recall 0.048, 152,272 predicted against 946,950 true). NK is over-called (113,346 predicted against 11,975 true).
+
+Weight: fold 4 `data/PanCancer/result_uni2_A2_l12_balanced_new1066_paired_v2_seed42/cross_dataset_cv/A2_l12_balanced/best_mlp_gpu.pt`. Log: `code/log/pancancer_section_uni2_A2_l12_balanced_new1066_paired_v2_seed42.log`. OOF archive: `oof_predictions.npz`.
+
+External maps write `pred_uni2_A7_new1066_paired_v2_seed42/` and leave the A2 and A8 trees in place.
+
+| Cohort | Notebook | Predict |
+|--------|----------|---------|
+| NPC | [`Pred_visual_npc_uni2_A7.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A7.ipynb) | `CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A7.sh predict` |
+| Prostate Patient_1 H2 | [`Pred_visual_prostate_patient1_H2_uni2_A7.ipynb`](../External_val/Prostate/Pred_visual_prostate_patient1_H2_uni2_A7.ipynb) | `SAMPLE=Patient_1__H2 bash code/External_val/Prostate/demo_uni2_A7.sh predict` |
+| BRCA | [`Pred_visual_brca_uni2_A7.ipynb`](../External_val/BRCA/Pred_visual_brca_uni2_A7.ipynb) | `bash code/External_val/BRCA/demo_uni2_A7.sh predict` |
+
+### 2026-11-16 L2-balanced section folds (`stratified_section`)
+
+Optional splitter. Each section is still entirely train or validation. Folds are assigned so every L2 class, every cohort, and the total cell count stay close to a 1/5 share. Rare classes are weighted the same as Tumor. `SPLITTER=stratified_section` in [`1_demo_train.sh`](1_demo_train.sh) appends `stratsec_` to the result suffix, so it does not open `cross_dataset_section` directories, including the finished A7 run. A result directory refuses a `fold_plan.csv` written by the other family.
+
+```bash
+SPLITTER=stratified_section HIST2PHENO_AMP=bf16 CUDA_DEVICE=2 bash code/PanCancer/run_uni2_new1066.sh A7
+```
+
+That writes `result_uni2_A2_l12_balanced_stratsec_new1066_paired_v2_seed42/`. Pass `--patient-map` to keep a patient's sections in one fold; without it, sections of one patient can still land in different folds, as in the default section CV. `fold_plan_l2_balance.csv` records each class's held-out share (ideal 0.2).
+
+Finished 2026-11-17 06:03 (start 04:42, wall 1:21:36, GPU 2, bf16). Same 1,066 sections and 7,461,039 cells as the `cross_dataset_section` A7 run. Pooled OOF L2 is **0.8811**. Fold-mean L2 AUROC is 0.8911. Fold L2 AUROC is 0.8919, 0.9112, 0.8725, 0.8881, 0.8917. L2 macro-F1 is 0.2687 ± 0.0267. L1 macro-F1 is 0.4214 ± 0.0167. Fold 1 is the selected weight (`three_tier_auc_sum` 2.6287, best epoch 8).
+
+0.8811 is the same cells under a different split from the `cross_dataset_section` A7 score of 0.9035. The two weights are not interchangeable.
+
+Weight: fold 1 `data/PanCancer/result_uni2_A2_l12_balanced_stratsec_new1066_paired_v2_seed42/cross_dataset_cv/A2_l12_balanced/best_mlp_gpu.pt`. Log: `code/log/pancancer_section_uni2_A2_l12_balanced_stratsec_new1066_paired_v2_seed42.log`. NPC maps: [`Pred_visual_npc_uni2_A7_stratsec.ipynb`](../External_val/NPC/Pred_visual_npc_uni2_A7_stratsec.ipynb), predict `CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A7_stratsec.sh predict`. Output tree: `data/Visium/NPC/pred_uni2_A7_stratsec_new1066_paired_v2_seed42/`.
 
 ### 2026-11-16 Training L2 label mix
 
@@ -329,9 +378,11 @@ bash code/PanCancer/run_a8_4gpu.sh
 
 `GPUS="0 1 2 3"` changes the device list. `--only-folds N` is how one process trains a single fold. Fold 0 starts alone and the others wait until its log contains `context cache ready`. Folds 1–3 then occupy the other three GPUs. Fold 4 starts on the first GPU after fold 0 exits. The last step has no `--only-folds`: it loads the five `hce_group_fold_*.pt` files, writes `best_mlp_gpu.pt`, and runs `he_validate`. A fold file that already exists is not retrained. Logs are `code/log/pancancer_section_uni2_A8_l12_balanced_paired_v2_seed42_{prepare,fold0,fold1,fold2,fold3,fold4,finalize}.log`. The finished run above used the one-GPU command, not this four-GPU launcher.
 
-### 2026-11-16 A9–A11 Hist2Prot auxiliary heads
+### 2026-11-16 A9–A11 Hist2Prot auxiliary heads (removed)
 
-A9, A10, and A11 keep the A8 trunk (A3 spatial gate, balanced L12). Each adds a training-time head on the same fused feature. The extra loss weight is 0.2. A0–A8 checkpoints have no auxiliary head, so their fold files stay reusable. A9 and A11 below are the same 1,066-section, 7,461,039-cell index as A8. A0–A7 remain the 896-section runs.
+Removed from the ablation on 2026-11-17. The neighbor head (A9) and the tissue head (A11) did not improve L2 macro-F1 over the gated model (0.2828 and 0.2796, against 0.2953). A10 died in fold 2 and never wrote a weight. `run_uni2_new1066.sh A9|A10|A11`, `run_a9_4gpu.sh`, `run_a10_4gpu.sh`, `run_a11_4gpu.sh`, and `code/External_val/NPC/demo_uni2_A9.sh` / `A10` / `A11` now exit. The A9 and A11 result directories were deleted. The numbers below are why.
+
+A9, A10, and A11 kept the A8 trunk (A3 spatial gate, balanced L12). Each added a training-time head on the same fused feature. The extra loss weight was 0.2.
 
 | | added head | target | extra loss |
 |--|------------|--------|------------|
@@ -353,45 +404,11 @@ A11 fold L2 AUROC is 0.9122, 0.8945, 0.8831, 0.8981, 0.9006. Best epochs are 12,
 
 A10 saved folds 0 and 1, then fold 2 epoch 13 had no finite batch and the process exited (`No finite optimizer update in this epoch`). Fold 0 best `three_tier_auc_sum` is 2.5985 at epoch 12. Fold 1 is 2.6036 at epoch 7. There is no `best_mlp_gpu.pt` and no `oof_predictions.npz`. The log has 3,570 non-finite AMP skips. Do not deploy this partial run.
 
-Weights:
+The scores above were computed before the weights were deleted. Do not retrain these heads.
 
-- A9 fold 4: `data/PanCancer/result_uni2_A9_nbr_comp_paired_v2_seed42/cross_dataset_cv/A9_nbr_comp/best_mlp_gpu.pt`
-- A11 fold 4: `data/PanCancer/result_uni2_A11_nbr_tissue_paired_v2_seed42/cross_dataset_cv/A11_nbr_tissue/best_mlp_gpu.pt`
+Logs, still on disk: `code/log/pancancer_section_uni2_A9_nbr_comp_paired_v2_seed42.log`, `...A10_nbr_comp_geom...`, `...A11_nbr_tissue...`.
 
-Logs: `code/log/pancancer_section_uni2_A9_nbr_comp_paired_v2_seed42.log`, `...A10_nbr_comp_geom...`, `...A11_nbr_tissue...`.
-
-Compartment order is Tumor, Epithelium, Lymphoid, Myeloid, Stroma, Vascular, Mixed. A compartment wins at share 0.5 (Vascular at 0.35); otherwise the label is Mixed. Inference writes `nbr_comp_probs` for A9–A11 and `tissue_comp_probs` for A11.
-
-A10 needs `data/PanCancer/mpp_map.csv` before training. Schürch and Hoefflin coordinates are on the 1 µm H&E. `make_mpp_map.py` therefore sets `codex_crc_spora` and `codex_glioma_spora` to 1.0 µm/px. The other CODEX cohorts stay at 0.5. [`run_a10_4gpu.sh`](run_a10_4gpu.sh) writes that CSV before prepare. [`run_a9_4gpu.sh`](run_a9_4gpu.sh) and [`run_a11_4gpu.sh`](run_a11_4gpu.sh) use the same fold schedule as A8. Do not start a second four-GPU script while the first still holds the devices. Logs follow `code/log/pancancer_section_uni2_<tag>_{prepare,foldN,finalize}.log`.
-
-One GPU, five folds in order:
-
-```bash
-cd /home/lingyu/ssd2/Python/Hist2Pheno
-python code/PanCancer/make_mpp_map.py
-CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A9
-CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A10
-CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A11
-```
-
-Four GPUs, after `refresh-schurch` if the new Schürch cells should be included. One architecture at a time:
-
-```bash
-bash code/spora/run_spora_pancancer.sh refresh-schurch
-bash code/PanCancer/run_a9_4gpu.sh
-bash code/PanCancer/run_a10_4gpu.sh
-bash code/PanCancer/run_a11_4gpu.sh
-```
-
-Outputs:
-
-- `data/PanCancer/result_uni2_A9_nbr_comp_paired_v2_seed42/`
-- `data/PanCancer/result_uni2_A10_nbr_comp_geom_paired_v2_seed42/`
-- `data/PanCancer/result_uni2_A11_nbr_tissue_paired_v2_seed42/`
-
-Predict after a finished weight: `bash code/PanCancer/3_demo_pred.sh uni2 A9` (same for A10 and A11). A10 inference reads the per-section mpp stored in the checkpoint.
-
-Schürch `CD8+ T cells` and `plasma cells` are now in `NATIVE_TO_V1` and the keep set. The prepared tables written before that change omit both (0 cells in `data/CODEX/spora/prepared/schurch2020coordinated/`). Run `bash code/spora/run_spora_pancancer.sh refresh-schurch` before A8–A11 if those cells should enter CRC. That rewrites the 140 Schürch tables and re-extracts their UNI2 tokens. Hoefflin is left as it is.
+Compartment order was Tumor, Epithelium, Lymphoid, Myeloid, Stroma, Vascular, Mixed. A compartment won at share 0.5 (Vascular at 0.35); otherwise the label was Mixed.
 
 ### 3. Predict every training section with that weight — [`3_demo_pred.sh`](3_demo_pred.sh)
 
@@ -479,4 +496,87 @@ python -u code/PanCancer/PanCancer_predict_visualize.py --include-incomplete-lun
 # CRC P5CRC was missing from the first 895-section pass (not in section_index.csv)
 python -u code/PanCancer/PanCancer_predict_visualize.py --datasets CRC --skip-existing
 ```
+
+## 2026-11-17 Ablation on the updated index
+
+The updated training index is 1,066 sections (Lung 25, BRCA 2, CRC 143, HCC 36, PDAC 278, GIST 550, GBM 32). Do not train these on the old 896-section index. Every command below is `run_uni2_new1066.sh`, which writes a `new1066_` directory and does not open the 896-section results.
+
+**A2** is the model to use: adjacent loss, k=8 mean, no gate. Each later id changes one thing from A2. A0 and A1 are the two steps that build up to A2. k=8 attention was removed because the gather is too expensive. The neighbor-composition head and the tissue-compartment head were removed: pooled L2 moved by +0.0006 and −0.004, and L2 macro-F1 fell (0.2828 and 0.2796, against 0.2953 for the gated model). Their result directories were deleted.
+
+| id | one change | internal recipe | on 1,066 sections |
+|--|--|--|--|
+| A0 | legacy loss, no neighbors | A0 | not trained — run |
+| A1 | adjacent loss, no neighbors | A1 | not trained — run |
+| **A2** | k=8 mean | A2 | **finished, 0.9053. Do not rerun.** |
+| A3 | A2 + spatial gate | A3 | not trained — run |
+| A4 | A2, L12 link weights 1 | A5 | not trained — run |
+| A5 | A2, L12 link weights 2 | A6 | not trained — run |
+| A6 | A2, balanced sampler + focal | A7 | not trained — run |
+| A7 | A2 + balanced L12, no gate | `A2_l12_balanced` | **finished, 0.9035. Do not rerun.** NPC tumor region goes to Fibroblast. |
+| **A8** | A3 + balanced L12 | A8 | **finished, 0.9002.** Weight: `result_uni2_A8_l12_balanced_paired_v2_seed42/`. |
+
+Run one at a time. A finished id prints the weight and exits. `1_demo_train.sh uni2 A8` without this launcher writes the 896-style suffix; do not use it for this index.
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+conda activate SeededNTM
+
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A0
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A1
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A2
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A3
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A4
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A5
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A6
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A7
+CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A8
+```
+
+A2, A7, and A8 exit immediately. A0, A1, A3, A4, A5, and A6 train. New weights land in `data/PanCancer/result_uni2_<recipe>_new1066_paired_v2_seed42/`. If a run prints `non-finite loss`, stop it and rerun that id with `HIST2PHENO_AMP=bf16`.
+
+### Worth keeping
+
+Checked every `data/PanCancer/result_*` directory. A run counts as finished only when `best_mlp_gpu.pt` and `oof_predictions.npz` are both present. Pooled L2 is macro OvR AUROC on out-of-fold cells. The 896-section numbers (5,627,071 cells) and the 1,066-section numbers (7,461,039 cells) are different cohorts and are not comparable.
+
+| model | index | recipe | pooled OOF L2 | L2 macro-F1 | why it stays |
+|--|--|--|--|--|--|
+| **A2** | 1,066 | k=8 mean, no gate | **0.9053** | 0.2846 | The model to use. Highest pooled L2 on the current index. On NPC `20210809-C-AH4199551` the cell2location tumor region stays Tumor (55%). Weight: `result_uni2_A2_adjacent_spatial_k8mean_new1066_paired_v2_seed42/.../best_mlp_gpu.pt` (fold 4). |
+| **A8** | 1,066 | k=8 mean + gate, balanced L12 | 0.9002 | **0.2953** | Best L2 macro-F1 on that index. External notebooks and `code/Internal_val/Pred_visual_brca.ipynb` read this weight. On the same NPC tumor region, 63% of nuclei are Tumor. Weight: `result_uni2_A8_l12_balanced_paired_v2_seed42/.../best_mlp_gpu.pt` (fold 0). |
+| **published A3** | 896 | k=8 mean + gate | **0.8897** | **0.3013** | Best finished model on the original seven-cohort index. Do not overwrite. Weight: `result_uni2_A3_adjacent_spatial_k8mean_gate_paired_v2_seed42/.../best_mlp_gpu.pt` (fold 0). |
+| **published A2** | 896 | k=8 mean, no gate | 0.8894 | 0.2941 | Tied with A3 and still the default of the older external and internal notebooks. Do not overwrite. Weight: `result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/.../best_mlp_gpu.pt` (fold 1). |
+
+Use **A2** for the updated index. Use **A8** when the comparison needs the gated, class-weighted L12 model. The two 896-section weights stay on disk so the old figures still open; new training does not use them.
+
+### Finished, not worth deploying
+
+These directories were left in place. Each is about 1.2–1.7 GB, and they are real trained weights.
+
+| model | pooled OOF L2 | reason to leave it out of deployment |
+|--|--|--|
+| 896 A5 `l12_links_1` | 0.8894 | L12-link ablation. Tied with published A2, below A3. Public id on the new index is A4, not yet trained. |
+| 896 A6 `l12_links_2` | 0.8882 | Same. L1 macro-F1 is higher; L2 is not. Public id on the new index is A5. |
+| A0 | 0.8580 | No spatial context. |
+| A1 | 0.8601 | Adjacent loss, still no spatial context. |
+| 896 focal `A7_bal_focal` | 0.8581 | Sampler + focal. Level with A0 and 0.031 below A2. Endothelial predictions blow up. Public id on the new index is A6. |
+| A7 | 0.9035 | Balanced L12 on A2, no gate, bf16. Between A2 and A8 on AUROC, but on the NPC slide it calls the tumor region Fibroblast (46%, Tumor only 11%). Do not use this weight for external figures. |
+| UNI A2, Virchow2 A2 | — | Finished encoder controls (`result_uni_A2`, `result_virchow2_A2`), not the UNI2 choice above. |
+| `result_all_spatial` | — | Older spatial run, 10 fold files, no `oof_predictions.npz`. Kept because a `best_mlp_gpu.pt` is there. |
+
+A3 has not been refit on the 1,066-section index. That directory does not exist.
+
+### Stratified A7 — do not retrain
+
+`SPLITTER=stratified_section HIST2PHENO_AMP=bf16` A7 finished 2026-11-17 06:03. Weight: `result_uni2_A2_l12_balanced_stratsec_new1066_paired_v2_seed42/cross_dataset_cv/A2_l12_balanced/best_mlp_gpu.pt` (fold 1, pooled OOF L2 0.8811). This is a different split from the finished `cross_dataset_section` A7 weight. Do not start a second one.
+
+### Removed on 2026-11-17
+
+These were not finished models. Scaled cache went from 471 GB to 35 GB, context cache from 749 GB to 43 GB. The two scaled files and the `94c57d90…` neighbour cache were left in place, as was `label_cache/pooled_features/X_91d402cb….npy` (43 GB), because the stratsec job still had them open at cleanup time. That job finished at 06:03.
+
+- Unused files in `data/PanCancer/scaled_cache/` and `data/PanCancer/context_cache/`.
+- `result_uni2_A10_nbr_comp_geom_paired_v2_seed42/` — fold 2 died with no finite batch. No `best_mlp_gpu.pt`, no OOF.
+- `result_uni2_A9_nbr_comp_paired_v2_seed42/` and `result_uni2_A11_nbr_tissue_paired_v2_seed42/` — finished, then deleted. L2 macro-F1 was 0.2828 and 0.2796, both below the gated model (0.2953).
+- `result_uni2_A2_spora9_paired_v2_seed42/` — only a `fold_plan.csv`.
+- `result_smoke/` — BRCA/GBM smoke test.
+
+Left on disk on purpose: `data/PanCancer/uni2_aligned/` (161 GB, the UNI2 tokens every later train and predict reads) and the Visium prediction trees. Next spatial train or predict will rebuild the neighbour cache it needs.
 
