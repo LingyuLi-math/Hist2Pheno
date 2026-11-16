@@ -82,7 +82,7 @@ Outputs:
   data/Visium/NPC/${UNI2_PRED_DIRNAME}/{sample}/{sample}_stardist_pred.h5ad
   data/Visium/NPC/${UNI2_PRED_DIRNAME}/{sample}/{sample}_l2_probs.npz
 
-Notebook: code/External_val/NPC/Pred_visual_npc_uni2_A3.ipynb (set the A8 pred dir)
+Notebook: code/External_val/NPC/Pred_visual_npc_uni2_A8.ipynb
 Log: code/log/external_val_npc_uni2_A8_paired_v2_seed42.log
 EOF
 }

@@ -71,9 +71,11 @@ UNI2 maps reuse `project_all_UNI2` and a separate checkpoint:
 | Weight | Predict | Notebook |
 |--------|---------|----------|
 | A2 k=8 mean | `demo_uni2.sh` | `Pred_visual_npc_uni2_A2.ipynb` |
+| A2 new1066, k=8 mean, 1,066 sections | `demo_uni2_A2_new1066.sh` | `Pred_visual_npc_uni2_A2_new1066.ipynb` |
 | A3 k=8 mean+gate | `demo_uni2_A3.sh` | `Pred_visual_npc_uni2_A3.ipynb` |
 | A5 L12 links = 1 | `demo_uni2_A5.sh` | `Pred_visual_npc_uni2_A5.ipynb` |
 | A6 L12 links = 2 | `demo_uni2_A6.sh` | `Pred_visual_npc_uni2_A6.ipynb` |
+| A8 balanced L12, k=8 mean+gate | `demo_uni2_A8.sh` | `Pred_visual_npc_uni2_A8.ipynb` |
 
 Predict writes `{sample}_stardist_pred.h5ad` and `{sample}_l2_probs.npz`. `obs['conf_L2']` is the max softmax of the argmax class. The notebooks plot `pred_CT`. Confidence maps (below) are extra; they do not replace `pred_CT`.
 

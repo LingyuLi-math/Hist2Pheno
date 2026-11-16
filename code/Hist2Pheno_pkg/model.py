@@ -1373,8 +1373,25 @@ def train_and_save_model(
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
 
-    # Use AMP only on CUDA.
-    amp_scaler = torch.amp.GradScaler(device.type) if device.type == "cuda" else None
+    # Use AMP only on CUDA. fp16 is the default (A0–A11). HIST2PHENO_AMP=bf16
+    # keeps the same autocast region on Blackwell, where a large balanced L12
+    # weight (Neural ~1e2–1e3) overflows fp16 once the LR hits 1e-3.
+    # bf16 does not use GradScaler. fp32 / off disables autocast.
+    _amp_name = os.environ.get("HIST2PHENO_AMP", "fp16").strip().lower()
+    if device.type != "cuda" or _amp_name in ("fp32", "off", "none", "0"):
+        amp_scaler = None
+        autocast_dtype = None
+    elif _amp_name in ("bf16", "bfloat16"):
+        amp_scaler = None
+        autocast_dtype = torch.bfloat16
+    else:
+        amp_scaler = torch.amp.GradScaler(device.type)
+        autocast_dtype = torch.float16
+    print(
+        f"  AMP: {_amp_name if device.type == 'cuda' else 'off'}"
+        f"  dtype={autocast_dtype}",
+        flush=True,
+    )
 
     # Infer input dimension and class count.
     input_dim, num_classes = infer_input_dim_and_num_classes(
@@ -1787,8 +1804,8 @@ def train_and_save_model(
 
             optimizer.zero_grad()
 
-            if amp_scaler is not None:
-                with torch.amp.autocast("cuda"):
+            if autocast_dtype is not None:
+                with torch.amp.autocast("cuda", dtype=autocast_dtype):
                     if use_extra_heads:
                         logits_l2, logits_l1_head, logits_l12, logits_l3, logits_l4 = (
                             model.forward_heads(x, neighbor_x=neighbor_x)
@@ -1838,11 +1855,16 @@ def train_and_save_model(
                     print("  Warning: non-finite loss encountered (AMP), skipping batch.")
                     optimizer.zero_grad(set_to_none=True)
                     continue
-                amp_scaler.scale(loss).backward()
-                amp_scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                amp_scaler.step(optimizer)
-                amp_scaler.update()
+                if amp_scaler is not None:
+                    amp_scaler.scale(loss).backward()
+                    amp_scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    amp_scaler.step(optimizer)
+                    amp_scaler.update()
+                else:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
             else:
                 if use_extra_heads:
                     logits_l2, logits_l1_head, logits_l12, logits_l3, logits_l4 = (
