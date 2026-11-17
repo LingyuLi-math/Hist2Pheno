@@ -145,3 +145,9 @@ CUDA_DEVICE=0 bash code/External_val/BRCA/demo_uni2_A8.sh predict
 ```bash
 bash code/External_val/BRCA/demo_uni2_A7.sh predict
 ```
+
+2026-11-17. The finished ablation weights, named by arm rather than A2–A8, are applied to the 10x slide only (`V1_Breast_Cancer_Block_A_Section_1_image`). [`Pred_visual_brca_10x_axisfix.ipynb`](Pred_visual_brca_10x_axisfix.ipynb) draws one L2 map per arm, including `l12_links_2`, `l12_balanced`, and `focal_gamma1`. `gate_l12_balanced` is not included; that run is still training. Predictions go to `pred_uni2_axisfix_<arm>/`. The notebook does not start a GPU job.
+
+```bash
+CUDA_DEVICE=2 bash code/External_val/BRCA/demo_uni2_axisfix.sh predict
+```

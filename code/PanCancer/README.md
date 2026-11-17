@@ -81,6 +81,46 @@ and the paired per-fold difference against `spatial_k8` with the number of
 folds that improved. `SPLITTER=stratified_section` gives the same run with
 L2-balanced section folds (`stratsec_` in the folder name).
 
+### Summary, seed 42 (2026-11-17, 21:37)
+
+Ten arms have a fold-4 weight and a pooled OOF on the same 7,461,039 cells. `gate_l12_balanced` is still training and has no weight yet, so it is not in this table. `focal_gamma1` finished, including its decision rule. L2 accuracy and macro-F1 are pooled argmax. Decision columns are cross-fitted `decision full`.
+
+| Arm | L2 AUROC | L2 accuracy | L2 macro-F1 | Decision L2 accuracy | Decision L2 macro-F1 |
+|--|--:|--:|--:|--:|--:|
+| `l12_links_1` | 0.9060 | 0.4758 | 0.3016 | 0.5040 | 0.3079 |
+| `l12_links_2` | 0.9060 | 0.4786 | 0.3033 | 0.5032 | 0.3040 |
+| `spatial_k8_gate` | 0.9052 | 0.4769 | 0.3027 | 0.5052 | 0.3086 |
+| `focal_gamma1` | 0.9047 | 0.4747 | 0.3003 | 0.5061 | 0.3052 |
+| `l12_balanced` | 0.9046 | 0.4632 | 0.2978 | 0.5010 | 0.3065 |
+| `spatial_k8` | 0.9044 | 0.4733 | 0.2995 | 0.5000 | 0.2965 |
+| `balanced_sampler` | 0.8864 | 0.3802 | 0.2532 | 0.4901 | 0.2931 |
+| `adjacent_nospatial` | 0.8827 | 0.4301 | 0.2499 | 0.4579 | 0.2475 |
+| `legacy_nospatial` | 0.8820 | 0.4237 | 0.2472 | 0.4573 | 0.2471 |
+| `l12_balanced_nospatial` | 0.8791 | 0.4245 | 0.2456 | 0.4572 | 0.2468 |
+
+Neighbor context is the gain, from about 0.882 without neighbors to 0.904–0.906 with k=8. `l12_links_1` and `l12_links_2` tie for the highest AUROC. `l12_links_2` has the highest argmax L2 accuracy and argmax macro-F1. `spatial_k8_gate` has the highest decision L2 macro-F1 (0.3086). `focal_gamma1` has the highest decision L2 accuracy (0.5061) and sits with the spatial arms on AUROC (0.9047). `balanced_sampler` argmax accuracy is low; its decision layer recovers most of the F1. The three no-neighbor arms stay near 0.88 and are not used for the external maps.
+
+### 10x breast slide against the pathologist map
+
+Ten weights with a finished prediction, slide `V1_Breast_Cancer_Block_A_Section_1_image` only. `gate_l12_balanced` is still training and is not in this table. Ground truth is `data/Visium/BRCA/10x_data/metadata.tsv`: `fine_annot_type` collapsed to IDC (1,663 spots), DCIS/LCIS (827), tumor edge (823), and healthy (485). Each in-tissue spot is scored by the majority L2 label of StarDist nuclei inside `spot_diameter_fullres / 2` (88.7 px). 157,242 of 423,162 nuclei fall in a spot. Maps: `code/External_val/BRCA/Pred_visual_brca_10x_axisfix.ipynb`.
+
+`l12_links_1` matches the annotated regions best. It calls Tumor or DCIS on 0.77 of IDC+DCIS spots and leaves 0.81 of healthy spots free of those two labels. `spatial_k8` covers more of the cancer (0.83) and more of the healthy tissue as well (only 0.63 stays non-neoplastic). `spatial_k8_gate` is the one that names IDC as Tumor more often than as DCIS (0.43 versus 0.26); it also names 0.60 of DCIS/LCIS spots as Tumor, so the DCIS regions disappear. `balanced_sampler` and `legacy_nospatial` keep healthy tissue free of Tumor/DCIS by calling it Endothelial, and Tumor is the majority in only 0.07 and 0.09 of IDC spots.
+
+| Arm | IDC spots called Tumor | DCIS/LCIS spots called DCIS | Healthy spots not Tumor or DCIS | IDC+DCIS spots called Tumor or DCIS | IDC vs DCIS name, when the call is Tumor or DCIS |
+|--|--:|--:|--:|--:|--:|
+| `l12_links_1` | 0.238 | 0.379 | 0.812 | 0.769 | 0.370 |
+| `l12_links_2` | 0.079 | 0.602 | 0.721 | 0.781 | 0.323 |
+| `l12_balanced` | 0.270 | 0.282 | 0.905 | 0.658 | 0.417 |
+| `focal_gamma1` | 0.265 | 0.360 | 0.789 | 0.736 | 0.403 |
+| `spatial_k8` | 0.285 | 0.393 | 0.634 | 0.827 | 0.388 |
+| `spatial_k8_gate` | 0.434 | 0.156 | 0.682 | 0.717 | 0.476 |
+| `adjacent_nospatial` | 0.143 | 0.462 | 0.777 | 0.709 | 0.351 |
+| `l12_balanced_nospatial` | 0.129 | 0.593 | 0.574 | 0.825 | 0.343 |
+| `balanced_sampler` | 0.072 | 0.488 | 0.967 | 0.645 | 0.326 |
+| `legacy_nospatial` | 0.092 | 0.401 | 0.926 | 0.604 | 0.322 |
+
+`focal_gamma1` does not change that ranking: it calls Tumor or DCIS on 0.74 of the cancer spots and leaves 0.79 of healthy spots free of those two labels. `l12_links_1` remains the best match to the annotated regions. `l12_links_2` raises DCIS/LCIS called DCIS to 0.60 and drops IDC called Tumor to 0.08, so the two cancer classes collapse into DCIS. `l12_balanced` leaves 0.91 of healthy spots free of Tumor and DCIS, and covers only 0.66 of the cancer spots. IDC spots are still mostly called DCIS except under `spatial_k8_gate`. Healthy spots are mostly Endothelial, not normal epithelium. Tumor-edge spots are mostly Endothelial in every arm.
+
 ## Cross-dataset section CV
 
 Default splitter is **cross-dataset section** 5-fold (`--group-splitter cross_dataset_section`):

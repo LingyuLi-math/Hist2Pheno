@@ -90,6 +90,30 @@ SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A
 SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A8.sh predict
 ```
 
+## 2026-11-17 Patient 1, finished ablation weights
+
+The comparison for the main text uses the ablation names, not the A0–A8 ids above. It is patient 1 only (`20210809-C-AH4199551`). The weights are the finished arms in `result_uni2_ablation_<arm>_new1066axisfix_paired_v2_seed42` (fold 4). `focal_gamma1` is included. `gate_l12_balanced` is still training and is not in this list.
+
+| Arm | What changed | Prediction tree |
+|-----|----------------|-----------------|
+| `legacy_nospatial` | old loss, no neighbors | `pred_uni2_axisfix_legacy_nospatial` |
+| `adjacent_nospatial` | adjacent loss, no neighbors | `pred_uni2_axisfix_adjacent_nospatial` |
+| `spatial_k8` | adjacent + k=8 mean (trunk) | `pred_uni2_axisfix_spatial_k8` |
+| `spatial_k8_gate` | trunk + spatial gate | `pred_uni2_axisfix_spatial_k8_gate` |
+| `l12_links_1` | trunk, L12 link weights = 1 | `pred_uni2_axisfix_l12_links_1` |
+| `l12_links_2` | trunk, L12 link weights = 2 | `pred_uni2_axisfix_l12_links_2` |
+| `l12_balanced` | trunk + balanced L12 | `pred_uni2_axisfix_l12_balanced` |
+| `focal_gamma1` | trunk + focal γ=1, class weights kept | `pred_uni2_axisfix_focal_gamma1` |
+| `balanced_sampler` | trunk + sampler, class weight off | `pred_uni2_axisfix_balanced_sampler` |
+| `l12_balanced_nospatial` | balanced L12, no neighbors | `pred_uni2_axisfix_l12_balanced_nospatial` |
+
+```bash
+CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict
+CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict spatial_k8
+```
+
+[`Pred_visual_npc_patient1_axisfix.ipynb`](Pred_visual_npc_patient1_axisfix.ipynb) scores B cell (`B_cell` + `Plasma`) inside the expert TLS outline against the rest of the slide, then draws the TLS crops on one color scale. Adding `l12_links_2` and `l12_balanced` does not put B cells in that outline: argmax B inside the 5,262 nuclei is 0 for both, and the foci are still DC and DCIS. cell2location on the same 26 spots calls B. UNI2 tokens stay in `project_all_UNI2`.
+
 ## 2026-11-15 Per-type abundance vs cell2location
 
 Yes. A per-type abundance map is the right way to put Hist2Pheno next to cell2location on these two slides. The nuclei / pseudo-spot / cell2location cell in `Pred_visual_npc_uni2_A2.ipynb` draws one winner per spot: Hist2Pheno `pred_CT`, the majority L2 inside the Visium disc, and `argmax` of the cell2location counts. A type appears only where it is the largest. On patient1 the seven cell2location counts in `Annotation/sp.obs.csv` sum to about 7–55 per spot (median about 21). Tumor’s median is about 4.2 and B’s is about 2.2, so B is often present and still loses the argmax. That is the scale problem: one shared winner hides every type whose mass is smaller than the winner.
