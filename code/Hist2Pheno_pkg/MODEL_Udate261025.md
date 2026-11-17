@@ -175,7 +175,7 @@ python code/PanCancer/PanCancer_predict_visualize.py \
 三头队列内指标和患者bootstrap：
 
 ```bash
-python code/Hist2Pheno_pkg/oof_evaluation.py \
+python code/Hist2Pheno_pkg/posthoc.py evaluate \
   data/PanCancer/result_updated_multiscale \
   data/PanCancer/result_updated_multiscale/cross_dataset_cv/updated_multiscale/best_mlp_gpu.pt \
   --bootstrap 500

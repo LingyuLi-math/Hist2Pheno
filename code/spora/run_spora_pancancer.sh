@@ -34,6 +34,7 @@ CONDA_ENV="${CONDA_ENV:-SeededNTM}"
 GPUS=(${GPUS:-0 1 2 3})
 CUDA_DEVICE="${CUDA_DEVICE:-0}"
 BASE_DATASETS=(Lung BRCA CRC HCC PDAC GIST GBM)
+DATASETS_FIX=(schurch2020coordinated hoefflin2026spatial)
 
 cd "${REPO}"
 # shellcheck disable=SC1091
@@ -49,6 +50,7 @@ usage() {
 Usage:
   bash code/spora/run_spora_pancancer.sh prepare
   bash code/spora/run_spora_pancancer.sh refresh-schurch   # Schurch CD8 + plasma, then UNI2
+  bash code/spora/run_spora_pancancer.sh fix-axis          # verify centroid_x vs mask, swap, re-extract UNI2
   bash code/spora/run_spora_pancancer.sh segment     # StarDist, GPUs: ${GPUS[*]}
   bash code/spora/run_spora_pancancer.sh uni2        # GT UNI2 tokens, GPUs: ${GPUS[*]}
   CUDA_DEVICE=${CUDA_DEVICE} bash code/spora/run_spora_pancancer.sh train
@@ -160,6 +162,15 @@ PY
   echo "Schurch UNI2 refreshed. Hoefflin was not rewritten. Start A8/A9 after this, not before."
 }
 
+# 2026.11.17, centroid axis: verify each table against its mask, swap the old
+# row-first exports, retire UNI2 stores that predate the fixed tables, then
+# re-extract. Safe to run more than once.
+cmd_fix_axis() {
+  "${PYTHON}" -u code/spora/prepare_spora_sections.py --fix-centroid-axis --datasets "${DATASETS_FIX[@]}"
+  cmd_uni2
+  echo "axis fixed and UNI2 refreshed. Retrain every 1,066-section model (A0-A8, A7 stratsec); the old ones saw wrong SPORA crops."
+}
+
 cmd_uni2() {
   local dir
   dir="$(shard_lists uni2)"
@@ -225,6 +236,7 @@ case "${1:-}" in
   -h|--help|help|"") usage ;;
   prepare) cmd_prepare ;;
   refresh-schurch) cmd_refresh_schurch ;;
+  fix-axis) cmd_fix_axis ;;
   segment|stardist) cmd_segment ;;
   uni2) cmd_uni2 ;;
   train) cmd_train ;;

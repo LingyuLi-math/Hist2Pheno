@@ -17,6 +17,70 @@ Heads follow the workbook:
 Native labels are remapped on read. UNI embeddings stay in each cohort’s
 `*_matched_features.h5ad`; nothing is copied.
 
+## 2026-11-17 Retrain everything on the seven cohorts (start here)
+
+The finished 1,066-section weights (`run_uni2_new1066.sh`, A2 0.9053 / A7 0.9035 /
+A8 0.9002, stratified A7 0.8811) stay in their own directories. The Schürch and
+Hoefflin tables already store `centroid_x` as the column: the mask check is
+140 and 30 correct, the UNI2 stores are newer than those tables, and those
+stores were written before the weights. `retrain_all.sh` does not replace them.
+It trains a separate series, in bf16 with float16 scaled copies, under
+`result_uni2_ablation_<arm>_<DATA_TAG>_paired_v2_seed<N>/`. `STEP=check` should
+pass on the current tables. `FIX_AXIS=1` is only for a later check that reports
+swaps, unresolved tables, or stale UNI2 stores.
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+conda activate SeededNTM
+
+# 1. SPORA check only (tables column-first, UNI2 stores newer than tables)
+STEP=check bash code/PanCancer/retrain_all.sh
+#    if it reports work: FIX_AXIS=1 STEP=check bash code/PanCancer/retrain_all.sh
+
+# 2. everything: check -> index -> one prepare -> 11 arms on 4 GPUs -> summary
+bash code/PanCancer/retrain_all.sh
+
+# paired seeds, k sensitivity, other GPUs
+SEEDS="42 43 44" WITH_K_SENSITIVITY=1 GPUS="0 1 2 3" bash code/PanCancer/retrain_all.sh
+
+# one arm by hand, or the table again
+DATA_TAG=new1066axisfix CUDA_DEVICE=0 bash code/PanCancer/run_ablation.sh l12_balanced
+DATA_TAG=new1066axisfix bash code/PanCancer/run_ablation.sh summary
+```
+
+Arms (each changes one thing against the trunk `spatial_k8`):
+
+| arm | change | old id |
+|--|--|--|
+| `legacy_nospatial` | legacy loss, no neighbors | A0 |
+| `adjacent_nospatial` | adjacent loss, no neighbors | A1 |
+| **`spatial_k8`** | trunk: adjacent loss + k=8 neighbor mean | A2 |
+| `spatial_k8_gate` | + spatial gate | A3 |
+| `l12_links_1` / `l12_links_2` | L12 link weights 1 / 2 | A4 / A5 |
+| `balanced_sampler` | balanced sampler, no class weights | (half of old A6) |
+| `focal_gamma1` | focal γ=1, balanced class weights kept | (half of old A6) |
+| `l12_balanced` | balanced L12 | A7 |
+| `gate_l12_balanced` | gate + balanced L12 | A8 |
+| `l12_balanced_nospatial` | balanced L12 without neighbors | new |
+| `spatial_k4` / `spatial_k16` | k sensitivity (`WITH_K_SENSITIVITY=1`) | new |
+
+Defaults of `retrain_all.sh`: `DATA_TAG=new1066axisfix`, `HIST2PHENO_AMP=bf16`
+for every arm, `HIST2PHENO_STORE_DTYPE=float16` (halves the scaled copies in
+`scaled_cache/`), `DECISION_OBJECTIVE=f1_acc`, `SPLIT_SEED=42` (one fold plan
+for every arm and seed). GPU 0 builds the k=8 neighbor cache with
+`spatial_k8`; the other queues start with the arms that need no neighbors
+and wait for that cache. Logs: `code/log/retrain_<DATA_TAG>/`.
+
+Each finished run folder `data/PanCancer/result_uni2_ablation_<arm>_<DATA_TAG>_paired_v2_seed<N>/` holds
+`oof_predictions.npz`, the weight `cross_dataset_cv/<arm>/best_mlp_gpu.pt`, and the decision layer
+(`decision_rule.json`, `decision_rule_l2_only.json`, `decision_report.csv`,
+`decision_per_class_f1.csv`, `decision_crossfit_predictions.npz`). The summary
+`data/PanCancer/ablation_<DATA_TAG>_summary.csv` lists per arm: L2 macro
+AUROC, L2 accuracy and macro-F1 (argmax and cross-fitted decision layer),
+and the paired per-fold difference against `spatial_k8` with the number of
+folds that improved. `SPLITTER=stratified_section` gives the same run with
+L2-balanced section folds (`stratsec_` in the folder name).
+
 ## Cross-dataset section CV
 
 Default splitter is **cross-dataset section** 5-fold (`--group-splitter cross_dataset_section`):
@@ -498,6 +562,8 @@ python -u code/PanCancer/PanCancer_predict_visualize.py --datasets CRC --skip-ex
 ```
 
 ## 2026-11-17 Ablation on the updated index
+
+> 2026-11-17: finished series, kept. The SPORA tables it used already match the instance-mask axis. New runs use `retrain_all.sh` / `run_ablation.sh` (section above) and write `result_uni2_ablation_*`.
 
 The updated training index is 1,066 sections (Lung 25, BRCA 2, CRC 143, HCC 36, PDAC 278, GIST 550, GBM 32). Do not train these on the old 896-section index. Every command below is `run_uni2_new1066.sh`, which writes a `new1066_` directory and does not open the 896-section results.
 

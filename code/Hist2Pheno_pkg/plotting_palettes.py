@@ -1112,3 +1112,23 @@ def stardist_tier_rgba_overrides(class_names, tier: str):
     else:
         return None
     return overrides or None
+
+
+########################################################
+# 2026.11.17, merged from write_palette_swatch.py / 原 write_palette_swatch.py 并入此文件
+# Write the pan-cancer L1 / L12 / L2 color swatch used by the plots.
+#
+#     python code/Hist2Pheno_pkg/plotting_palettes.py
+#
+# The PNG and PDF are ``Hist2Pheno_pkg/figures/pancancer_L1_L12_L2_swatch.png``
+# and ``.pdf``. Colors come from ``palette_for``, the same map as the
+# spatial plots.
+########################################################
+def _swatch_main() -> int:
+    path = write_pancancer_swatch()
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_swatch_main())

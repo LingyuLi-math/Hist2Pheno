@@ -39,6 +39,10 @@
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A5
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A6
 # CUDA_DEVICE=0 bash code/PanCancer/1_demo_train.sh uni2 A7
+# 2026.11.17, after training, posthoc.py fit-decision writes decision_rule*.json and
+# decision_report.csv into the result folder (FIT_DECISION=0 skips it;
+# DECISION_OBJECTIVE=macro_f1|accuracy|f1_acc|balanced_accuracy|weighted_f1).
+# For a finished run: python code/Hist2Pheno_pkg/posthoc.py fit-decision data/PanCancer/<result_dir>
 # 2026.11.17, the 1,066-section series is code/PanCancer/run_uni2_new1066.sh
 # CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A0
 # ... through A8. A2 is the model to use. See PanCancer/README.md.
@@ -296,6 +300,50 @@ cmd_uni2() {
         --ablation-tag A2_l12_balanced
       )
       ;;
+    # 2026.11.17, recipes for the redesigned ablation (run_ablation.sh).
+    # The old A6 (A7_bal_focal) changed three things at once; it is split into
+    # balanced_sampler (class weights none) and focal_gamma1 (focal γ=1,
+    # balanced class weights kept). l12_balanced_nospatial asks whether balanced L12
+    # needs the neighbor context. spatial_k4 / spatial_k16 are the k sensitivity of the trunk.
+    balanced_sampler)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --train-balance-sampler
+        --train-balance-sampler-mode hierarchical_l1_l12_l2
+        --class-weight-mode none
+        --save-result result_uni2_balanced_sampler
+        --ablation-tag balanced_sampler
+      )
+      ;;
+    focal_gamma1)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --l2-focal-gamma 1
+        --save-result result_uni2_focal_gamma1
+        --ablation-tag focal_gamma1
+      )
+      ;;
+    l12_balanced_nospatial)
+      args+=(
+        "${ADJ[@]}"
+        --l12-class-weight-mode balanced
+        --save-result result_uni2_l12_balanced_nospatial
+        --ablation-tag l12_balanced_nospatial
+      )
+      ;;
+    spatial_k4|spatial_k16)
+      args+=(
+        "${ADJ[@]}"
+        --use-spatial-context --spatial-k "${arch#spatial_k}" --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --save-result "result_uni2_${arch}"
+        --ablation-tag "${arch}"
+      )
+      ;;
     # 2026.11.15, Hist2Prot neighbour task. A8 + a head that predicts the L2
     # composition of the k=8 spatial neighbours (soft CE, weight 0.2 =
     # Hist2Prot lambda_neighbor). Inference also writes nbr_comp_probs.
@@ -343,9 +391,16 @@ cmd_uni2() {
       )
       ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A4|A5|A6|A7|A8|A9|A10|A11|A2_l12_balanced"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A5|A6|A7|A8|A2_l12_balanced|balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16"
       ;;
   esac
+  # 2026.11.17, RESULT_NAME / ABLATION_TAG rename the output folder and the
+  # checkpoint tag (run_ablation.sh uses them so folder names are the
+  # descriptive ablation names). Unset keeps the names above.
+  for ((i=0; i<${#args[@]}; i++)); do
+    if [[ -n "${RESULT_NAME:-}" && "${args[i]}" == --save-result ]]; then args[i+1]="$RESULT_NAME"; fi
+    if [[ -n "${ABLATION_TAG:-}" && "${args[i]}" == --ablation-tag ]]; then args[i+1]="$ABLATION_TAG"; fi
+  done
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
   local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
   # 2026.11.16, SPLITTER=stratified_section: whole sections, L2-balanced folds.
@@ -389,6 +444,18 @@ cmd_uni2() {
   if [[ -n "${LOG_TAG:-}" ]]; then log="${log%.log}_${LOG_TAG}.log"; fi
   echo "log $log"
   run_py "$log" replace "${args[@]}"
+  # 2026.11.17, fit the label decision layer once the full OOF exists
+  # 训练（全部 fold）完成后自动拟合决策层；FIT_DECISION=0 关闭
+  local save="" j
+  for ((j=0; j<${#args[@]}; j++)); do
+    if [[ "${args[j]}" == --save-result ]]; then save="${args[j+1]}"; fi
+  done
+  local rdir="$OUT/$save"
+  if [[ "${FIT_DECISION:-1}" == 1 && -n "$save" && -f "$rdir/oof_predictions.npz" ]] \
+     && [[ ! -f "$rdir/decision_rule.json" || "$rdir/oof_predictions.npz" -nt "$rdir/decision_rule.json" ]]; then
+    run_py "${log%.log}_decision.log" replace code/Hist2Pheno_pkg/posthoc.py fit-decision "$rdir" \
+      --objective "${DECISION_OBJECTIVE:-macro_f1}"
+  fi
 }
 
 case "${1:-}" in
@@ -421,6 +488,7 @@ case "${1:-}" in
       A7) cmd_uni2 A7_bal_focal ;;
       A8) cmd_uni2 A8_l12_balanced ;;
       A2_l12_balanced) cmd_uni2 A2_l12_balanced ;;
+      balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16) cmd_uni2 "$2" ;;  # 2026.11.17, see run_ablation.sh
       A2L12) die "renamed to A7. CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A7" ;;
       A9|A10|A11) die "${2} was removed. The neighbor and tissue heads did not improve L2 macro-F1." ;;
       *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A5 | A6 | A7 | A8" ;;

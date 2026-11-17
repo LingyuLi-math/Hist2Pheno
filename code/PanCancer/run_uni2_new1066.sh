@@ -39,7 +39,18 @@ repo="$(cd "$here/../.." && pwd)"
 cd "$repo"
 out="${repo}/data/PanCancer"
 
-if [[ "${SPLITTER:-cross_dataset_section}" == cross_dataset_section ]]; then
+# 2026.11.17, DATA_TAG names the data version. The A2/A7/A8 weights under
+# "new1066" were trained before the SPORA centroid-axis fix (wrong Schurch /
+# Hoefflin crops). After `run_spora_pancancer.sh fix-axis`, retrain into a new
+# tag so the old results stay for comparison:
+#   DATA_TAG=new1066axisfix CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A2
+DATA_TAG="${DATA_TAG:-new1066}"
+if [[ ! "${DATA_TAG}" =~ ^new1066[A-Za-z0-9_]*$ ]]; then
+  echo "DATA_TAG must start with new1066 (got ${DATA_TAG})" >&2
+  exit 1
+fi
+
+if [[ "${SPLITTER:-cross_dataset_section}" == cross_dataset_section && "${DATA_TAG}" == new1066 ]]; then
   done_ckpt=""
   case "$arch" in
     A2) done_ckpt="${out}/result_uni2_A2_adjacent_spatial_k8mean_new1066_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt" ;;
@@ -64,8 +75,8 @@ case "$arch" in
   A8) token="A8" ;;
 esac
 
-export RUN_SUFFIX="new1066_paired_v2_seed${TRAIN_SEED:-42}"
-if [[ "$RUN_SUFFIX" != new1066_* ]]; then
+export RUN_SUFFIX="${DATA_TAG}_paired_v2_seed${TRAIN_SEED:-42}"
+if [[ "$RUN_SUFFIX" != new1066* ]]; then
   echo "refusing to write a published paired_v2_seed42 directory" >&2
   exit 1
 fi

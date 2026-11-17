@@ -160,50 +160,121 @@ def _extractor_outside(horizontal: np.ndarray, vertical: np.ndarray, width: int,
     return (horizontal < half) | (vertical < half) | (horizontal + half > width) | (vertical + half > height)
 
 
-def fix_centroid_axis(dataset: str) -> str:
-    """Turn centroid_x into the horizontal pixel on exports that stored the row there.
+########################################################
+# 2026.11.17, decide the axis from the instance mask, not from bounds
+# 用 mask 质心判定方向：SPORA TMA core 接近正方形，越界计数两种方向都可能是 0，
+# 不能区分。这里重新计算每个 cell_id 的 (row, col)，与表中坐标逐个比较。
+# 重复运行安全（已正确的表不会被再次交换）。
+########################################################
+def axis_state(frame: pd.DataFrame, mask_centroids: pd.DataFrame, tol: float = 0.51) -> tuple[str, float, float]:
+    """'ok' if centroid_x == column, 'swapped' if centroid_x == row, else 'unknown'.
 
-    The H&E TIFF is not rewritten. Returns a one-line status.
+    Returns (state, share matching column-first, share matching row-first).
     """
-    import tifffile
+    m = frame[["cell_id", "centroid_x", "centroid_y"]].merge(mask_centroids, on="cell_id", how="inner")
+    if m.empty:
+        return "unknown", 0.0, 0.0
+    hx = m["centroid_x"].to_numpy(np.float64)
+    vy = m["centroid_y"].to_numpy(np.float64)
+    col = m["col"].to_numpy(np.float64)
+    row = m["row"].to_numpy(np.float64)
+    ok = float(np.mean((np.abs(hx - col) <= tol) & (np.abs(vy - row) <= tol)))
+    bad = float(np.mean((np.abs(hx - row) <= tol) & (np.abs(vy - col) <= tol)))
+    if ok >= 0.99 and ok > bad:
+        return "ok", ok, bad
+    if bad >= 0.99 and bad > ok:
+        return "swapped", ok, bad
+    if ok >= 0.99 and bad >= 0.99:          # every centroid on the diagonal: harmless either way
+        return "ok", ok, bad
+    return "unknown", ok, bad
+
+
+def _newest_mtime(path: Path) -> float:
+    newest = path.stat().st_mtime
+    for child in path.rglob("*"):
+        try:
+            newest = max(newest, child.stat().st_mtime)
+        except OSError:
+            pass
+    return newest
+
+
+def _stale_store(tissue_dir: Path, tissue: str, csv_path: Path) -> Path | None:
+    """The UNI2 store if it was built before the current table, else None."""
+    store = tissue_dir / f"{tissue}_project_all_UNI2"
+    if not store.is_dir() or _newest_mtime(store) >= csv_path.stat().st_mtime:
+        return None
+    return store
+
+
+def _retire_stale_store(tissue_dir: Path, tissue: str, csv_path: Path) -> str:
+    """Rename a UNI2 store built before the current table so the worker re-extracts it."""
+    store = _stale_store(tissue_dir, tissue, csv_path)
+    if store is None:
+        return ""
+    import time
+
+    target = store.with_name(f"{store.name}.stale_axis_{time.strftime('%Y%m%d%H%M%S')}")
+    store.rename(target)
+    return target.name
+
+
+def fix_centroid_axis(dataset: str, dry_run: bool = False) -> str:
+    """Make ``centroid_x`` the horizontal pixel on every prepared table, checked
+    cell by cell against the instance mask. UNI2 stores older than their table
+    are renamed ``*.stale_axis_<time>`` so ``uni2`` re-extracts them. The H&E
+    TIFF is not rewritten. Returns a one-line status.
+    """
+    import anndata as ad
 
     root = PREPARED / dataset
+    source = DATA_ROOT / dataset / dataset
     tissues = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))
-    swapped = already = 0
+    counts = {"ok": 0, "swapped": 0, "unknown": 0, "retired": 0, "missing": 0}
     for tissue_dir in tissues:
         tissue = tissue_dir.name
         csv_path = tissue_dir / f"{tissue}_cells_with_pixel.csv"
         h5ad_path = tissue_dir / f"{tissue}_matched_features.h5ad"
-        tif_path = tissue_dir / f"{tissue}_he.tif"
-        frame = pd.read_csv(csv_path)
-        with tifffile.TiffFile(tif_path) as tif:
-            shape = tuple(int(v) for v in tif.series[0].shape)
-        if len(shape) == 3 and shape[-1] in (3, 4):
-            height, width = shape[0], shape[1]
-        elif len(shape) == 3 and shape[0] in (3, 4):
-            height, width = shape[1], shape[2]
-        else:
-            raise ValueError(f"{tif_path} shape {shape} is not RGB")
-        horizontal = frame["centroid_x"].to_numpy(dtype=np.float64)
-        vertical = frame["centroid_y"].to_numpy(dtype=np.float64)
-        wrong = int(_extractor_outside(horizontal, vertical, width, height).sum())
-        right = int(_extractor_outside(vertical, horizontal, width, height).sum())
-        if wrong <= right:
-            already += 1
+        if not csv_path.is_file():
             continue
-        frame["centroid_x"], frame["centroid_y"] = frame["centroid_y"], frame["centroid_x"]
-        frame.to_csv(csv_path, index=False)
-        import anndata as ad
-
-        adata = ad.read_h5ad(h5ad_path)
-        adata.obs["centroid_x"] = frame["centroid_x"].to_numpy()
-        adata.obs["centroid_y"] = frame["centroid_y"].to_numpy()
-        order = adata.obs["cell_id"].astype(str).to_numpy()
-        aligned = frame.set_index(frame["cell_id"].astype(str)).loc[order]
-        adata.obsm["spatial_HE"] = aligned[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
-        adata.write_h5ad(h5ad_path)
-        swapped += 1
-    return f"{dataset}: swapped {swapped}, already horizontal {already}"
+        frame = pd.read_csv(csv_path)
+        mask_path = source / "segmentations" / "1_0mpp" / "cell_masks" / "instances" / f"{tissue}.npz"
+        with np.load(mask_path, allow_pickle=False) as handle:
+            label, row, col = _centroids(handle["mask"])
+        mc = pd.DataFrame({"cell_id": label.astype(np.int64), "row": row, "col": col})
+        state, ok, bad = axis_state(frame, mc)
+        counts[state] += 1
+        if state == "unknown":
+            print(f"  ?? {tissue}: column-first {ok:.3f}, row-first {bad:.3f}; re-run prepare --force for this tissue",
+                  flush=True)
+            continue
+        if state == "swapped" and not dry_run:
+            frame["centroid_x"], frame["centroid_y"] = frame["centroid_y"].copy(), frame["centroid_x"].copy()
+            frame.to_csv(csv_path, index=False)
+            adata = ad.read_h5ad(h5ad_path)
+            aligned = frame.set_index(frame["cell_id"].astype(str)).loc[adata.obs["cell_id"].astype(str).to_numpy()]
+            adata.obs["centroid_x"] = aligned["centroid_x"].to_numpy()
+            adata.obs["centroid_y"] = aligned["centroid_y"].to_numpy()
+            adata.obsm["spatial_HE"] = aligned[["centroid_x", "centroid_y"]].to_numpy(dtype=np.float64)
+            adata.write_h5ad(h5ad_path)
+        # 2026.11.17, dry-run also reports stale UNI2 stores (and missing ones)
+        # 一个已正确的表仍可能配着修正前提取的 UNI2；dry-run 也要报告
+        if not (tissue_dir / f"{tissue}_project_all_UNI2").is_dir():
+            counts["missing"] += 1
+        elif dry_run:
+            if state == "swapped" or _stale_store(tissue_dir, tissue, csv_path) is not None:
+                counts["retired"] += 1
+                print(f"  {tissue}: UNI2 store older than its table (would be re-extracted)", flush=True)
+        else:
+            retired = _retire_stale_store(tissue_dir, tissue, csv_path)
+            if retired:
+                counts["retired"] += 1
+                print(f"  {tissue}: stale UNI2 store -> {retired}", flush=True)
+    verb = "would swap" if dry_run else "swapped"
+    verb2 = "would retire" if dry_run else "retired"
+    return (f"{dataset}: {verb} {counts['swapped']}, already correct {counts['ok']}, "
+            f"unresolved {counts['unknown']}, stale UNI2 stores {verb2} {counts['retired']}, "
+            f"no UNI2 store yet {counts['missing']}")
 
 
 def tissues_of(dataset: str) -> list[str]:
@@ -224,14 +295,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--fix-centroid-axis",
         action="store_true",
-        help="Rewrite existing tables so centroid_x is the horizontal pixel. Does not re-read the OME-Zarr.",
+        help="Check every prepared table against its instance mask; swap tables whose centroid_x is the row, "
+             "and rename UNI2 stores older than their table. Does not re-read the OME-Zarr.",
     )
+    parser.add_argument("--dry-run", action="store_true", help="With --fix-centroid-axis: report only.")
     args = parser.parse_args(argv)
     if args.fix_centroid_axis:
         for dataset in args.datasets:
             if dataset not in DATASETS:
                 raise SystemExit(f"unknown dataset {dataset}")
-            print(fix_centroid_axis(dataset), flush=True)
+            print(fix_centroid_axis(dataset, dry_run=args.dry_run), flush=True)
         return 0
 
     jobs: list[tuple[str, str, bool]] = []

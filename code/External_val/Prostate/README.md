@@ -83,4 +83,13 @@ A2 is fold 1 (`result_uni2_A2_adjacent_spatial_k8mean_paired_v2_seed42/.../best_
 
 2026-11-16. The A2 recipe refit on the 1,066-section index is fold 4 (`result_uni2_A2_adjacent_spatial_k8mean_new1066_paired_v2_seed42/cross_dataset_cv/A2_adjacent_spatial_k8mean/best_mlp_gpu.pt`, pooled OOF L2 macro AUROC 0.9053). `Pred_visual_prostate_patient1_H2_uni2_A2_new1066.ipynb` and `demo_uni2_A2_new1066.sh` write `pred_uni2_A2_new1066_paired_v2_seed42/`. Patient_1 H2: `SAMPLE=Patient_1__H2 bash code/External_val/Prostate/demo_uni2_A2_new1066.sh predict`.
 
+2026-11-17. `Pred_visual_prostate_patient1_uni2_A8_validation.ipynb` takes `MODEL` = `A2_new1066`, `A7`, `A7_stratsec`, or `A8`, and points `UNI2_CKPT` and `UNI2_PRED_DIRNAME` at that weight. A7 is `demo_uni2_A7.sh` (`pred_uni2_A7_new1066_paired_v2_seed42`). A8 is `demo_uni2_A8.sh` (`pred_uni2_A8_bestmlp_paired_v2_seed42`). Stratified A7 is `demo_uni2_A7_stratsec.sh` (`pred_uni2_A7_stratsec_new1066_paired_v2_seed42`). Patient_1 H2:
+
+```bash
+SAMPLE=Patient_1__H2 CUDA_DEVICE=0 bash code/External_val/Prostate/demo_uni2_A2_new1066.sh predict
+SAMPLE=Patient_1__H2 CUDA_DEVICE=0 bash code/External_val/Prostate/demo_uni2_A7.sh predict
+SAMPLE=Patient_1__H2 CUDA_DEVICE=0 bash code/External_val/Prostate/demo_uni2_A7_stratsec.sh predict
+SAMPLE=Patient_1__H2 CUDA_DEVICE=0 bash code/External_val/Prostate/demo_uni2_A8.sh predict
+```
+
 2026-11-15. A6 is fold 1 of the A2 trunk with L12 links = 2 (`result_uni2_A6_l12_links_2_paired_v2_seed42/cross_dataset_cv/A6_l12_links_2/best_mlp_gpu.pt`, pooled OOF L2 macro AUROC 0.8882). `Pred_visual_prostate_patient1_H2_uni2_A6.ipynb` and `demo_uni2_A6.sh` write `pred_uni2_A6_bestmlp_paired_v2_seed42/`.

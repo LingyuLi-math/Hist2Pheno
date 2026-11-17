@@ -81,6 +81,15 @@ UNI2 maps reuse `project_all_UNI2` and a separate checkpoint:
 
 Predict writes `{sample}_stardist_pred.h5ad` and `{sample}_l2_probs.npz`. `obs['conf_L2']` is the max softmax of the argmax class. The notebooks plot `pred_CT`. Confidence maps (below) are extra; they do not replace `pred_CT`.
 
+`Pred_visual_npc_uni2_A8_validation.ipynb` checks one of those 1,066-section weights at a time. Set `MODEL` in the setup cell to `A2_new1066`, `A7`, `A7_stratsec`, or `A8`. The spot table adds a `Hist2Pheno decision rule` column when that result directory contains `decision_rule_l2_only.json` (`posthoc.py fit-decision` in the PanCancer README). The column is the same whole-slide argmax comparison as `Hist2Pheno argmax`. `pred_CT` stays the checkpoint argmax. Predict the chosen tree before opening the notebook:
+
+```bash
+SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A2_new1066.sh predict
+SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A7.sh predict
+SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A7_stratsec.sh predict
+SAMPLE=20210809-C-AH4199551 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_A8.sh predict
+```
+
 ## 2026-11-15 Per-type abundance vs cell2location
 
 Yes. A per-type abundance map is the right way to put Hist2Pheno next to cell2location on these two slides. The nuclei / pseudo-spot / cell2location cell in `Pred_visual_npc_uni2_A2.ipynb` draws one winner per spot: Hist2Pheno `pred_CT`, the majority L2 inside the Visium disc, and `argmax` of the cell2location counts. A type appears only where it is the largest. On patient1 the seven cell2location counts in `Annotation/sp.obs.csv` sum to about 7–55 per spot (median about 21). Tumor’s median is about 4.2 and B’s is about 2.2, so B is often present and still loses the argmax. That is the scale problem: one shared winner hides every type whose mass is smaller than the winner.

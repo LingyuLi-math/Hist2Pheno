@@ -4,6 +4,44 @@ Shared, dataset-neutral modeling, transformation, and plotting code for Hist2Phe
 Dataset directories such as `CODEX_hcc/` and `Xenium_lung/` remain responsible
 for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
+## 2026-11-17 Decision layer for Accuracy / F1 (`posthoc.py`)
+
+AUROC ranks cells; Accuracy and F1 depend on how a label is picked. With
+balanced class weights the softmax over-weights rare classes, and the three
+heads are argmax'ed independently, so L1 / L12 / L2 labels can disagree.
+`posthoc.py fit-decision` fits, on the run's own OOF:
+
+1. hierarchy fusion `log p(L2) + w12·log p(L12 parent) + w1·log p(L1 grandparent)`; L12 / L1 labels are the parents of the chosen L2, so the three maps always agree;
+2. a per-class bias (coordinate ascent on macro-F1, accuracy, their mean, balanced accuracy or weighted F1);
+3. a temperature for calibrated confidence and optional abstention (`Unassigned`).
+
+Every reported gain is cross-fitted (fit on four folds, scored on the fifth).
+Outputs in the result folder: `decision_rule.json` (three heads),
+`decision_rule_l2_only.json` (external slides keep only L2 softmax),
+`decision_report.csv`, `decision_per_class_f1.csv`, and
+`decision_crossfit_predictions.npz` (the held-out labels `compare` reads).
+`1_demo_train.sh` runs `fit-decision` after a training that writes
+`oof_predictions.npz` (`FIT_DECISION=0` skips). `run_ablation.sh summary`
+calls `compare`.
+
+```bash
+python code/Hist2Pheno_pkg/posthoc.py fit-decision data/PanCancer/<result_dir> --objective macro_f1
+python code/Hist2Pheno_pkg/posthoc.py decide <pred>/<sample>/<sample>_l2_probs.npz --rule data/PanCancer/<result_dir>/decision_rule_l2_only.json
+python code/Hist2Pheno_pkg/posthoc.py compare --root data/PanCancer \
+  --pattern 'result_uni2_ablation_*_new1066axisfix_paired_v2_seed*' \
+  --reference spatial_k8 --data-tag new1066axisfix \
+  --out data/PanCancer/ablation_new1066axisfix_summary.csv
+```
+
+`decide` writes `<sample>_l2_decision.csv`; `pred_CT` in the h5ad is unchanged.
+`smooth_probs_knn` gives a spatially smoothed map (choose `alpha` on GT first).
+
+Merged on 2026.11.17 (old CLIs are `posthoc.py evaluate | prior-shift |
+calibrate-abundance | fold-ensemble` with the same flags):
+`oof_evaluation.py`, `prior_shift.py`, `oof_abundance_calibration.py`,
+`fold_ensemble.py` -> `posthoc.py`; `write_palette_swatch.py` ->
+`plotting_palettes.py` (`python plotting_palettes.py`); empty `utils.py` removed.
+
 ## 2026-11-16 A8: class-weighted L12 (opt-in)
 
 A0–A7 leave L12 unweighted. L1 and L2 cross-entropy are `balanced`, but `CE(L12)` and the two aggregated NLL terms (`L2→L12`, `L12→L1`) were not. That unweighted L12 term pulls rare families, including `B_Plasma` (about 3.5% of cells), back toward the empirical prior. A7 tried to fix the same hole with a hierarchical sampler and focal loss, and the pooled OOF L2 fell to the A0 level. A8 does not repeat that. It keeps the A3 recipe and only class-weights the L12 terms.
@@ -608,7 +646,7 @@ These commands only extract embeddings. The trainers still read `project_all_UNI
 ### 2026-10-08 — Ontology and fold assignment live in the package
 
 - `pancancer_labels.py` and `pancancer_cv.py` moved here from `code/PanCancer`. The PanCancer copies re-export them so existing scripts and notebooks keep `from pancancer_labels import ...`.
-- `palette_for` is in `plotting_palettes.py`. `pancancer_viz` imports it. `write_palette_swatch.py` writes the paper swatch from that same map.
+- `palette_for` is in `plotting_palettes.py`. `pancancer_viz` imports it. `python plotting_palettes.py` writes the paper swatch from that same map (2026.11.17: `write_palette_swatch.py` was merged into `plotting_palettes.py`).
 - `external_validation.py` no longer puts `code/PanCancer` on `sys.path`.
 - Cohort paths, the section index, and the train / predict CLIs stay in `code/PanCancer`.
 
@@ -668,6 +706,7 @@ helpers moved from `Xenium_lung/xenium_uni_nb_helpers.py` to
 | [`histology_niche_index.py`](histology_niche_index.py) | Shared TLS / SRI / TNI engine (`OrganNicheConfig`, neighborhood scores, cohort burden). |
 | [`uni_label_cv_helpers.py`](uni_label_cv_helpers.py) | Shared UNI-label CV, internal-validation, and StarDist prediction/report helpers used by dataset pipelines and notebooks. |
 | [`prediction_confidence.py`](prediction_confidence.py) | Per-nucleus L2 confidence from existing softmax: similar-type collapse and UTOPIA-style conformal presence calibrated on pan-cancer OOF. |
+| [`posthoc.py`](posthoc.py) | 2026.11.17. OOF metrics (was `oof_evaluation.py`), label-shift EM (was `prior_shift.py`), abundance calibration (was `oof_abundance_calibration.py`), fold ensemble (was `fold_ensemble.py`), and the decision layer that turns softmax into labels for Accuracy / F1. |
 
 ## Architecture boundary
 
