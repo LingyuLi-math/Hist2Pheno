@@ -24,7 +24,7 @@
 ## Patient 1 only (20210809-C-AH4199551). The second slide is not predicted.
 ## UNI2 tokens already live under project_all_UNI2 and are not rewritten.
 ## Each arm writes its own tree:
-##   data/Visium/NPC/pred_uni2_axisfix_<arm>/{sample}/
+##   data/Visium/NPC/pred_uni2_axisfix_<arm>[_probX.XX]/{sample}/
 ## STAR_PROB_MIN=0 keeps every StarDist nucleus.
 ##
 ##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict
@@ -42,6 +42,11 @@ REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
 CUDA_DEVICE="${CUDA_DEVICE:-2}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 export STAR_PROB_MIN="${STAR_PROB_MIN:-0}"
+# 2026.11.17, STAR_PROB_MIN other than 0 gets its own prediction folder (_probX.XX), as in demo_uni2_A7_stratsec.sh
+PROB_TAG="$(extval_prob_tag)" || {
+  echo "ERROR: STAR_PROB_MIN must be in [0, 1], got ${STAR_PROB_MIN}" >&2
+  exit 1
+}
 
 # Order matches the ablation table: no-neighbor controls, then the spatial trunk and its one-change arms.
 ARMS=(
@@ -85,7 +90,7 @@ Usage: CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh {dry-run|pr
 
 Patient 1 only: ${SAMPLE}
 Arms: ${ARMS[*]}
-Output: data/Visium/NPC/pred_uni2_axisfix_<arm>/${SAMPLE}/
+Output: data/Visium/NPC/pred_uni2_axisfix_<arm>[_probX.XX]/${SAMPLE}/
 Notebook: code/External_val/NPC/Pred_visual_npc_patient1_axisfix.ipynb
 EOF
 }
@@ -102,7 +107,7 @@ run_arm() {
   local arm="$1"
   local result="${REPO}/data/PanCancer/result_uni2_ablation_${arm}_new1066axisfix_paired_v2_seed42"
   export UNI2_CKPT="${result}/cross_dataset_cv/${arm}/best_mlp_gpu.pt"
-  export UNI2_PRED_DIRNAME="pred_uni2_axisfix_${arm}"
+  export UNI2_PRED_DIRNAME="pred_uni2_axisfix_${arm}${PROB_TAG}"
   if [[ ! -f "${UNI2_CKPT}" ]]; then
     echo "ERROR: missing ${UNI2_CKPT}" >&2
     return 1

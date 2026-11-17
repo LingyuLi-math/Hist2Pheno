@@ -2800,12 +2800,28 @@ def train_hce_group_kfold_cv(
         if fraction:
             if not 0 < fraction < 1: raise ValueError("inner_val_fraction must be in (0,1)")
             if section_overlap.size: raise ValueError("Nested grouped validation cannot use cell-mixed outer splits")
-            from sklearn.model_selection import GroupShuffleSplit
             grouping = cv_data.get("patient_f",groups_f)
             if len(np.unique(grouping[outer_tr])) < 2:
                 raise ValueError("Nested validation needs >=2 train patients/sections; lower cv_k or supply more data")
-            it,iv = next(GroupShuffleSplit(n_splits=1,test_size=fraction,
-                random_state=int(random_state)+fold_idx).split(outer_tr,groups=grouping[outer_tr]))
+            # 2026.11.17, inner split moved to pancancer_cv.inner_val_split. "random" (default) is the
+            # previous GroupShuffleSplit, same seed, same groups. HIST2PHENO_INNER_VAL=cohort_safe keeps
+            # >=1 section per cohort and every outer-train L2 class in inner training.
+            # 内层验证集划分；cohort_safe 时不会把某队列唯一的 section（如 fold 0/1 的 BRCA）拿去做 early stopping。
+            from pancancer_cv import inner_val_split
+            inner_mode = str(cv_data.get("inner_val_mode") or os.environ.get("HIST2PHENO_INNER_VAL", "random"))
+            it,iv,inner_report = inner_val_split(outer_tr, grouping, fraction=fraction,
+                seed=int(random_state)+fold_idx, mode=inner_mode,
+                datasets=cv_data.get("dataset_f"), labels=y_enc)
+            g2s = cv_data.get("group_to_sample") or {}
+            inner_report["inner_val_sections"] = [str(g2s.get(int(x), x)) if str(x).lstrip("-").isdigit() else str(x)
+                                                  for x in inner_report["inner_val_groups"]]
+            print(f"  inner val ({inner_mode}): {len(inner_report['inner_val_groups'])} groups, "
+                  f"{len(iv):,} cells", flush=True)
+            if inner_report.get("lost_classes"):
+                lost = [str(cv_data.get("class_names", [])[c]) if c < len(cv_data.get("class_names", [])) else str(c)
+                        for c in inner_report["lost_classes"]]
+                print(f"  WARNING fold {fold_idx}: inner training has no cells of {lost} "
+                      "(set HIST2PHENO_INNER_VAL=cohort_safe)", flush=True)
             tr_idx,va_idx = outer_tr[it],outer_tr[iv]
         scaler, X_tr, X_va, X_all_scaled = _scale_split_float32(X_f, tr_idx, va_idx)
 
@@ -2944,6 +2960,10 @@ def train_hce_group_kfold_cv(
                 "n_train": int(len(tr_idx)),
                 "n_val": int(len(outer_va)),
                 "n_inner_val":int(len(va_idx)) if fraction else 0,
+                # 2026.11.17, which sections early stopping used, and L2 classes inner training lost
+                "inner_val_mode": inner_report["mode"] if fraction else "",
+                "inner_val_sections": ";".join(inner_report["inner_val_sections"]) if fraction else "",
+                "inner_lost_classes": ";".join(map(str, inner_report.get("lost_classes", []))) if fraction else "",
                 "outer_fold":fold_idx,
                 "n_train_groups": int(len(np.unique(groups_f[tr_idx]))),
                 "n_val_groups": int(len(held)),

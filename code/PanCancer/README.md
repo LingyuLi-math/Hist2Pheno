@@ -81,6 +81,41 @@ and the paired per-fold difference against `spatial_k8` with the number of
 folds that improved. `SPLITTER=stratified_section` gives the same run with
 L2-balanced section folds (`stratsec_` in the folder name).
 
+### 2026-11-17 Inner validation and the l12_links_1 stack
+
+Folds of every arm above: `cross_dataset_section`, whole sections, round-robin
+inside each cohort (no L2 balancing; that is `SPLITTER=stratified_section`).
+BRCA has two sections, so fold 0 holds out one and trains on the other, fold 1
+the reverse, folds 2–4 train on both. Inside each fold, 20% of the training
+sections go to inner validation (early stopping). The old split
+(`GroupShuffleSplit`) ignores cohorts, so in folds 0/1 it can take the only BRCA
+section and every DCIS cell out of training. Seed 42 did not hit this: mean
+P(DCIS) on DCIS cells is 0.62–0.72 and DCIS AUROC 0.84–0.89 on both BRCA
+sections. `INNER_VAL=cohort_safe` (`pancancer_cv.inner_val_split`) draws inner
+validation per cohort, never takes a cohort's last section, and gives back
+sections until every L2 class of the outer training set is in inner training.
+Each fold now records `inner_val_sections` and `inner_lost_classes`; the
+default (`random`) is the old split, unchanged. cohort_safe runs use the tag
+`<DATA_TAG>_ivsafe` and are compared only with each other.
+
+Arms stacked on `l12_links_1` (one change each, compared with `REFERENCE=l12_links_1`):
+`l12_links_1_focal` (+ focal γ=1), `l12_links_1_balanced` (+ balanced L12),
+`l12_links_1p5` (link weights 1.5, CE(L12) 1).
+
+`code/PanCancer/run_l12_links_1_seeds.sh` trains only `l12_links_1` under `INNER_VAL=cohort_safe`, seeds 42 43 44, same outer folds (`SPLIT_SEED=42`). Seeds change initialisation and batch order. The first seed builds or reuses the shared k=8 cache; the others wait for `context cache ready`. Each seed writes `result_uni2_ablation_l12_links_1_<DATA_TAG>_ivsafe_paired_v2_seed<N>/` (weight, OOF, decision rule). `summary` writes `data/PanCancer/l12_links_1_<DATA_TAG>_ivsafe_seeds.csv` (one row per seed, then mean and sd) and keeps the earlier random-split `l12_links_1` and `spatial_k8` seed-42 rows beside it. It also prints how many folds lost an L2 class in inner training, and how many put a BRCA section there.
+
+```bash
+# l12_links_1 only, three seeds. GPU 0 is still on gate_l12_balanced; 2 and 3 are in use.
+GPUS="1" bash code/PanCancer/run_l12_links_1_seeds.sh
+bash code/PanCancer/run_l12_links_1_seeds.sh summary
+
+# the one-change stack, compared with l12_links_1. Same _ivsafe tag.
+INNER_VAL=cohort_safe REFERENCE=l12_links_1 SEEDS="42 43 44" \
+  ARMS="l12_links_1 l12_links_1_focal l12_links_1_balanced l12_links_1p5 spatial_k8" \
+  REBUILD_INDEX=0 GPUS="1" bash code/PanCancer/retrain_all.sh
+INNER_VAL=cohort_safe REFERENCE=l12_links_1 bash code/PanCancer/run_ablation.sh summary
+```
+
 ### Summary, seed 42 (2026-11-17, 21:37)
 
 Ten arms have a fold-4 weight and a pooled OOF on the same 7,461,039 cells. `gate_l12_balanced` is still training and has no weight yet, so it is not in this table. `focal_gamma1` finished, including its decision rule. L2 accuracy and macro-F1 are pooled argmax. Decision columns are cross-fitted `decision full`.
@@ -101,6 +136,9 @@ Ten arms have a fold-4 weight and a pooled OOF on the same 7,461,039 cells. `gat
 Neighbor context is the gain, from about 0.882 without neighbors to 0.904–0.906 with k=8. `l12_links_1` and `l12_links_2` tie for the highest AUROC. `l12_links_2` has the highest argmax L2 accuracy and argmax macro-F1. `spatial_k8_gate` has the highest decision L2 macro-F1 (0.3086). `focal_gamma1` has the highest decision L2 accuracy (0.5061) and sits with the spatial arms on AUROC (0.9047). `balanced_sampler` argmax accuracy is low; its decision layer recovers most of the F1. The three no-neighbor arms stay near 0.88 and are not used for the external maps.
 
 ### 10x breast slide against the pathologist map
+
+> 2026.11.17. The table below used `spot_diameter_fullres / 2` (65 µm disc) and argmax labels, and was computed outside the repository. It is now reproduced, with the 55 µm capture disc and four label modes (argmax, `decision_rule_l2_only.json`, EM prior shift, kNN smoothing), by
+> `python code/External_val/BRCA/brca_10x_annotation_eval.py` (output `data/Visium/BRCA/pred_uni2_axisfix_figures/V1_Breast_Cancer_Block_A_Section_1_image_annotation_eval.csv`; `--radius-um 65` gives the old disc). The same cells are at the end of `Pred_visual_brca_10x_axisfix.ipynb`. Use the label mode with the highest `score` for every external map.
 
 Ten weights with a finished prediction, slide `V1_Breast_Cancer_Block_A_Section_1_image` only. `gate_l12_balanced` is still training and is not in this table. Ground truth is `data/Visium/BRCA/10x_data/metadata.tsv`: `fine_annot_type` collapsed to IDC (1,663 spots), DCIS/LCIS (827), tumor edge (823), and healthy (485). Each in-tissue spot is scored by the majority L2 label of StarDist nuclei inside `spot_diameter_fullres / 2` (88.7 px). 157,242 of 423,162 nuclei fall in a spot. Maps: `code/External_val/BRCA/Pred_visual_brca_10x_axisfix.ipynb`.
 

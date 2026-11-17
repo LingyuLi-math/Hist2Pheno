@@ -24,6 +24,8 @@ Outputs in the result folder: `decision_rule.json` (three heads),
 `oof_predictions.npz` (`FIT_DECISION=0` skips). `run_ablation.sh summary`
 calls `compare`.
 
+2026.11.17. `posthoc.label_modes(probs, class_names, result_dir, xy=...)` labels an external slide four ways from its `*_l2_probs.npz`: `argmax`, `decision` (`decision_rule_l2_only.json`), `prior_shift` (Saerens EM on that slide; training prior = mean OOF softmax, cached as `oof_l2_mean_prior.json`), and `smooth` (kNN, k=8, α=0.3). `code/External_val/BRCA/brca_10x_annotation_eval.py` picks among them against the BRCA pathologist map.
+
 ```bash
 python code/Hist2Pheno_pkg/posthoc.py fit-decision data/PanCancer/<result_dir> --objective macro_f1
 python code/Hist2Pheno_pkg/posthoc.py decide <pred>/<sample>/<sample>_l2_probs.npz --rule data/PanCancer/<result_dir>/decision_rule_l2_only.json

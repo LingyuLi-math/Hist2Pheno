@@ -327,6 +327,42 @@ cmd_uni2() {
         --ablation-tag focal_gamma1
       )
       ;;
+    # 2026.11.17, arms stacked on l12_links_1 (L12 link NLL 1, CE(L12) 1, k=8 mean).
+    # Each adds one thing to l12_links_1 and is compared against it (run_ablation.sh, REFERENCE=l12_links_1).
+    # 在 l12_links_1 上每次只加一项改动。
+    l12_links_1_focal)
+      args+=(
+        --hierarchy adjacent --legacy-l2-l1-weight 2 --l12-ce-weight 1
+        --l2-l12-nll 1 --l12-l1-nll 1 --l2-l12-js 0.1 --l12-l1-js 0.1
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --l2-focal-gamma 1
+        --save-result result_uni2_l12_links_1_focal
+        --ablation-tag l12_links_1_focal
+      )
+      ;;
+    l12_links_1_balanced)
+      args+=(
+        --hierarchy adjacent --legacy-l2-l1-weight 2 --l12-ce-weight 1
+        --l2-l12-nll 1 --l12-l1-nll 1 --l2-l12-js 0.1 --l12-l1-js 0.1
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --l12-class-weight-mode balanced
+        --save-result result_uni2_l12_links_1_balanced
+        --ablation-tag l12_links_1_balanced
+      )
+      ;;
+    # link weights 1.5 with CE(L12) kept at 1: l12_links_2 changed both at once
+    l12_links_1p5)
+      args+=(
+        --hierarchy adjacent --legacy-l2-l1-weight 2 --l12-ce-weight 1
+        --l2-l12-nll 1.5 --l12-l1-nll 1.5 --l2-l12-js 0.1 --l12-l1-js 0.1
+        --use-spatial-context --spatial-k 8 --spatial-mode mean
+        --context-cache-dir "$OUT/context_cache"
+        --save-result result_uni2_l12_links_1p5
+        --ablation-tag l12_links_1p5
+      )
+      ;;
     l12_balanced_nospatial)
       args+=(
         "${ADJ[@]}"
@@ -391,7 +427,7 @@ cmd_uni2() {
       )
       ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A5|A6|A7|A8|A2_l12_balanced|balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A5|A6|A7|A8|A2_l12_balanced|balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16|l12_links_1_focal|l12_links_1_balanced|l12_links_1p5"
       ;;
   esac
   # 2026.11.17, RESULT_NAME / ABLATION_TAG rename the output folder and the
@@ -403,6 +439,14 @@ cmd_uni2() {
   done
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
   local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
+  # 2026.11.17, INNER_VAL=cohort_safe: early-stopping split keeps every cohort and L2 class
+  # in inner training (pancancer_cv.inner_val_split). Its runs never share a folder with "random".
+  if [[ "${INNER_VAL:-random}" == cohort_safe ]]; then
+    export HIST2PHENO_INNER_VAL=cohort_safe
+    [[ "$suffix" == *ivsafe* ]] || suffix="ivsafe_${suffix}"
+  elif [[ "${INNER_VAL:-random}" != random ]]; then
+    die "INNER_VAL must be random or cohort_safe"
+  fi
   # 2026.11.16, SPLITTER=stratified_section: whole sections, L2-balanced folds.
   # Results go to <save-result>_stratsec_<suffix>, never into the round-robin folder.
   if [[ "${SPLITTER:-cross_dataset_section}" != cross_dataset_section ]]; then
@@ -488,7 +532,7 @@ case "${1:-}" in
       A7) cmd_uni2 A7_bal_focal ;;
       A8) cmd_uni2 A8_l12_balanced ;;
       A2_l12_balanced) cmd_uni2 A2_l12_balanced ;;
-      balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16) cmd_uni2 "$2" ;;  # 2026.11.17, see run_ablation.sh
+      balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16|l12_links_1_focal|l12_links_1_balanced|l12_links_1p5) cmd_uni2 "$2" ;;  # 2026.11.17, see run_ablation.sh
       A2L12) die "renamed to A7. CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A7" ;;
       A9|A10|A11) die "${2} was removed. The neighbor and tissue heads did not improve L2 macro-F1." ;;
       *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A5 | A6 | A7 | A8" ;;

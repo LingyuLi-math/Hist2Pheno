@@ -29,6 +29,8 @@ from Hist2Pheno_pkg.pancancer_cv import (  # noqa: E402
     is_cell_stratified_splitter,
     ok_mask,
     summarize_cell_stratified_folds,
+    INNER_VAL_MODES,  # 2026.11.17
+    inner_val_split,  # 2026.11.17
 )
 
 __all__ = [
@@ -51,4 +53,6 @@ __all__ = [
     "is_cell_stratified_splitter",
     "ok_mask",
     "summarize_cell_stratified_folds",
+    "INNER_VAL_MODES",
+    "inner_val_split",
 ]

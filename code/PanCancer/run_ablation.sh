@@ -21,6 +21,17 @@
 ##   spatial_k4              trunk with k=4   (sensitivity)           spatial_k4
 ##   spatial_k16             trunk with k=16  (sensitivity)           spatial_k16
 ##
+## 2026.11.17, arms stacked on l12_links_1 (compare with REFERENCE=l12_links_1):
+##   l12_links_1_focal       l12_links_1 + focal γ=1                  l12_links_1_focal
+##   l12_links_1_balanced    l12_links_1 + balanced L12               l12_links_1_balanced
+##   l12_links_1p5           link weights 1.5, CE(L12) 1              l12_links_1p5
+##   bash code/PanCancer/run_ablation.sh stack        # l12_links_1 + the three above
+##
+## 2026.11.17, INNER_VAL=cohort_safe: the early-stopping split never takes a
+## cohort's last section or an L2 class out of training (BRCA in folds 0/1).
+## The tag becomes <DATA_TAG>_ivsafe, so these runs are paired only with each other.
+##   INNER_VAL=cohort_safe REFERENCE=l12_links_1 bash code/PanCancer/run_ablation.sh summary
+##
 ## The old "A6" (sampler + focal + no class weight in one arm) is split into
 ## balanced_sampler and focal_gamma1. After each run 1_demo_train.sh fits the
 ## decision layer (posthoc.py fit-decision), so balanced-weight arms are also
@@ -52,6 +63,13 @@ if [[ ! "${DATA_TAG}" =~ ^[A-Za-z0-9_]+$ ]]; then
   echo "DATA_TAG may contain letters, digits and _ only (got ${DATA_TAG})" >&2
   exit 1
 fi
+# 2026.11.17, cohort_safe inner validation gets its own tag
+if [[ "${INNER_VAL:-random}" == cohort_safe ]]; then
+  [[ "${DATA_TAG}" == *_ivsafe ]] || DATA_TAG="${DATA_TAG}_ivsafe"
+  export INNER_VAL
+elif [[ "${INNER_VAL:-random}" != random ]]; then
+  echo "INNER_VAL must be random or cohort_safe" >&2; exit 1
+fi
 if [[ "${DATA_TAG}" == new1066 ]]; then
   echo "DATA_TAG=new1066 is the pre-fix series; use run_uni2_new1066.sh for it, or pick a new tag." >&2
   exit 1
@@ -60,7 +78,8 @@ fi
 ARMS=(legacy_nospatial adjacent_nospatial spatial_k8 spatial_k8_gate l12_links_1 l12_links_2
       balanced_sampler focal_gamma1 l12_balanced gate_l12_balanced l12_balanced_nospatial)
 EXTRA_ARMS=(spatial_k4 spatial_k16)
-REFERENCE=spatial_k8
+STACK_ARMS=(l12_links_1 l12_links_1_focal l12_links_1_balanced l12_links_1p5)  # 2026.11.17
+REFERENCE="${REFERENCE:-spatial_k8}"
 
 recipe_of() {
   case "$1" in
@@ -77,13 +96,14 @@ recipe_of() {
     l12_balanced_nospatial) echo l12_balanced_nospatial ;;
     spatial_k4) echo spatial_k4 ;;
     spatial_k16) echo spatial_k16 ;;
+    l12_links_1_focal|l12_links_1_balanced|l12_links_1p5) echo "$1" ;;
     *) return 1 ;;
   esac
 }
 
 usage() {
   echo "usage: DATA_TAG=<tag> [SEEDS=\"42 43 44\"] CUDA_DEVICE=0 bash code/PanCancer/run_ablation.sh {<arm> ...|all|summary|list}" >&2
-  echo "arms: ${ARMS[*]} ${EXTRA_ARMS[*]}" >&2
+  echo "arms: ${ARMS[*]} ${EXTRA_ARMS[*]} ${STACK_ARMS[*]:1}" >&2
   exit 1
 }
 
@@ -107,11 +127,12 @@ summary() {
 
 [[ $# -ge 1 ]] || usage
 case "$1" in
-  list) printf '%s\n' "${ARMS[@]}" "${EXTRA_ARMS[@]}"; exit 0 ;;
+  list) printf '%s\n' "${ARMS[@]}" "${EXTRA_ARMS[@]}" "${STACK_ARMS[@]:1}"; exit 0 ;;
   summary) summary; exit 0 ;;
 esac
 arms=("$@")
 [[ "$1" == all ]] && arms=("${ARMS[@]}")
+[[ "$1" == stack ]] && arms=("${STACK_ARMS[@]}")
 for arm in "${arms[@]}"; do recipe_of "$arm" >/dev/null || { echo "unknown arm: $arm" >&2; usage; }; done
 read -r -a seeds <<< "${SEEDS:-${TRAIN_SEED:-42}}"
 for seed in "${seeds[@]}"; do

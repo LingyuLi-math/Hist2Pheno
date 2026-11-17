@@ -114,6 +114,8 @@ CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict spatial_k8
 
 [`Pred_visual_npc_patient1_axisfix.ipynb`](Pred_visual_npc_patient1_axisfix.ipynb) scores B cell (`B_cell` + `Plasma`) inside the expert TLS outline against the rest of the slide, then draws the TLS crops on one color scale. Adding `l12_links_2` and `l12_balanced` does not put B cells in that outline: argmax B inside the 5,262 nuclei is 0 for both, and the foci are still DC and DCIS. cell2location on the same 26 spots calls B. UNI2 tokens stay in `project_all_UNI2`.
 
+2026.11.17. The notebook also scores B inside the TLS under four label modes (`posthoc.label_modes`: argmax, `decision_rule_l2_only.json`, EM prior shift, kNN smoothing). `STAR_PROB_MIN` other than 0 now writes `pred_uni2_axisfix_<arm>_probX.XX/`; set `PRED_TAG` in the notebook to match.
+
 ## 2026-11-15 Per-type abundance vs cell2location
 
 Yes. A per-type abundance map is the right way to put Hist2Pheno next to cell2location on these two slides. The nuclei / pseudo-spot / cell2location cell in `Pred_visual_npc_uni2_A2.ipynb` draws one winner per spot: Hist2Pheno `pred_CT`, the majority L2 inside the Visium disc, and `argmax` of the cell2location counts. A type appears only where it is the largest. On patient1 the seven cell2location counts in `Annotation/sp.obs.csv` sum to about 7–55 per spot (median about 21). Tumor’s median is about 4.2 and B’s is about 2.2, so B is often present and still loses the argmax. That is the scale problem: one shared winner hides every type whose mass is smaller than the winner.

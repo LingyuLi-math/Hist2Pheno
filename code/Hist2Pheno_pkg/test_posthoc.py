@@ -124,3 +124,23 @@ def test_compare_runs_paired(tmp_path):
     assert (tmp_path / "s_per_fold.csv").is_file()
     assert ph._arm_of("result_uni2_ablation_l12_links_1_stratsec_new1066axisfix_paired_v2_seed43",
                       "new1066axisfix") == ("l12_links_1", 43)
+
+
+def test_label_modes_external(tmp_path):
+    # 2026.11.17, label_modes: four modes, prior cached, class order checked
+    cls = _fake_oof(tmp_path, n=20_000)
+    ph.fit_decision(tmp_path, max_fit=10_000)
+    rng = np.random.default_rng(3)
+    k2 = len(cls["L2"])
+    p = ph.softmax_rows(rng.normal(0, 1, (500, k2)))
+    xy = rng.uniform(0, 100, (500, 2))
+    labs = ph.label_modes(p, cls["L2"], tmp_path, xy=xy)
+    assert set(labs) == set(ph.LABEL_MODES)
+    assert all(len(v) == 500 and set(v) <= set(cls["L2"]) for v in labs.values())
+    assert (labs["argmax"] == np.asarray(cls["L2"], dtype=object)[p.argmax(1)]).all()
+    assert (tmp_path / "oof_l2_mean_prior.json").is_file()
+    # no xy -> no smooth; reversed class order -> error
+    assert "smooth" not in ph.label_modes(p, cls["L2"], tmp_path, modes=("smooth",))
+    import pytest
+    with pytest.raises(ValueError):
+        ph.label_modes(p, cls["L2"][::-1], tmp_path, modes=("decision",))

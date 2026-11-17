@@ -19,6 +19,14 @@
 ##   HIST2PHENO_AMP=bf16       same precision for every arm (fp16 overflowed with balanced L12)
 ##   HIST2PHENO_STORE_DTYPE=float16   halves the per-process scaled copies on disk
 ##   DECISION_OBJECTIVE=f1_acc the decision layer maximises (macro-F1 + accuracy) / 2
+##   INNER_VAL=random          cohort_safe: early stopping never takes a cohort's last section
+##                             or an L2 class out of training; folders get the _ivsafe tag
+##   REFERENCE=spatial_k8      arm the summary is paired against (l12_links_1 for the stack)
+##
+## 2026.11.17, l12_links_1 stack with the safe inner split, 3 seeds:
+##   INNER_VAL=cohort_safe REFERENCE=l12_links_1 SEEDS="42 43 44" \
+##     ARMS="l12_links_1 l12_links_1_focal l12_links_1_balanced l12_links_1p5 spatial_k8" \
+##     REBUILD_INDEX=0 bash code/PanCancer/retrain_all.sh
 ##
 ## Disk: each running process keeps a scaled train/val copy of the pooled
 ## features under data/PanCancer/scaled_cache (about N_cells x 1536 x 2 bytes
@@ -32,10 +40,14 @@ export DATA_TAG="${DATA_TAG:-new1066axisfix}"
 export HIST2PHENO_AMP="${HIST2PHENO_AMP:-bf16}"
 export HIST2PHENO_STORE_DTYPE="${HIST2PHENO_STORE_DTYPE:-float16}"
 export DECISION_OBJECTIVE="${DECISION_OBJECTIVE:-f1_acc}"
+export REFERENCE="${REFERENCE:-spatial_k8}"
 export SPLIT_SEED="${SPLIT_SEED:-42}"
 read -r -a GPUS <<< "${GPUS:-0 1 2 3}"
 read -r -a SEEDS <<< "${SEEDS:-42}"
-LOGDIR="$REPO/code/log/retrain_${DATA_TAG}"
+# 2026.11.17, INNER_VAL=cohort_safe: run_ablation.sh adds _ivsafe to the tag; logs follow it
+export INNER_VAL="${INNER_VAL:-random}"
+LOG_TAG_DIR="$DATA_TAG"; [[ "$INNER_VAL" == cohort_safe ]] && LOG_TAG_DIR="${DATA_TAG}_ivsafe"
+LOGDIR="$REPO/code/log/retrain_${LOG_TAG_DIR}"
 mkdir -p "$LOGDIR"
 STEP="${STEP:-all}"
 
@@ -97,13 +109,21 @@ train_all() {
   echo "===== [4/5] train ${#ARM_LIST[@]} arms x ${#SEEDS[@]} seed(s) on GPUs ${GPUS[*]} $(date '+%F %T') ====="
   local -a jobs=()
   local seed arm
+  # 2026.11.17, the k=8 cache builder is the first k=8 arm of ARM_LIST (spatial_k8 when present),
+  # so an ARMS list without spatial_k8 (e.g. the l12_links_1 stack) does not train spatial_k8.
+  local builder="" arm0
+  for arm0 in spatial_k8 "${ARM_LIST[@]}"; do
+    [[ " ${ARM_LIST[*]} " == *" $arm0 "* ]] || continue
+    [[ " ${NOSPATIAL[*]} " == *" $arm0 "* || "$arm0" == spatial_k4 || "$arm0" == spatial_k16 ]] && continue
+    builder="$arm0"; break
+  done
   for seed in "${SEEDS[@]}"; do
-    jobs+=("spatial_k8:$seed")
+    [[ -n "$builder" ]] && jobs+=("$builder:$seed")
     for arm in "${ARM_LIST[@]}"; do
       [[ " ${NOSPATIAL[*]} " == *" $arm "* ]] && jobs+=("$arm:$seed")
     done
     for arm in "${ARM_LIST[@]}"; do
-      [[ "$arm" == spatial_k8 || " ${NOSPATIAL[*]} " == *" $arm "* ]] && continue
+      [[ "$arm" == "$builder" || " ${NOSPATIAL[*]} " == *" $arm "* ]] && continue
       jobs+=("$arm:$seed")
     done
   done
@@ -115,17 +135,15 @@ train_all() {
     local q=$(( i % n ))
     queue[q]="${queue[q]} ${jobs[i]}"
   done
-  local k8_log
-  k8_log="$REPO/code/log/pancancer_section_uni2_A2_adjacent_spatial_k8mean_${DATA_TAG}_paired_v2_seed${SEEDS[0]}.log"
-  [[ "${SPLITTER:-cross_dataset_section}" != cross_dataset_section ]] && \
-    k8_log="$REPO/code/log/pancancer_section_uni2_A2_adjacent_spatial_k8mean_stratsec_${DATA_TAG}_paired_v2_seed${SEEDS[0]}.log"
+  # 2026.11.17, the builder's own .out (run_py tees the training log to it) carries "context cache ready"
+  local k8_log="$LOGDIR/${builder}_seed${SEEDS[0]}.out"
   local -a pids=()
   for ((i=0; i<n; i++)); do
     local gpu="${GPUS[i]}"
     (
       for job in ${queue[i]}; do
         arm="${job%%:*}"; seed="${job##*:}"
-        if [[ "$i" != 0 && " ${NOSPATIAL[*]} " != *" $arm "* && "$arm" != spatial_k4 && "$arm" != spatial_k16 ]]; then
+        if [[ -n "$builder" && "$job" != "$builder:${SEEDS[0]}" && " ${NOSPATIAL[*]} " != *" $arm "* && "$arm" != spatial_k4 && "$arm" != spatial_k16 ]]; then
           # wait for the k=8 cache, at most CACHE_WAIT_MIN minutes (then build it here too)
           local waited=0
           until grep -q "context cache ready" "$k8_log" 2>/dev/null || (( waited >= ${CACHE_WAIT_MIN:-360} )); do

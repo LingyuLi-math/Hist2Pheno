@@ -151,3 +151,12 @@ bash code/External_val/BRCA/demo_uni2_A7.sh predict
 ```bash
 CUDA_DEVICE=2 bash code/External_val/BRCA/demo_uni2_axisfix.sh predict
 ```
+
+2026.11.17. Score the arms against the pathologist spots (55 µm disc, four label modes: argmax, decision rule, EM prior shift, kNN smoothing). It also writes `{SAMPLE}_l2_label_modes.csv` next to each prediction:
+
+```bash
+python code/External_val/BRCA/brca_10x_annotation_eval.py
+python code/External_val/BRCA/brca_10x_annotation_eval.py --arms spatial_k8 l12_links_1 --radius-um 65
+```
+
+`STAR_PROB_MIN` other than 0 now writes `pred_uni2_axisfix_<arm>_probX.XX/`; set `PRED_TAG` in the notebook and `--pred-tag` for the script to match.

@@ -8,7 +8,9 @@
 and adds section 5 (2026.11.17, new): decision rules that turn the three
 softmax heads into **labels** with higher Accuracy / macro-F1 at the same
 AUROC (hierarchy-consistent fusion, temperature, per-class bias fitted by
-cross-fitting on OOF, optional spatial smoothing and abstention).
+cross-fitting on OOF, optional spatial smoothing and abstention), and
+section 6 (2026.11.17, new): label modes for external slides (argmax,
+decision rule, EM prior shift, kNN smoothing) behind one function.
 
 CLI (one entry point, the old flags are unchanged):
 
@@ -754,7 +756,8 @@ def run_fold_metrics(result_dir) -> pd.DataFrame:
 
 ARM_ORDER = ("legacy_nospatial", "adjacent_nospatial", "spatial_k8", "spatial_k8_gate", "l12_links_1",
              "l12_links_2", "balanced_sampler", "focal_gamma1", "l12_balanced", "gate_l12_balanced",
-             "l12_balanced_nospatial", "spatial_k4", "spatial_k16")
+             "l12_balanced_nospatial", "spatial_k4", "spatial_k16",
+             "l12_links_1_focal", "l12_links_1_balanced", "l12_links_1p5")  # 2026.11.17 stacked arms
 
 
 def _arm_of(name, data_tag=None):
@@ -868,7 +871,77 @@ def decide_npz(probs_npz, rule_path, *, smooth_alpha=0.0, xy=None, out=None) -> 
 
 
 ########################################################
-# CLI (2026.11.17, one entry point for sections 1-5)
+# Section 6. (2026.11.17, new) label modes for external slides
+########################################################
+# 2026.11.17, one place that turns an external L2 softmax into labels, so maps
+# and spot tables can compare argmax, the l2_only decision rule, EM prior
+# shift and kNN smoothing on the same nuclei. Which mode is kept is decided
+# by a slide with ground truth (BRCA 10x pathologist map), not assumed.
+# 外部切片的四种取标签方式；哪一种更好由有 GT 的切片决定。
+LABEL_MODES = ("argmax", "decision", "prior_shift", "smooth")
+
+
+def train_l2_prior(result_dir):
+    """Mean OOF L2 softmax of one run (training prior), cached as JSON."""
+    result_dir = Path(result_dir)
+    cache = result_dir / "oof_l2_mean_prior.json"
+    oof = result_dir / "oof_predictions.npz"
+    if cache.is_file() and (not oof.is_file() or cache.stat().st_mtime >= oof.stat().st_mtime):
+        d = json.loads(cache.read_text())
+        return np.asarray(d["prior"], dtype=np.float64), list(d["class_names"])
+    with np.load(oof, allow_pickle=False) as z:
+        prior = np.asarray(z["l2_probs"], dtype=np.float64).mean(axis=0)
+        names = _head_classes(z)["L2"]
+    try:
+        cache.write_text(json.dumps({"prior": prior.tolist(), "class_names": names}))
+    except OSError:
+        pass
+    return prior, names
+
+
+def label_modes(probs, class_names, result_dir, *, xy=None, modes=LABEL_MODES, smooth_alpha=0.3, smooth_k=8):
+    """L2 label names per nucleus for each requested mode.
+
+    argmax       the checkpoint label (pred_CT)
+    decision     decision_rule_l2_only.json of the same run (bias + temperature)
+    prior_shift  Saerens EM on this slide, training prior = mean OOF softmax
+    smooth       argmax after kNN smoothing of the softmax (needs ``xy``)
+    """
+    p = np.asarray(probs, dtype=np.float32)
+    names = [str(c) for c in class_names]
+    result_dir = Path(result_dir)
+    out = {}
+    for mode in modes:
+        if mode == "argmax":
+            out[mode] = np.asarray(names, dtype=object)[p.argmax(1)]
+        elif mode == "decision":
+            rule_path = result_dir / "decision_rule_l2_only.json"
+            if not rule_path.is_file():
+                continue
+            rule = DecisionRule.load(rule_path)
+            if list(rule.classes_l2) != names:
+                raise ValueError(f"{rule_path}: class order differs from the probabilities")
+            out[mode] = rule.names(rule.apply(p)["l2"], "l2")
+        elif mode == "prior_shift":
+            if not (result_dir / "oof_predictions.npz").is_file() and not (result_dir / "oof_l2_mean_prior.json").is_file():
+                continue
+            prior, prior_names = train_l2_prior(result_dir)
+            if list(prior_names) != names:
+                raise ValueError("training prior class order differs from the probabilities")
+            q, _, _ = em_prior_shift(p, prior)
+            out[mode] = np.asarray(names, dtype=object)[q.argmax(1)]
+        elif mode == "smooth":
+            if xy is None:
+                continue
+            q = smooth_probs_knn(p, xy, k=smooth_k, alpha=smooth_alpha)
+            out[mode] = np.asarray(names, dtype=object)[q.argmax(1)]
+        else:
+            raise ValueError(f"unknown label mode {mode!r}; choose from {LABEL_MODES}")
+    return out
+
+
+########################################################
+# CLI (2026.11.17, one entry point for sections 1-6)
 ########################################################
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)

@@ -12,7 +12,7 @@
 ##
 ## UNI2 tokens already live under project_all_UNI2 and are not rewritten.
 ## Each arm writes:
-##   data/Visium/BRCA/pred_uni2_axisfix_<arm>/{sample}/
+##   data/Visium/BRCA/pred_uni2_axisfix_<arm>[_probX.XX]/{sample}/
 ##
 ##   CUDA_DEVICE=2 bash code/External_val/BRCA/demo_uni2_axisfix.sh predict
 ##   CUDA_DEVICE=2 bash code/External_val/BRCA/demo_uni2_axisfix.sh predict spatial_k8
@@ -29,6 +29,11 @@ REPO="/home/lingyu/ssd2/Python/Hist2Pheno"
 CUDA_DEVICE="${CUDA_DEVICE:-2}"
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 export STAR_PROB_MIN="${STAR_PROB_MIN:-0}"
+# 2026.11.17, STAR_PROB_MIN other than 0 gets its own prediction folder (_probX.XX), as in demo_uni2_A7_stratsec.sh
+PROB_TAG="$(extval_prob_tag)" || {
+  echo "ERROR: STAR_PROB_MIN must be in [0, 1], got ${STAR_PROB_MIN}" >&2
+  exit 1
+}
 
 ARMS=(
   legacy_nospatial
@@ -70,7 +75,7 @@ Usage: CUDA_DEVICE=2 bash code/External_val/BRCA/demo_uni2_axisfix.sh {dry-run|p
 
 10x slide only: ${SAMPLE}
 Arms: ${ARMS[*]}
-Output: data/Visium/BRCA/pred_uni2_axisfix_<arm>/${SAMPLE}/
+Output: data/Visium/BRCA/pred_uni2_axisfix_<arm>[_probX.XX]/${SAMPLE}/
 Notebook: code/External_val/BRCA/Pred_visual_brca_10x_axisfix.ipynb
 EOF
 }
@@ -87,7 +92,7 @@ run_arm() {
   local arm="$1"
   local result="${REPO}/data/PanCancer/result_uni2_ablation_${arm}_new1066axisfix_paired_v2_seed42"
   export UNI2_CKPT="${result}/cross_dataset_cv/${arm}/best_mlp_gpu.pt"
-  export UNI2_PRED_DIRNAME="pred_uni2_axisfix_${arm}"
+  export UNI2_PRED_DIRNAME="pred_uni2_axisfix_${arm}${PROB_TAG}"
   if [[ ! -f "${UNI2_CKPT}" ]]; then
     echo "ERROR: missing ${UNI2_CKPT}" >&2
     return 1

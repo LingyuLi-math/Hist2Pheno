@@ -449,3 +449,71 @@ def fold_balance_score(counts, fold_ids) -> float:
     T = F.sum(0)
     ok = T > 0
     return float(np.abs(F[:, ok] / T[ok] - 1.0 / k).max(0).mean())
+
+
+# ---------------------------------------------------------------------------
+# 2026.11.17, inner validation split (early stopping) inside one outer fold.
+# The old split is GroupShuffleSplit over sections: it ignores cohorts and
+# classes, so a cohort with one training section in this fold (BRCA in folds
+# 0/1) can lose that section, and with it every DCIS cell, to inner
+# validation. "cohort_safe" keeps >=1 section of every cohort and every L2
+# class of the outer training set in inner training.
+# 内层验证集（early stopping）划分；cohort_safe 保证每个队列、每个 L2 类别都留在内层训练集。
+INNER_VAL_MODES = ("random", "cohort_safe")
+
+
+def inner_val_split(outer_tr, groups, *, fraction, seed, mode="random", datasets=None, labels=None):
+    """Return ``(it, iv, report)``: positions into ``outer_tr`` for inner train /
+    inner validation, plus a report (inner-val groups, L2 classes of the outer
+    training set that inner training lost).
+
+    ``mode="random"`` reproduces the previous GroupShuffleSplit exactly.
+    ``mode="cohort_safe"`` draws ``round(fraction * n)`` groups per cohort, never
+    the last group of a cohort, then moves inner-validation groups back to
+    training until every class of the outer training set is in inner training.
+    """
+    outer_tr = np.asarray(outer_tr)
+    g = np.asarray(groups)[outer_tr]
+    lab = None if labels is None else np.asarray(labels)[outer_tr]
+    mode = str(mode).strip().lower()
+    if mode not in INNER_VAL_MODES:
+        raise ValueError(f"inner_val mode must be one of {INNER_VAL_MODES}, got {mode!r}")
+    if mode == "random":
+        from sklearn.model_selection import GroupShuffleSplit
+
+        it, iv = next(GroupShuffleSplit(n_splits=1, test_size=fraction, random_state=int(seed))
+                      .split(outer_tr, groups=g))
+    else:
+        if lab is None:
+            raise ValueError("cohort_safe needs labels")
+        # without cohort names every group counts as one cohort (class coverage still applies)
+        ds = np.asarray(datasets)[outer_tr] if datasets is not None else np.full(len(g), "all", dtype=object)
+        uniq, first = np.unique(g, return_index=True)
+        cohort_of = dict(zip(uniq.tolist(), ds[first].tolist()))
+        rng = np.random.default_rng(int(seed))
+        val = set()
+        for cohort in sorted(set(cohort_of.values()), key=str):
+            units = sorted([u for u, c in cohort_of.items() if c == cohort], key=str)
+            n_val = min(int(round(fraction * len(units))), len(units) - 1)
+            if n_val > 0:
+                order = rng.permutation(len(units))
+                val.update(units[i] for i in order[:n_val])
+        # class coverage: give back the inner-val group richest in each lost class
+        while val:
+            in_val = np.isin(g, list(val))
+            lost = np.setdiff1d(np.unique(lab), np.unique(lab[~in_val]))
+            if lost.size == 0:
+                break
+            c = lost[0]
+            hit = in_val & (lab == c)
+            cand, cnt = np.unique(g[hit], return_counts=True)
+            back = cand[np.argmax(cnt)]
+            val.discard(back.item() if isinstance(back, np.generic) else back)
+        if not val:
+            raise ValueError("cohort_safe inner validation is empty; lower n_splits or use mode='random'")
+        in_val = np.isin(g, list(val))
+        it, iv = np.flatnonzero(~in_val), np.flatnonzero(in_val)
+    report = {"mode": mode, "inner_val_groups": sorted(np.unique(g[iv]).tolist(), key=str)}
+    if lab is not None:
+        report["lost_classes"] = np.setdiff1d(np.unique(lab), np.unique(lab[it])).tolist()
+    return it, iv, report
