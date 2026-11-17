@@ -116,6 +116,20 @@ INNER_VAL=cohort_safe REFERENCE=l12_links_1 SEEDS="42 43 44" \
 INNER_VAL=cohort_safe REFERENCE=l12_links_1 bash code/PanCancer/run_ablation.sh summary
 ```
 
+### cohort_safe OOF, seeds 42 and 44 (2026-11-18)
+
+`l12_links_1` with `INNER_VAL=cohort_safe` finished for seeds 42 and 44. Seed 43 stopped in fold 1 and has no weight, so it is not in this table. Both selected checkpoints are fold 4 (`three_tier_auc_sum` 2.6370 for seed 42, 2.6447 for seed 44). The numbers below are the pooled five-fold OOF on the same 7,461,039 cells as the [21:37 table](#summary-seed-42-2026-11-17-2137), not the fold-mean rows in `data/PanCancer/l12_links_1_new1066axisfix_ivsafe_seeds.csv`. L2 accuracy and macro-F1 are pooled argmax. Decision columns are cross-fitted `decision full`. The reference row is the earlier random-split `l12_links_1` seed 42.
+
+| Run | Best fold | L2 AUROC | L2 accuracy | L2 macro-F1 | Decision L2 accuracy | Decision L2 macro-F1 |
+|--|--:|--:|--:|--:|--:|--:|
+| `l12_links_1` cohort_safe, seed 42 | 4 | 0.9071 | 0.4782 | 0.3042 | 0.4988 | 0.3067 |
+| `l12_links_1` cohort_safe, seed 44 | 4 | 0.9065 | 0.4711 | 0.3012 | 0.5022 | 0.3108 |
+| `l12_links_1` random, seed 42 | 4 | 0.9060 | 0.4758 | 0.3016 | 0.5040 | 0.3079 |
+
+On this pooled OOF, cohort_safe sits with the random-split run. Seed 42 is 0.0011 above it on L2 AUROC and 0.0026 above it on argmax macro-F1. Seed 44 is 0.0005 above it on L2 AUROC and has the higher decision macro-F1 (0.3108). Neither seed raises decision accuracy above the random-split 0.5040. Inner-val audit for both finished seeds: 0/5 folds lost an L2 class in inner training, and 0/5 folds put a BRCA section in inner validation.
+
+Weights: `result_uni2_ablation_l12_links_1_new1066axisfix_ivsafe_paired_v2_seed42/cross_dataset_cv/l12_links_1/best_mlp_gpu.pt` and the same path with `seed44`. OOF archives are the `oof_predictions.npz` in those two result directories. Logs: `code/log/l12_links_1_new1066axisfix_ivsafe/seed42.out`, `seed44.out`.
+
 ### Summary, seed 42 (2026-11-17, 21:37)
 
 Ten arms have a fold-4 weight and a pooled OOF on the same 7,461,039 cells. `gate_l12_balanced` is still training and has no weight yet, so it is not in this table. `focal_gamma1` finished, including its decision rule. L2 accuracy and macro-F1 are pooled argmax. Decision columns are cross-fitted `decision full`.

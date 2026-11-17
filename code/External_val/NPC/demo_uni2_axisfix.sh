@@ -29,6 +29,11 @@
 ##
 ##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict
 ##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict spatial_k8
+##   CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict-ivsafe
+##
+## predict-ivsafe writes the cohort_safe l12_links_1 seeds 42 and 44
+## (selected fold 4) to pred_uni2_axisfix_l12_links_1_ivsafe_seed<N>/.
+## It does not overwrite pred_uni2_axisfix_l12_links_1/.
 ## Notebook: code/External_val/NPC/Pred_visual_npc_patient1_axisfix.ipynb
 ##
 
@@ -87,10 +92,12 @@ WHICH="${2:-all}"
 usage() {
   cat <<EOF
 Usage: CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh {dry-run|predict} [arm|all]
+       CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh {dry-run-ivsafe|predict-ivsafe}
 
 Patient 1 only: ${SAMPLE}
 Arms: ${ARMS[*]}
 Output: data/Visium/NPC/pred_uni2_axisfix_<arm>[_probX.XX]/${SAMPLE}/
+predict-ivsafe: cohort_safe l12_links_1 seeds 42 and 44
 Notebook: code/External_val/NPC/Pred_visual_npc_patient1_axisfix.ipynb
 EOF
 }
@@ -123,12 +130,43 @@ if [[ -z "${STEP}" ]]; then
   usage
   exit 1
 fi
+
+cd "${REPO}"
+
+if [[ "${STEP}" == "predict-ivsafe" || "${STEP}" == "dry-run-ivsafe" ]]; then
+  inner="${STEP%-ivsafe}"
+  ivsafe_one() {
+    local seed="$1"
+    local result="${REPO}/data/PanCancer/result_uni2_ablation_l12_links_1_new1066axisfix_ivsafe_paired_v2_seed${seed}"
+    export UNI2_CKPT="${result}/cross_dataset_cv/l12_links_1/best_mlp_gpu.pt"
+    export UNI2_PRED_DIRNAME="pred_uni2_axisfix_l12_links_1_ivsafe_seed${seed}${PROB_TAG}"
+    if [[ ! -f "${UNI2_CKPT}" ]]; then
+      echo "ERROR: missing ${UNI2_CKPT}" >&2
+      return 1
+    fi
+    echo "===== l12_links_1 cohort_safe seed ${seed}  ckpt=${UNI2_CKPT}"
+    echo "===== out=data/Visium/NPC/${UNI2_PRED_DIRNAME}/${SAMPLE}"
+    extval_time_step "NPC-axisfix-l12_links_1-ivsafe-seed${seed}" "${inner}" \
+      "${PYTHON}" -u code/Hist2Pheno_pkg/external_validation.py NPC uni2 "${inner}" \
+        --sample "${SAMPLE}"
+  }
+  run_ivsafe() {
+    local seed rc=0
+    for seed in 42 44; do
+      ivsafe_one "${seed}" || rc=1
+    done
+    return "${rc}"
+  }
+  LOG="${LOG:-${REPO}/code/log/external_val_npc_uni2_axisfix_patient1_ivsafe.log}"
+  extval_run_logged "${LOG}" "NPC-axisfix-ivsafe" "${inner}" run_ivsafe
+  exit $?
+fi
+
 case "${STEP}" in
   dry-run|predict) ;;
   *) usage; exit 1 ;;
 esac
 
-cd "${REPO}"
 chosen=()
 if [[ "${WHICH}" == all ]]; then
   chosen=("${ARMS[@]}")
