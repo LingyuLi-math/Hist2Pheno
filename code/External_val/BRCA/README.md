@@ -68,7 +68,7 @@ annotation used by Long et al., *Nat Commun* 2023
 (Healthy, Invasive, Surrounding tumor) and `fine_annot_type` (20 regions).
 Those labels are Visium spots, not StarDist nucleus GT.
 [`Pred_visual_brca_uni2_A2.ipynb`](Pred_visual_brca_uni2_A2.ipynb) plots this
-slide with the other three.
+slide with the other three. [`Pred_visual_brca_uni2_ens5_ivsafe_seed42.ipynb`](Pred_visual_brca_uni2_ens5_ivsafe_seed42.ipynb) repeats those figures on the five-fold mean in `pred_uni2_ens5_l12_links_1_ivsafe_seed42/`. The 10x slide is already predicted; the other three are not.
 
 ## Checkpoint
 
@@ -157,6 +157,15 @@ CUDA_DEVICE=2 bash code/External_val/BRCA/demo_uni2_axisfix.sh predict
 ```bash
 python code/External_val/BRCA/brca_10x_annotation_eval.py
 python code/External_val/BRCA/brca_10x_annotation_eval.py --arms spatial_k8 l12_links_1 --radius-um 65
+```
+
+2026-11-18. The same scorer, and `Pred_visual_brca_10x_axisfix.ipynb`, accept the released averages from [`predict_fold_ensemble.sh`](../predict_fold_ensemble.sh). A name `fold<k>_...` or `ens<N>_...` reads `pred_uni2_<name>/` and takes the decision rule and training prior from the first seed in the name. The notebook draws `ens5_l12_links_1_ivsafe_seed42` and `ens5_l12_links_1_ivsafe_seed44`. It does not draw the ten-model mean. A missing ensemble file is left as an empty panel; the axisfix arms are unchanged.
+
+```bash
+CUDA_DEVICE=2 bash code/External_val/predict_fold_ensemble.sh BRCA
+python code/External_val/BRCA/brca_10x_annotation_eval.py --arms \
+  fold4_l12_links_1_ivsafe_seed42 ens5_l12_links_1_ivsafe_seed42 \
+  ens5_l12_links_1_ivsafe_seed44
 ```
 
 `STAR_PROB_MIN` other than 0 now writes `pred_uni2_axisfix_<arm>_probX.XX/`; set `PRED_TAG` in the notebook and `--pred-tag` for the script to match.

@@ -997,7 +997,11 @@ def ensure_conformal_npz(
                 missing = [c for c in wanted if f"present_{c}" not in z.files]
     if missing:
         names, probs = load_l2_probs(l2_probs)
-        packs = conformal_from_oof(probs, names, oof_npz, classes=missing, fpr=fpr)
+        # 2026.11.18, family names (B_Plasma, T_cell, ...) are groups, as in the CLI; passing
+        # them as plain classes made a B_Plasma-only call fail ("none ... match the OOF names")
+        groups = {k: v for k, v in DEFAULT_SIMILAR_FAMILIES.items() if k in missing}
+        singles = [c for c in missing if c not in groups]
+        packs = conformal_from_oof(probs, names, oof_npz, classes=singles, groups=groups or None, fpr=fpr)
         for name, pack in packs.items():
             payload[f"present_{name}"] = pack["present"]
             payload[f"confidence_{name}"] = pack["confidence"]

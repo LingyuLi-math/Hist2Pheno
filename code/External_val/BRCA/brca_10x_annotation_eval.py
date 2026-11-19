@@ -26,11 +26,16 @@ Columns of the table (fractions of annotated spots):
 
     python code/External_val/BRCA/brca_10x_annotation_eval.py
     python code/External_val/BRCA/brca_10x_annotation_eval.py --arms spatial_k8 l12_links_1 --radius-um 65
+    # 2026.11.17, fold models and ensembles from predict_fold_ensemble.sh BRCA
+    python code/External_val/BRCA/brca_10x_annotation_eval.py --arms l12_links_1 \\
+        fold4_l12_links_1_ivsafe_seed42 ens5_l12_links_1_ivsafe_seed42 ens5_l12_links_1_ivsafe_seed44 \\
+        ens10_l12_links_1_ivsafe_seeds_42_44
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -111,6 +116,16 @@ def score_calls(region, call) -> dict:
 
 
 def arm_paths(arm, data_tag, seed, pred_tag=""):
+    # 2026.11.17, fold members and ensembles of predict_fold_ensemble.sh:
+    #   fold<k>_<run> -> pred_uni2_fold<k>_<run>, ens<N>_<run> -> pred_uni2_ens<N>_<run>
+    #   <run> = l12_links_1_ivsafe_seed42 (or ..._seeds_42_44); the decision rule / prior come from the first seed
+    m = re.match(r"^(fold\d+|ens\d+)_(.+?)_(ivsafe_)?seeds?_?(\d+)", arm)
+    if m:
+        base_arm, ivsafe, first_seed = m.group(2), m.group(3), m.group(4)
+        tag = f"{data_tag}_ivsafe" if ivsafe else data_tag
+        result = PAN / f"result_uni2_ablation_{base_arm}_{tag}_paired_v2_seed{first_seed}"
+        pred = BRCA / f"pred_uni2_{arm}{pred_tag}" / SAMPLE
+        return result, pred / f"{SAMPLE}_stardist_pred.h5ad", pred / f"{SAMPLE}_l2_probs.npz"
     result = PAN / f"result_uni2_ablation_{arm}_{data_tag}_paired_v2_seed{seed}"
     pred = BRCA / f"pred_uni2_axisfix_{arm}{pred_tag}" / SAMPLE
     return result, pred / f"{SAMPLE}_stardist_pred.h5ad", pred / f"{SAMPLE}_l2_probs.npz"

@@ -303,3 +303,25 @@ class HistologyClusterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ensure_conformal_npz_family_after_partial_sidecar(tmp_path):
+    # 2026.11.18, a sidecar with B_cell / Plasma only, then a call that also asks for B_Plasma
+    import numpy as np
+    from prediction_confidence import ensure_conformal_npz
+
+    rng = np.random.default_rng(0)
+    names = ["Tumor", "B_cell", "Plasma", "DC"]
+    def soft(n):
+        z = rng.normal(0, 1, (n, len(names))); e = np.exp(z - z.max(1, keepdims=True)); return e / e.sum(1, keepdims=True)
+    oof = tmp_path / "oof.npz"
+    np.savez(oof, l2_labels=rng.integers(0, 4, 3000), l2_probs=soft(3000).astype(np.float32),
+             l2_class_names=np.array(names))
+    probs = tmp_path / "s_l2_probs.npz"
+    np.savez(probs, probs=soft(500).astype(np.float32), class_names=np.array(names))
+    side = tmp_path / "s_confidence.npz"
+    ensure_conformal_npz(probs, oof, side, ("B_cell", "Plasma"))
+    ensure_conformal_npz(probs, oof, side, ("B_cell", "Plasma", "B_Plasma"))
+    with np.load(side) as z:
+        assert {"present_B_cell", "present_Plasma", "present_B_Plasma"} <= set(z.files)
+        assert (z["score_B_Plasma"] >= z["score_B_cell"] - 1e-6).all()

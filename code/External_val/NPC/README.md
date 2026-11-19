@@ -113,7 +113,15 @@ CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict spatial_k8
 CUDA_DEVICE=2 bash code/External_val/NPC/demo_uni2_axisfix.sh predict-ivsafe
 ```
 
-`predict-ivsafe` writes the cohort_safe `l12_links_1` seeds 42 and 44 (selected fold 4; pooled OOF L2 0.9071 and 0.9065) to `pred_uni2_axisfix_l12_links_1_ivsafe_seed42` and `pred_uni2_axisfix_l12_links_1_ivsafe_seed44`. Those trees are not the earlier random-split `pred_uni2_axisfix_l12_links_1`. The notebook lists both. The h5ad files are absent until that command has been run, so their TLS scores are not in the paragraph below.
+`predict-ivsafe` writes the cohort_safe `l12_links_1` seeds 42 and 44 (selected fold 4; pooled OOF L2 0.9071 and 0.9065) to `pred_uni2_axisfix_l12_links_1_ivsafe_seed42` and `pred_uni2_axisfix_l12_links_1_ivsafe_seed44`. Those trees are not the earlier random-split `pred_uni2_axisfix_l12_links_1`. The notebook lists both.
+
+2026-11-18. The same notebook also lists the five-fold means from [`predict_fold_ensemble.sh`](../predict_fold_ensemble.sh): `ens5_l12_links_1_ivsafe_seed42` and `ens5_l12_links_1_ivsafe_seed44`. Those panels read `pred_uni2_<name>/`, not `pred_uni2_axisfix_`, and use that seed's decision rule and OOF prior. The ten-model mean is not shown. Seed 42 is already written; seed 44 is not, until `RUNS` is set to the seed-44 result directory and the script is run. Details are in the External_val README, section "2026-11-17 Released model = fold (and seed) ensemble".
+
+```bash
+CUDA_DEVICE=2 bash code/External_val/predict_fold_ensemble.sh NPC
+```
+
+[`Pred_visual_npc_uni2_ens5_ivsafe_seed42.ipynb`](Pred_visual_npc_uni2_ens5_ivsafe_seed42.ipynb) repeats the figure set of `Pred_visual_npc_uni2_A2.ipynb` on patient1, using the five-fold mean in `pred_uni2_ens5_l12_links_1_ivsafe_seed42/`. It does not re-predict.
 
 [`Pred_visual_npc_patient1_axisfix.ipynb`](Pred_visual_npc_patient1_axisfix.ipynb) scores B cell (`B_cell` + `Plasma`) inside the expert TLS outline against the rest of the slide, then draws the TLS crops on one color scale. Adding `l12_links_2` and `l12_balanced` does not put B cells in that outline: argmax B inside the 5,262 nuclei is 0 for both, and the foci are still DC and DCIS. cell2location on the same 26 spots calls B. UNI2 tokens stay in `project_all_UNI2`.
 

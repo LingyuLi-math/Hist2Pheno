@@ -10,6 +10,24 @@ Checkpoint (section CV, not cell-stratified):
 
 Scaler: `data/PanCancer/result_all_spatial/scaler.joblib`. Spatial k=8. Heads: L1 `pred_lineage`, L12 `pred_sublineage`, L2 `pred_CT`. Hidden dims `(768, 384, 192)`.
 
+## 2026-11-17 Released model = fold (and seed) ensemble
+
+The weight to publish is not one fold. `best_mlp_gpu.pt` is the fold with the best score on its own validation sections, and those sections differ by fold (fold 4 has no BRCA), so the choice mostly reflects which fold had the easiest sections. The released Hist2Pheno is the mean softmax of the five fold models of one run, or of several seeds. `predict_fold_ensemble.sh` predicts each `hce_group_fold_<k>.pt` with the normal verified pipeline and then averages them:
+
+```bash
+CUDA_DEVICE=2 bash code/External_val/predict_fold_ensemble.sh NPC    # patient 1
+CUDA_DEVICE=2 bash code/External_val/predict_fold_ensemble.sh BRCA   # 10x slide with pathologist map
+STEP=ensemble bash code/External_val/predict_fold_ensemble.sh NPC    # averages only
+RUNS="data/PanCancer/result_uni2_ablation_spatial_k8_new1066axisfix_paired_v2_seed42" \
+  ARM=spatial_k8 CUDA_DEVICE=2 bash code/External_val/predict_fold_ensemble.sh NPC
+```
+
+Default runs: cohort_safe `l12_links_1` seeds 42 and 44. Folders under `data/Visium/<cohort>/`:
+`pred_uni2_fold<k>_<run>/` (members), `pred_uni2_ens5_<run>/` (five folds of one seed), `pred_uni2_ens10_l12_links_1_ivsafe_seeds_42_44/` (both seeds). Each average holds the usual `<sample>_stardist_pred.h5ad` and `<sample>_l2_probs.npz` (L1/L12/L2 means), and `<sample>_ensemble_report.csv` (L2 composition of every member and its agreement with the mean). The UNI2 token pooling runs once: the first member's verified feature h5ad is hard-linked into the other member folders (`fold_ensemble_external.py seed-features`). Ensemble folders have no `.pipeline.json`; read them as h5ad / npz, as the NPC and BRCA axisfix notebooks do. 2026-11-18. The three heads are separate softmaxes, so their own argmaxes can disagree (an L2 `Tumor` nucleus under L12 `T_cell`). Single-checkpoint predictions (`pred_CT`, `pred_sublineage`, `pred_lineage` from `external_consistency.predict_one`) are per-head argmaxes and can disagree in this way. The ensemble writes ontology-consistent labels: `CONSISTENCY=l2_parent` (default) keeps `pred_CT` = argmax of the mean L2 softmax and sets L12 / L1 to its parents; `CONSISTENCY=fused` picks L2 from log p2 + 1·log p12[parent] + 0.5·log p1[grandparent] and then the parents; `independent` is the old per-head argmax. The head argmaxes stay in `pred_sublineage_head` / `pred_lineage_head`. Rebuilding a mean (`STEP=ensemble`) moves the files earlier notebook runs derived from it (niche h5ad, confidence sidecars, label-mode csv, `<pred root>/figures/`) into `<pred root>/_previous_<time>/`, so the folder only holds results of the current mean; nothing is deleted. Measure the disagreement of any folder with
+`python code/External_val/fold_ensemble_external.py check --sample <S> --members data/Visium/NPC/<pred dir>/<S> ...`.
+Score them against the BRCA pathologist map with
+`python code/External_val/BRCA/brca_10x_annotation_eval.py --arms ens5_l12_links_1_ivsafe_seed42 ens5_l12_links_1_ivsafe_seed44 ens10_l12_links_1_ivsafe_seeds_42_44 fold4_l12_links_1_ivsafe_seed42`.
+
 ## Pixel size is read in code
 
 Training UNI crops are **8 µm**: 16 px on a **0.5 µm/px** grid. `ExternalCohort.geometry` computes the scale that puts the new slide on that grid, then `patch_size=16`.
