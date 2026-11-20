@@ -97,21 +97,23 @@ extract() {  # extract [dataset ...]
   [[ $# -gt 0 ]] && ds=(--datasets "$@")
   local n=${#GPUS[@]} k pids=()
   for ((k=0; k<n; k++)); do
-    CUDA_VISIBLE_DEVICES="${GPUS[k]}" py code/Hist2Pheno_pkg/tile_context.py "${ds[@]}" extract \
+    CUDA_VISIBLE_DEVICES="${GPUS[k]}" py code/Hist2Pheno_pkg/tile_context.py extract "${ds[@]}" \
       --shard "$k/$n" > "$LOGDIR/extract_shard${k}.log" 2>&1 &
     pids+=($!)
     echo "extract shard $k/$n on GPU ${GPUS[k]} -> $LOGDIR/extract_shard${k}.log"
   done
   local rc=0
   for p in "${pids[@]}"; do wait "$p" || rc=1; done
-  py code/Hist2Pheno_pkg/tile_context.py "${ds[@]}" status || true
+  py code/Hist2Pheno_pkg/tile_context.py status "${ds[@]}" || true
   [[ $rc == 0 ]] || die "some sections failed; see $LOGDIR/extract_shard*.log"
 }
 
 # 2026.11.20, scale audit (no GPU): mpp_map vs h5ad uns['mpp'] vs UNI2 manifest, nuclei inside the image
 audit() {
   need_mpp
-  py code/Hist2Pheno_pkg/tile_context.py "$@" audit-mpp 2>&1 | tee "$LOGDIR/mpp_audit.log" \
+  local -a ds=()
+  [[ $# -gt 0 ]] && ds=(--datasets "$@")
+  py code/Hist2Pheno_pkg/tile_context.py audit-mpp "${ds[@]}" 2>&1 | tee "$LOGDIR/mpp_audit.log" \
     || die "scale audit failed; see $OUT/tile_context/mpp_audit.csv"
 }
 

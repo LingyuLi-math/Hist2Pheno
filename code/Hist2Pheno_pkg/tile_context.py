@@ -220,6 +220,38 @@ def source_image(h5ad_path: Path, uns) -> tuple[Path, dict]:
     return image, meta
 
 
+def image_wh(image_path: Path) -> tuple[int, int]:
+    """Width and height from the header only.
+
+    CRC add-on H&E is BigTIFF (``.ome.tif``, magic ``MM\\x00+``). Pillow raises
+    ``UnidentifiedImageError`` on those files; tifffile reads the full-resolution
+    page that ``load_he_image_pil`` later decodes. No pixels are loaded here.
+    """
+    path = Path(image_path)
+    with open(path, "rb") as handle:
+        bigtiff = handle.read(4) in (b"II+\x00", b"MM\x00+")
+    if not bigtiff and not path.name.lower().endswith((".ome.tif", ".ome.tiff", ".btf")):
+        try:
+            from PIL import Image
+            Image.MAX_IMAGE_PIXELS = None
+            with Image.open(path) as im:
+                return int(im.size[0]), int(im.size[1])
+        except (OSError, ValueError):
+            pass
+    import tifffile
+    with tifffile.TiffFile(path) as tif:
+        series = tif.series[0]
+        shape = series.shape
+        axes = str(getattr(series, "axes", "") or "")
+    if "Y" in axes and "X" in axes:
+        return int(shape[axes.index("X")]), int(shape[axes.index("Y")])
+    if len(shape) >= 2 and shape[-1] in (1, 3, 4):
+        return int(shape[-2]), int(shape[-3])
+    if len(shape) >= 2:
+        return int(shape[-1]), int(shape[-2])
+    raise ValueError(f"cannot read width/height of {path}: shape {shape} axes {axes!r}")
+
+
 def load_scaled_image(image_path: Path, factor: float):
     """RGB uint8 PIL image resized by ``factor`` (scaled px = native px * factor)."""
     import logging
@@ -557,9 +589,7 @@ def cmd_audit_mpp(args):
     """2026.11.20, native µm/px per section from every source, resize factor, coordinate extent."""
     import anndata as ad
     import pandas as pd
-    from PIL import Image
 
-    Image.MAX_IMAGE_PIXELS = None
     index = _sections(args)
     rows = []
     for rec in index.itertuples(index=False):
@@ -574,8 +604,7 @@ def cmd_audit_mpp(args):
                 a.file.close()
             image, manifest = source_image(Path(rec.h5ad), uns)
             src = scale_sources(Path(rec.h5ad), rec.mpp_um, uns, manifest)
-            with Image.open(image) as im:
-                w, h = im.size
+            w, h = image_wh(image)  # 2026.11.20, BigTIFF / OME-TIFF (CRC add-on) is not a PIL file
             f = float(rec.mpp_um) / TARGET_MPP
             fin = np.isfinite(xy).all(1)
             inside = fin & (xy[:, 0] >= 0) & (xy[:, 1] >= 0) & (xy[:, 0] < w) & (xy[:, 1] < h)
@@ -625,18 +654,22 @@ def main(argv=None):
     ap.add_argument("--index", type=Path, default=REPO / "data/PanCancer/section_index.csv")
     ap.add_argument("--mpp-map", type=Path, default=REPO / "data/PanCancer/mpp_map.csv")
     ap.add_argument("--root", type=Path, default=REPO / "data/PanCancer/tile_context")
-    ap.add_argument("--datasets", nargs="*", default=None)
     sub = ap.add_subparsers(dest="cmd", required=True)
+    # --datasets lives on the subcommand: on the parent, nargs='*' swallows the subcommand name
     e = sub.add_parser("extract")
+    e.add_argument("--datasets", nargs="*", default=None)
     e.add_argument("--shard", default="0/1", help="k/n: this process takes every n-th section from k")
     e.add_argument("--batch", type=int, default=16)
     e.add_argument("--amp", choices=("bf16", "fp16", "fp32"), default="bf16")
     e.add_argument("--force", action="store_true")
     p = sub.add_parser("fit-pca")
+    p.add_argument("--datasets", nargs="*", default=None)
     p.add_argument("--dim", type=int, default=256)
     p.add_argument("--sample", type=int, default=200_000)
-    sub.add_parser("status")
-    sub.add_parser("audit-mpp")  # 2026.11.20
+    st = sub.add_parser("status")
+    st.add_argument("--datasets", nargs="*", default=None)
+    au = sub.add_parser("audit-mpp")  # 2026.11.20
+    au.add_argument("--datasets", nargs="*", default=None)
     a = ap.parse_args(argv)
     Path(a.root).mkdir(parents=True, exist_ok=True)
     return {"extract": cmd_extract, "fit-pca": cmd_fit_pca, "status": cmd_status,

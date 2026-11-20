@@ -8,6 +8,15 @@ import pytest
 import tile_context as tc
 
 
+def test_image_wh_reads_bigtiff_header(tmp_path):
+    """Pillow cannot identify BigTIFF; the CRC add-on H&E is that format."""
+    import tifffile
+    arr = np.zeros((8, 10, 3), np.uint8)
+    path = tmp_path / "slide.ome.tif"
+    tifffile.imwrite(path, arr, bigtiff=True)
+    assert tc.image_wh(path) == (10, 8)
+
+
 def test_covering_tiles_every_window_contains_point():
     rng = np.random.default_rng(0)
     xy = rng.uniform(0, 1000, (500, 2))

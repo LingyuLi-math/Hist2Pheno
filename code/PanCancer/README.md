@@ -74,7 +74,9 @@ restores the 2026-11-19 behaviour (`tile_context.py fit-pca`, one PCA over all s
 **SPORA at 0.5 µm/px.**
 - Tile features: every section is resized by mpp/0.5 (SPORA x2). New checks stop a section when
   `mpp_map.csv` disagrees with the h5ad `uns['mpp']` (SPORA: 1.0) or with the UNI2 manifest scale,
-  or when < 98 % of the nuclei fall inside the resized image. `tile_context.py audit-mpp` writes
+  or when < 98 % of the nuclei fall inside the resized image. CRC add-on H&E is BigTIFF
+(`.ome.tif`); Pillow cannot identify it, so the audit reads width and height from the tifffile
+header (the same full-resolution size the extractor decodes). `tile_context.py audit-mpp` writes
   `data/PanCancer/tile_context/mpp_audit.csv` (µm/px from every source, old crop size in µm, tile size).
 - 14 px crops: `bash code/spora/run_spora_pancancer.sh uni2-mpp05` re-extracts the SPORA UNI2 tokens
   with the 1 µm/px H&E resized x2 (`scale_image=True, scale=2`), so the crop is 7 µm like every other

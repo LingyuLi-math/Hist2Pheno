@@ -14,7 +14,7 @@ before). `checkpoint_artifact.scaler_state / restore_scaler` save and restore th
 `spatial_context.runtime_batch` scales neighbour rows of raw or projected width (the projection is
 linear, so the neighbour mean commutes with it). Reloading the selected fold builds the MLP at `n_features_out_` (the width that fold was trained on), not the raw pooled width, and the fold-reuse hash covers `projected_scaler.py` and `tile_context.py`. `tile_context.py`: new embedder
 `uni2_tile_lg_full` (3072-d, no PCA), `audit-mpp`, and hard errors when the µm/px sources disagree
-or nuclei fall off the image. Tests: `test_projected_scaler.py`, `test_fold_pca_cv.py` (grouped CV
+or nuclei fall off the image. `audit-mpp` reads BigTIFF / OME-TIFF size from the tifffile header; Pillow cannot identify the CRC add-on slides. Tests: `test_projected_scaler.py`, `test_fold_pca_cv.py` (grouped CV
 with fold PCA + k=8 + checkpoint inference), new cases in `test_tile_context.py`,
 `code/spora/test_spora_uni2_mpp05.py`.
 
