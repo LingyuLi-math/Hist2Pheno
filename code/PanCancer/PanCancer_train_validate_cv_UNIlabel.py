@@ -153,6 +153,12 @@ def resolve_cell_stratified_outputs(
     return save_result, ablation_tag
 
 
+# 2026.11.19, embedders read from data/PanCancer/tile_context (Hist2Pheno_pkg/tile_context.py)
+TILE_EMBEDDERS = ("uni2_tile_local", "uni2_tile_lg")
+# 2026.11.20, + uni2_tile_lg_full (local + full 1536-d global, no PCA; control for the PCA in B)
+TILE_EMBEDDERS = TILE_EMBEDDERS + ("uni2_tile_lg_full",)
+
+
 def setup_cuda(cuda_device: str) -> None:
     if "CUDA_VISIBLE_DEVICES" not in os.environ:
         os.environ["CUDA_VISIBLE_DEVICES"] = cuda_device
@@ -407,7 +413,26 @@ def load_section_arrays(
                     cache_path, keep_idx=idx, y=y, y_l1=y_l1, y_l12=y_l12, xy=xy, n_raw=n_raw, version_stamp=stamp
                 )
         X_uni2 = None
-        if embedder in ("uni","uni2","virchow2"):
+        # 2026.11.19, tile-context UNI2 features (Hist2Pheno_pkg/tile_context.py): one 224 px tile
+        # forward per tile; local = patch token at the centroid, global = tile class token.
+        # Stored h5ad-row aligned under <data_root>/tile_context, so no coordinate matching here.
+        # 以细胞为中心的多尺度特征；按 h5ad 行对齐，直接读取。
+        if embedder in TILE_EMBEDDERS:
+            if uni2_cache_dir is None:
+                raise ValueError("tile-context embedders need the data root (uni2_cache_dir.parent)")
+            from tile_context import aligned as tile_aligned
+            X_uni2 = tile_aligned(h5ad_path, adata, Path(uni2_cache_dir).parent / "tile_context", embedder)
+            present = finite_rows(X_uni2, idx)
+            n_miss = int((~present).sum())
+            if n_miss:
+                print(f"  {h5ad_path.parent.name}: drop {n_miss:,} kept cells with no tile-context feature", flush=True)
+                idx, y, y_l1, y_l12, xy = (
+                    idx[present], y[present], y_l1[present], y_l12[present], xy[present],
+                )
+            if len(idx) == 0:
+                print(f"  skip {h5ad_path.parent.name}: 0 tile-context cells", flush=True)
+                return None
+        elif embedder in ("uni","uni2","virchow2"):
             if uni2_cache_dir is None:
                 raise ValueError("uni2 embedder requires uni2_cache_dir")
             if embedder in ("uni","virchow2"):
@@ -546,7 +571,14 @@ def prepare_pooled_cv_data(
     encoder_protocol = None
     for rec_i, rec in enumerate(ok.itertuples(index=False)):
         cache_path = cache_path_for(rec.section_id, cache_dir) if cache_dir is not None else None
-        if embedder in ("uni","uni2","virchow2"):
+        # 2026.11.19, tile-context features: protocol = tile geometry + UNI2-h weights (+ global PCA)
+        if embedder in TILE_EMBEDDERS:
+            from tile_context import protocol as tile_protocol
+            current_protocol = tile_protocol(Path(uni2_cache_dir).parent / "tile_context", embedder, Path(rec.h5ad))
+            if encoder_protocol is not None and current_protocol != encoder_protocol:
+                raise ValueError("Training sections use different tile-context settings / encoder weights")
+            encoder_protocol = current_protocol
+        elif embedder in ("uni","uni2","virchow2"):
             import anndata as ad
             from embedding_backend import embedding_dir, protocol
             header=ad.read_h5ad(rec.h5ad,backed="r")
@@ -827,6 +859,26 @@ def step_prepare(ctx: PooledCtx, index_csv: Path | None = None) -> None:
                 f"{plan_path} was written by {_old_family}, not {family}. "
                 "Use a new --save-result (e.g. SPLITTER=stratified_section in 1_demo_train.sh)."
             )
+    # 2026.11.20, HIST2PHENO_FOLD_PLAN: one frozen fold plan shared by every arm of an ablation.
+    # stratified_section folds come from the L2 counts of the cells each arm loads; tile arms drop a
+    # few cells (no tile feature), which could move a section. Copying one plan into every result
+    # dir freezes all sections, so all arms are evaluated on identical folds.
+    # 所有 arm 共用同一份 fold plan，保证逐折配对。
+    shared_plan = os.environ.get("HIST2PHENO_FOLD_PLAN")
+    if shared_plan:
+        shared = pd.read_csv(shared_plan)
+        shared_family = (str(shared["splitter"].dropna().iloc[0])
+                         if "splitter" in shared and shared["splitter"].notna().any() else "cross_dataset_section")
+        if shared_family != family:
+            raise ValueError(f"HIST2PHENO_FOLD_PLAN {shared_plan} is {shared_family}, this run is {family}")
+        if plan_path.is_file():
+            mine = load_existing_folds(plan_path)
+            theirs = load_existing_folds(Path(shared_plan))
+            if any(mine.get(k) != v for k, v in theirs.items() if k in mine):
+                raise ValueError(f"{plan_path} differs from HIST2PHENO_FOLD_PLAN {shared_plan}; use a new --save-result")
+        else:
+            shutil.copy2(shared_plan, plan_path)
+        print(f"  fold plan frozen from {shared_plan}", flush=True)
     existing = load_existing_folds(plan_path)
     plan = fold_plan_frame(
         index,
@@ -1189,9 +1241,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--inner-val-fraction",type=float,default=0.2)
     p.add_argument(
         "--embedder",
-        choices=("uni", "uni2", "virchow2"),
+        # 2026.11.19, uni2_tile_local / uni2_tile_lg: tile-context UNI2 features (tile_context.py)
+        # 2026.11.20, + uni2_tile_lg_full
+        choices=("uni", "uni2", "virchow2", "uni2_tile_local", "uni2_tile_lg", "uni2_tile_lg_full"),
         default="uni",
-        help="uni reads h5ad.X (1024-d). uni2 rematches UNI2 (1536-d); virchow2 rematches project_all_Virchow2/sc_pth_14_14 (1280-d).",
+        help="uni reads h5ad.X (1024-d). uni2 rematches UNI2 (1536-d); virchow2 rematches project_all_Virchow2/sc_pth_14_14 (1280-d). "
+             "uni2_tile_local: centroid patch token of 224 px UNI2-h tiles (1536-d); uni2_tile_lg: + tile class token "
+             "(PCA HIST2PHENO_TILE_GLOBAL_DIM, default 256). Run tile_context.py extract / fit-pca first. "
+             "2026.11.20: HIST2PHENO_TILE_PCA=fold (default) fits that PCA on each fold's training rows "
+             "inside the fold scaler; global uses fit-pca. uni2_tile_lg_full: local + full global (3072-d).",
     )
     return p.parse_args(argv)
 
@@ -1204,6 +1262,17 @@ def resolve_steps(raw: list[str]) -> set[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    # 2026.11.20, train-fold PCA of the tile global block (projected_scaler.ProjectedScaler).
+    # Set before any fold is scaled; cleared for every other embedder so it never leaks between runs.
+    # 按折 PCA：在训练脚本开始时设置，其他 embedder 一律清除。
+    from projected_scaler import ENV as _PROJ_ENV
+    os.environ.pop(_PROJ_ENV, None)
+    if args.embedder in TILE_EMBEDDERS:
+        from tile_context import feature_projection
+        _proj = feature_projection(args.embedder)
+        if _proj:
+            os.environ[_PROJ_ENV] = _proj
+            print(f"fold PCA of the tile global block: {_PROJ_ENV}={_proj}", flush=True)
     setup_cuda(args.cuda_device)
     setup_seed(args.seed)
     device = setup_device(args.allow_cpu_train)

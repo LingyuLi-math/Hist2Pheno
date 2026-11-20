@@ -327,6 +327,17 @@ cmd_uni2() {
         --ablation-tag focal_gamma1
       )
       ;;
+    # 2026.11.19, l12_links_1 without the k=8 neighbour mean: the reference for the tile-context
+    # arms A (uni2_tile_local) and B (uni2_tile_lg), which also run without neighbours.
+    # l12_links_1 去掉 k=8 邻居均值；作为 tile-context A / B 的对照。
+    l12_links_1_nospatial)
+      args+=(
+        --hierarchy adjacent --legacy-l2-l1-weight 2 --l12-ce-weight 1
+        --l2-l12-nll 1 --l12-l1-nll 1 --l2-l12-js 0.1 --l12-l1-js 0.1
+        --save-result result_uni2_l12_links_1_nospatial
+        --ablation-tag l12_links_1_nospatial
+      )
+      ;;
     # 2026.11.17, arms stacked on l12_links_1 (L12 link NLL 1, CE(L12) 1, k=8 mean).
     # Each adds one thing to l12_links_1 and is compared against it (run_ablation.sh, REFERENCE=l12_links_1).
     # 在 l12_links_1 上每次只加一项改动。
@@ -427,7 +438,7 @@ cmd_uni2() {
       )
       ;;
     *)
-      die "uni2 arch must be smoke|A0|A1|A2|A3|A5|A6|A7|A8|A2_l12_balanced|balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16|l12_links_1_focal|l12_links_1_balanced|l12_links_1p5"
+      die "uni2 arch must be smoke|A0|A1|A2|A3|A5|A6|A7|A8|A2_l12_balanced|balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16|l12_links_1_focal|l12_links_1_balanced|l12_links_1p5|l12_links_1_nospatial"
       ;;
   esac
   # 2026.11.17, RESULT_NAME / ABLATION_TAG rename the output folder and the
@@ -437,8 +448,23 @@ cmd_uni2() {
     if [[ -n "${RESULT_NAME:-}" && "${args[i]}" == --save-result ]]; then args[i+1]="$RESULT_NAME"; fi
     if [[ -n "${ABLATION_TAG:-}" && "${args[i]}" == --ablation-tag ]]; then args[i+1]="$ABLATION_TAG"; fi
   done
+  # 2026.11.19, EMBEDDER swaps the feature source (uni2 | uni2_tile_local | uni2_tile_lg; see
+  # Hist2Pheno_pkg/tile_context.py). Non-uni2 runs get <embedder>_ in the folder suffix so they
+  # never share a folder with the 14 px crop features. 更换特征来源；文件夹名带上 embedder。
+  local embedder="${EMBEDDER:-uni2}"
+  # 2026.11.20, + uni2_tile_lg_full (local + full 1536-d global, no PCA)
+  case "$embedder" in
+    uni2|uni2_tile_local|uni2_tile_lg|uni2_tile_lg_full) ;;
+    *) die "EMBEDDER must be uni2 | uni2_tile_local | uni2_tile_lg | uni2_tile_lg_full" ;;
+  esac
+  for ((i=0; i<${#args[@]}; i++)); do
+    if [[ "${args[i]}" == --embedder ]]; then args[i+1]="$embedder"; fi
+  done
   # 2026.10.26, isolate seed runs / 新实验避免覆盖旧权重及历史结果
   local suffix="${RUN_SUFFIX:-paired_v2_seed${TRAIN_SEED:-42}}"
+  # run_ablation.sh names its folders by arm (tile_local, ...), so the embedder tag is only added
+  # when RESULT_NAME is not set. run_ablation.sh 的文件夹名已含 arm 名，不再重复加 embedder。
+  if [[ "$embedder" != uni2 && -z "${RESULT_NAME:-}" && "$suffix" != *"$embedder"* ]]; then suffix="${embedder}_${suffix}"; fi
   # 2026.11.17, INNER_VAL=cohort_safe: early-stopping split keeps every cohort and L2 class
   # in inner training (pancancer_cv.inner_val_split). Its runs never share a folder with "random".
   if [[ "${INNER_VAL:-random}" == cohort_safe ]]; then
@@ -532,7 +558,7 @@ case "${1:-}" in
       A7) cmd_uni2 A7_bal_focal ;;
       A8) cmd_uni2 A8_l12_balanced ;;
       A2_l12_balanced) cmd_uni2 A2_l12_balanced ;;
-      balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16|l12_links_1_focal|l12_links_1_balanced|l12_links_1p5) cmd_uni2 "$2" ;;  # 2026.11.17, see run_ablation.sh
+      balanced_sampler|focal_gamma1|l12_balanced_nospatial|spatial_k4|spatial_k16|l12_links_1_focal|l12_links_1_balanced|l12_links_1p5|l12_links_1_nospatial) cmd_uni2 "$2" ;;  # 2026.11.17/19, see run_ablation.sh
       A2L12) die "renamed to A7. CUDA_DEVICE=0 bash code/PanCancer/run_uni2_new1066.sh A7" ;;
       A9|A10|A11) die "${2} was removed. The neighbor and tissue heads did not improve L2 macro-F1." ;;
       *) die "uni2 steps: smoke | A0 | A1 | A2 | A3 | A5 | A6 | A7 | A8" ;;

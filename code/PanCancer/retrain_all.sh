@@ -60,7 +60,9 @@ else
   read -r -a ARM_LIST <<< "$(bash code/PanCancer/run_ablation.sh list | head -n 11 | tr '\n' ' ')"
 fi
 if [[ "${WITH_K_SENSITIVITY:-0}" == 1 ]]; then ARM_LIST+=(spatial_k4 spatial_k16); fi
-NOSPATIAL=(legacy_nospatial adjacent_nospatial l12_balanced_nospatial)
+NOSPATIAL=(legacy_nospatial adjacent_nospatial l12_balanced_nospatial
+           l12_links_1_nospatial tile_local tile_local_global  # 2026.11.19, tile-context arms without k=8
+           tile_local_global_full)  # 2026.11.20
 
 # ---------------------------------------------------------------------------
 # 1. SPORA check: tables column-first and UNI2 stores newer than their tables

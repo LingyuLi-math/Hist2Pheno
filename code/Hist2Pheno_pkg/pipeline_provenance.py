@@ -65,13 +65,16 @@ def file_record(path,cache_dir=None):
 def implementations():
     names=('pipeline_provenance.py','external_consistency.py','external_validation.py',
            'model.py','base.py','plot.py','spatial_context.py','checkpoint_artifact.py',
-           'embedding_alignment.py','embedding_backend.py','embedding_store.py','../PanCancer/PanCancer_train_validate_cv_UNIlabel.py')
+           'embedding_alignment.py','embedding_backend.py','embedding_store.py','../PanCancer/PanCancer_train_validate_cv_UNIlabel.py',
+           # 2026.11.20, train-fold PCA scaler and tile-context features
+           'projected_scaler.py','tile_context.py')
     return {name:sha256(_PKG/name) for name in names if (_PKG/name).is_file()}
 
 
 def scaler_signature(scaler):
     return fingerprint({n:np.asarray(getattr(scaler,n)) for n in
-        ('mean_','var_','scale_','n_samples_seen_','n_features_in_') if hasattr(scaler,n)})
+        ('mean_','var_','scale_','n_samples_seen_','n_features_in_',
+         'proj_split_','proj_mean_','proj_components_') if hasattr(scaler,n)})  # 2026.11.20, + fold PCA
 
 
 def mapping_descriptor():

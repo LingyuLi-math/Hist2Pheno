@@ -32,6 +32,22 @@
 ## The tag becomes <DATA_TAG>_ivsafe, so these runs are paired only with each other.
 ##   INNER_VAL=cohort_safe REFERENCE=l12_links_1 bash code/PanCancer/run_ablation.sh summary
 ##
+## 2026.11.19, tile-context features (Hist2Pheno_pkg/tile_context.py; extract first, see
+## code/PanCancer/run_tile_context.sh). Same loss as l12_links_1; only the input changes.
+##   l12_links_1_nospatial   14 px crop class token, no neighbours      (reference for A, B)
+##   tile_local              A: centroid patch token of 224 px tiles     (EMBEDDER=uni2_tile_local)
+##   tile_local_global       B: A + tile class token (PCA 256)           (EMBEDDER=uni2_tile_lg)
+##   tile_local_global_k8    C: B + k=8 neighbour mean                    (reference: l12_links_1)
+##   bash code/PanCancer/run_ablation.sh tile        # the four arms above
+##
+## 2026.11.20, tile group changed (run_tile_context.sh):
+##   l12_links_1_nospatial is no longer run (kept as a recipe; the user dropped it).
+##   tile_local_global         B: PCA 256 now fitted per CV fold on training rows (HIST2PHENO_TILE_PCA=fold)
+##   tile_local_global_full    B without PCA: local + full 1536-d global, 3072-d (EMBEDDER=uni2_tile_lg_full)
+##   l12_links_1_mpp05         l12_links_1 retrained after the SPORA 14 px crops were re-extracted at
+##                             0.5 µm/px (run_spora_pancancer.sh uni2-mpp05); the old l12_links_1 folder stays
+##   bash code/PanCancer/run_ablation.sh tile        # tile_local tile_local_global tile_local_global_full tile_local_global_k8
+##
 ## The old "A6" (sampler + focal + no class weight in one arm) is split into
 ## balanced_sampler and focal_gamma1. After each run 1_demo_train.sh fits the
 ## decision layer (posthoc.py fit-decision), so balanced-weight arms are also
@@ -79,6 +95,10 @@ ARMS=(legacy_nospatial adjacent_nospatial spatial_k8 spatial_k8_gate l12_links_1
       balanced_sampler focal_gamma1 l12_balanced gate_l12_balanced l12_balanced_nospatial)
 EXTRA_ARMS=(spatial_k4 spatial_k16)
 STACK_ARMS=(l12_links_1 l12_links_1_focal l12_links_1_balanced l12_links_1p5)  # 2026.11.17
+TILE_ARMS=(l12_links_1_nospatial tile_local tile_local_global tile_local_global_k8)  # 2026.11.19
+# 2026.11.20, no l12_links_1_nospatial; + tile_local_global_full; l12_links_1_mpp05 is the SPORA-0.5 µm baseline
+TILE_ARMS=(tile_local tile_local_global tile_local_global_full tile_local_global_k8)
+BASELINE_ARMS=(l12_links_1_mpp05)
 REFERENCE="${REFERENCE:-spatial_k8}"
 
 recipe_of() {
@@ -97,13 +117,28 @@ recipe_of() {
     spatial_k4) echo spatial_k4 ;;
     spatial_k16) echo spatial_k16 ;;
     l12_links_1_focal|l12_links_1_balanced|l12_links_1p5) echo "$1" ;;
+    # 2026.11.19, tile-context arms reuse the l12_links_1 losses (embedder_of picks the features)
+    l12_links_1_nospatial|tile_local|tile_local_global) echo l12_links_1_nospatial ;;
+    tile_local_global_k8) echo A5 ;;
+    tile_local_global_full) echo l12_links_1_nospatial ;;  # 2026.11.20
+    l12_links_1_mpp05) echo A5 ;;                          # 2026.11.20, same recipe as l12_links_1
     *) return 1 ;;
+  esac
+}
+
+# 2026.11.19, feature source per arm (1_demo_train.sh EMBEDDER)
+embedder_of() {
+  case "$1" in
+    tile_local) echo uni2_tile_local ;;
+    tile_local_global|tile_local_global_k8) echo uni2_tile_lg ;;
+    tile_local_global_full) echo uni2_tile_lg_full ;;  # 2026.11.20
+    *) echo uni2 ;;
   esac
 }
 
 usage() {
   echo "usage: DATA_TAG=<tag> [SEEDS=\"42 43 44\"] CUDA_DEVICE=0 bash code/PanCancer/run_ablation.sh {<arm> ...|all|summary|list}" >&2
-  echo "arms: ${ARMS[*]} ${EXTRA_ARMS[*]} ${STACK_ARMS[*]:1}" >&2
+  echo "arms: ${ARMS[*]} ${EXTRA_ARMS[*]} ${STACK_ARMS[*]:1} ${TILE_ARMS[*]} ${BASELINE_ARMS[*]} l12_links_1_nospatial" >&2
   exit 1
 }
 
@@ -114,6 +149,7 @@ run_arm() {
   TRAIN_SEED="$seed" SPLIT_SEED="${SPLIT_SEED:-42}" \
   RUN_SUFFIX="${DATA_TAG}_paired_v2_seed${seed}" \
   RESULT_NAME="result_uni2_ablation_${arm}" ABLATION_TAG="${arm}" \
+  EMBEDDER="$(embedder_of "$arm")" \
     bash code/PanCancer/1_demo_train.sh uni2 "$recipe"
 }
 
@@ -127,12 +163,13 @@ summary() {
 
 [[ $# -ge 1 ]] || usage
 case "$1" in
-  list) printf '%s\n' "${ARMS[@]}" "${EXTRA_ARMS[@]}" "${STACK_ARMS[@]:1}"; exit 0 ;;
+  list) printf '%s\n' "${ARMS[@]}" "${EXTRA_ARMS[@]}" "${STACK_ARMS[@]:1}" "${TILE_ARMS[@]}" "${BASELINE_ARMS[@]}"; exit 0 ;;
   summary) summary; exit 0 ;;
 esac
 arms=("$@")
 [[ "$1" == all ]] && arms=("${ARMS[@]}")
 [[ "$1" == stack ]] && arms=("${STACK_ARMS[@]}")
+[[ "$1" == tile ]] && arms=("${TILE_ARMS[@]}")
 for arm in "${arms[@]}"; do recipe_of "$arm" >/dev/null || { echo "unknown arm: $arm" >&2; usage; }; done
 read -r -a seeds <<< "${SEEDS:-${TRAIN_SEED:-42}}"
 for seed in "${seeds[@]}"; do

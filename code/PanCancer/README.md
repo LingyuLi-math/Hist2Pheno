@@ -17,6 +17,155 @@ Heads follow the workbook:
 Native labels are remapped on read. UNI embeddings stay in each cohort’s
 `*_matched_features.h5ad`; nothing is copied.
 
+## 2026-11-20 Tile-context update: fold PCA, B without PCA, SPORA at 0.5 µm/px
+
+Changes to the 2026-11-19 ablation below (that section is kept as written).
+
+**Which `l12_links_1` is the reference.** The existing run
+`result_uni2_ablation_l12_links_1_new1066axisfix_ivsafe_paired_v2_seed42`:
+- outer folds `cross_dataset_section`, `SPLIT_SEED=42`: whole sections; within each cohort the
+  sections are shuffled and dealt round-robin, so every fold holds ~1/5 of each cohort's sections;
+- `INNER_VAL=cohort_safe`: early stopping never takes a cohort's last training section or an L2
+  class out of inner training (0/5 folds lost a class);
+- `--class-weight-mode balanced`: L2 / L1 class weights from each fold's own training proportions.
+- The outer folds are not L2-stratified (that is `SPLITTER=stratified_section`, folders `stratsec_`).
+
+All tile arms use the same folds, inner split and seed, so they are paired fold by fold.
+
+**2026-11-20 (2): L2-balanced section folds are now the default of `run_tile_context.sh`**
+(`SPLITTER=stratified_section`, `pancancer_cv.assign_stratified_section_folds`, added 2026-11-16):
+- whole sections are held out (cross-section, as before);
+- sections are placed rarest-first, then two sections **of the same cohort** are swapped between
+  folds whenever that brings every fold closer to 1/5 of every L2 class (each class weighted
+  equally, so B_cell / Plasma count as much as Tumor), while keeping each cohort's section count
+  and the cell count per fold balanced;
+- BRCA has 2 sections, so they go to 2 different folds and the other 3 test folds have no DCIS
+  (unavoidable); every other cohort is balanced as far as its sections allow.
+- `run_tile_context.sh plan` builds the folds once (prepare of `l12_links_1_mpp05`) and saves
+  `data/PanCancer/fold_plan_stratsec_<tag>.csv` (+ `_l2_balance.csv`, share of each class per fold).
+  Every arm copies it into its result folder (`HIST2PHENO_FOLD_PLAN`), so the 5 arms have identical
+  folds even though tile arms drop a few cells.
+- Folders: `result_uni2_ablation_<arm>_stratsec_<tag>_paired_v2_seed42`. The old `l12_links_1`
+  (round-robin folds) is no longer fold-paired, so only the `_vs_l12_links_1_mpp05` table is written.
+  `SPLITTER=cross_dataset_section` restores the round-robin folds and the second table.
+
+**Arms now** (`l12_links_1_nospatial` is no longer run; its recipe stays in `1_demo_train.sh`):
+
+| arm | input | width |
+|--|--|--|
+| `tile_local` (A) | centroid patch token | 1536 |
+| `tile_local_global` (B) | A + tile class token, PCA 256 **fitted on each fold's training rows** | 1792 |
+| `tile_local_global_full` | A + full tile class token, no PCA (`--embedder uni2_tile_lg_full`) | 3072 |
+| `tile_local_global_k8` (C) | B + k=8 neighbour mean | 1792 (+ context) |
+| `l12_links_1_mpp05` | `l12_links_1` (14 px crop, k=8) after the SPORA crops are re-extracted at 0.5 µm/px | 1536 |
+
+Comparisons: B vs `tile_local_global_full` = effect of the PCA; C vs B = effect of k=8;
+every arm vs `l12_links_1_mpp05` = effect of the tile features with all cohorts at 0.5 µm/px;
+`l12_links_1_mpp05` vs `l12_links_1` = effect of the SPORA scale fix alone.
+
+**Fold PCA** (`HIST2PHENO_TILE_PCA=fold`, default). The pooled matrix keeps the 3072-d features
+(float16, as stored). `Hist2Pheno_pkg/projected_scaler.py` fits the PCA of the global block on the
+outer-train rows of each fold (up to 200k rows) and then the StandardScaler, as one scaler saved in
+the checkpoint artifact; the outer test fold never enters the projection. The best-fold reload builds
+the MLP at that reduced width (`n_features_out_`, 1792 for B), so `best_mlp_gpu.pt` matches the
+network that was trained. `HIST2PHENO_TILE_PCA=global`
+restores the 2026-11-19 behaviour (`tile_context.py fit-pca`, one PCA over all sections).
+
+**SPORA at 0.5 µm/px.**
+- Tile features: every section is resized by mpp/0.5 (SPORA x2). New checks stop a section when
+  `mpp_map.csv` disagrees with the h5ad `uns['mpp']` (SPORA: 1.0) or with the UNI2 manifest scale,
+  or when < 98 % of the nuclei fall inside the resized image. `tile_context.py audit-mpp` writes
+  `data/PanCancer/tile_context/mpp_audit.csv` (µm/px from every source, old crop size in µm, tile size).
+- 14 px crops: `bash code/spora/run_spora_pancancer.sh uni2-mpp05` re-extracts the SPORA UNI2 tokens
+  with the 1 µm/px H&E resized x2 (`scale_image=True, scale=2`), so the crop is 7 µm like every other
+  cohort. The old stores are moved to `sc_pth_14_14_1mpp_archive_<date>` (not deleted).
+  `uni2_aligned`, pooled and k=8 caches are keyed on the token manifests, so they rebuild.
+  After this step every uni2 arm sees the 0.5 µm/px SPORA crops; retrain under a new folder name
+  (`l12_links_1_mpp05`), the old folders were trained on the 14 µm crops.
+  ~~`run_spora_pancancer.sh uni2 / fix-axis / refresh-schurch` still extract at 1 µm/px; run
+  `uni2-mpp05` again after any of them.~~ 2026-11-20 (2): all of them now extract at 0.5 µm/px
+  (worker default `--target-mpp 0.5`); the 1 µm/px crops are no longer made.
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+conda activate SeededNTM
+bash code/PanCancer/run_tile_context.sh audit     # µm/px of every section (no GPU); stops on a mismatch
+bash code/PanCancer/run_tile_context.sh pilot     # audit + BRCA + GBM (with SPORA glioma) features
+nohup bash code/PanCancer/run_tile_context.sh all > code/log/tile_context.out 2>&1 &
+#   all = audit -> spora (crops at 0.5 µm/px) -> plan (L2-balanced folds) -> extract -> train (5 arms) -> summary
+```
+
+The default table is `data/PanCancer/tile_context_<tag>_vs_l12_links_1_mpp05.csv`.
+`..._vs_l12_links_1.csv` is written only with `SPLITTER=cross_dataset_section`, because the finished
+`l12_links_1` run used round-robin folds. `train` refuses to start while a SPORA store is not at scale 2.
+
+Resources: `tile_local_global`, `_full` and `_k8` pool 3072-d float16 (same size as the 1536-d
+float32 crop features). Four arms prepare at once on 4 GPUs, each with its own pooled matrix;
+use `GPUS="0 1"` if RAM is short. The k=8 cache of C is built from the raw 3072-d features
+(~46 GB float16 for 7.46M nuclei) and shared by all folds.
+
+## 2026-11-19 Tile-context features: ablation A / B / C
+
+**Why.** The UNI2 token used so far (`project_all_UNI2/.../sc_pth_14_14`) is the
+class token of a 14 px crop fed to UNI2-h on its own. At 0.5 µm/px that crop
+is 7 µm wide (half-width 3.5 µm), a single ViT-H/14 patch: the encoder sees
+part of one nucleus and none of the tissue architecture that separates IDC
+from DCIS (ducts, myoepithelial rings) or marks a TLS (follicles). The k=8
+neighbour mean adds other 7 µm crops, not architecture.
+
+**What.** `Hist2Pheno_pkg/tile_context.py` brings every section to
+0.5 µm/px (native µm/px from `mpp_map.csv`), cuts 224 px (112 µm) tiles
+with stride 112 and runs UNI2-h once per tile. Per nucleus:
+
+| feature | from the tile | size |
+|--|--|--|
+| local | patch token at the centroid (bilinear on the 16 x 16 token grid). Same 7 µm footprint as before, but every token has attended to the whole tile | 1536 |
+| global | tile class token (112 µm view), PCA to `HIST2PHENO_TILE_GLOBAL_DIM` (default 256; 0 = 1536) | 256 |
+
+Both are averaged over the 2 x 2 covering tiles with the Gaussian centre
+weight exp(-(dx²+dy²)/(2·0.5²)) (dx, dy in [-1, 1] from the tile centre; the
+overlap weighting in MeowCat's public code), so the tile in which the
+nucleus is most central dominates. Features are saved aligned to the h5ad
+rows, so no coordinate matching is needed: `data/PanCancer/tile_context/<sha(h5ad)[:32]>/{local,global}.npy`
+(float16) + `stamp.json` (h5ad size/mtime, coordinate hash, image, µm/px,
+tile/stride/σ, UNI2-h weight SHA, code SHA). A changed h5ad or coordinate
+set is refused at training time.
+
+**Arms** (same losses as `l12_links_1`; only the input changes):
+
+| arm | input | reference |
+|--|--|--|
+| `l12_links_1_nospatial` | 14 px crop class token, no neighbours | — |
+| `tile_local` (A) | local | `l12_links_1_nospatial` |
+| `tile_local_global` (B) | local + global | `l12_links_1_nospatial`, `tile_local` |
+| `tile_local_global_k8` (C) | B + k=8 neighbour mean | `l12_links_1` |
+
+```bash
+cd /home/lingyu/ssd2/Python/Hist2Pheno
+conda activate SeededNTM
+bash code/PanCancer/run_tile_context.sh pilot     # BRCA + GBM features only; check the speed in code/log/tile_context/
+bash code/PanCancer/run_tile_context.sh all       # extract (one shard per GPU) -> PCA -> 4 arms -> 2 tables
+# or step by step: extract | pca | train | summary
+```
+
+Defaults: `INNER_VAL=cohort_safe`, `SEEDS=42` (C is paired with the existing
+`l12_links_1` cohort_safe seed-42 run), `GPUS="0 1 2 3"`. Tables:
+`data/PanCancer/tile_context_<tag>_vs_nospatial.csv` (A, B) and
+`..._vs_l12_links_1.csv` (C). A single arm by hand:
+`EMBEDDER=uni2_tile_lg bash code/PanCancer/1_demo_train.sh uni2 A5`
+(folders without `RESULT_NAME` get `<embedder>_` in the suffix).
+
+Notes:
+- SPORA CRC / GBM tissues are prepared at 1 µm/px and their UNI2 crops were
+  taken with `scale_image=False`, so their 14 px crop is 14 µm, not 7 µm like
+  the other cohorts. The tile features resize SPORA by 2 (mpp 1.0 / 0.5) so
+  every tile is 112 µm in every cohort.
+- Disk: ~46 GB float16 for 7.46M nuclei, plus one shared pooled float32
+  `.npy` per feature set (`tile_local` 1536-d, `tile_lg` 1792-d).
+- External slides are not wired yet: `external_validation.py` still reads
+  the 14 px crop tokens. Add tile features for external cohorts after the
+  internal comparison shows a gain.
+
 ## 2026-11-17 Retrain everything on the seven cohorts (start here)
 
 The finished 1,066-section weights (`run_uni2_new1066.sh`, A2 0.9053 / A7 0.9035 /

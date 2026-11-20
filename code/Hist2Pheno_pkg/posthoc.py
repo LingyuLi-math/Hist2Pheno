@@ -757,7 +757,9 @@ def run_fold_metrics(result_dir) -> pd.DataFrame:
 ARM_ORDER = ("legacy_nospatial", "adjacent_nospatial", "spatial_k8", "spatial_k8_gate", "l12_links_1",
              "l12_links_2", "balanced_sampler", "focal_gamma1", "l12_balanced", "gate_l12_balanced",
              "l12_balanced_nospatial", "spatial_k4", "spatial_k16",
-             "l12_links_1_focal", "l12_links_1_balanced", "l12_links_1p5")  # 2026.11.17 stacked arms
+             "l12_links_1_focal", "l12_links_1_balanced", "l12_links_1p5",  # 2026.11.17 stacked arms
+             "l12_links_1_nospatial", "tile_local", "tile_local_global", "tile_local_global_k8",  # 2026.11.19 tile context
+             "tile_local_global_full", "l12_links_1_mpp05")  # 2026.11.20
 
 
 def _arm_of(name, data_tag=None):

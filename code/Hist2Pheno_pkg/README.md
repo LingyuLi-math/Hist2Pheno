@@ -4,6 +4,32 @@ Shared, dataset-neutral modeling, transformation, and plotting code for Hist2Phe
 Dataset directories such as `CODEX_hcc/` and `Xenium_lung/` remain responsible
 for data paths, file I/O, cohort-specific orchestration, and report assembly.
 
+## 2026-11-20 Fold PCA scaler (`projected_scaler.py`) and tile-context checks
+
+`ProjectedScaler` = PCA of the columns after `split` fitted on one fold's training rows, then a
+StandardScaler of the reduced features. `model._scale_split_float32` uses it when
+`HIST2PHENO_FEATURE_PROJECTION=split=<n>,dim=<k>` is set (the PanCancer train script sets it for
+`--embedder uni2_tile_lg` with `HIST2PHENO_TILE_PCA=fold`, default; unset = plain StandardScaler as
+before). `checkpoint_artifact.scaler_state / restore_scaler` save and restore the projection, and
+`spatial_context.runtime_batch` scales neighbour rows of raw or projected width (the projection is
+linear, so the neighbour mean commutes with it). Reloading the selected fold builds the MLP at `n_features_out_` (the width that fold was trained on), not the raw pooled width, and the fold-reuse hash covers `projected_scaler.py` and `tile_context.py`. `tile_context.py`: new embedder
+`uni2_tile_lg_full` (3072-d, no PCA), `audit-mpp`, and hard errors when the µm/px sources disagree
+or nuclei fall off the image. Tests: `test_projected_scaler.py`, `test_fold_pca_cv.py` (grouped CV
+with fold PCA + k=8 + checkpoint inference), new cases in `test_tile_context.py`,
+`code/spora/test_spora_uni2_mpp05.py`.
+
+## 2026-11-19 Tile-context features (`tile_context.py`)
+
+Cell-centred multi-scale UNI2-h features from one forward per 224 px tile
+(112 µm at 0.5 µm/px): `local` = patch token at the nucleus centroid
+(bilinear on the 16 x 16 grid; context-aware, same 7 µm footprint as the
+old 14 px crop), `global` = tile class token. Both are Gaussian-centre
+weighted over the covering tiles. Training reads them with
+`--embedder uni2_tile_local` (A) or `--embedder uni2_tile_lg` (B, global PCA
+`HIST2PHENO_TILE_GLOBAL_DIM`, default 256). Commands, arms and notes:
+`code/PanCancer/README.md`, section "2026-11-19 Tile-context features".
+Tests: `test_tile_context.py` (geometry, bilinear sampling, a stub encoder end to end, stale-stamp refusal).
+
 ## 2026-11-17 Decision layer for Accuracy / F1 (`posthoc.py`)
 
 AUROC ranks cells; Accuracy and F1 depend on how a label is picked. With
@@ -700,6 +726,8 @@ helpers moved from `Xenium_lung/xenium_uni_nb_helpers.py` to
 
 | Module | Responsibility |
 |--------|----------------|
+| `projected_scaler.py` | 2026-11-20: train-fold PCA of a feature block folded into the fold StandardScaler (saved with the checkpoint) |
+| `tile_context.py` | 2026-11-19: tile-level UNI2-h features per nucleus (centroid patch token + tile class token), extraction CLI and training access for `--embedder uni2_tile_local / uni2_tile_lg` |
 | [`base.py`](base.py) | Coordinate matching, embedding/AnnData/NPZ data preparation, spatial-neighbor indices, model classes, and low-level evaluation utilities. |
 | [`model.py`](model.py) | CV training, checkpoint selection/reload, spatial-context fusion, prediction, and model-level validation. |
 | [`plot.py`](plot.py) | Dataset-neutral ROC, confusion-matrix, and spatial plotting APIs, including multi-tier prediction plots. |

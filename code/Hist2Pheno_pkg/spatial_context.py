@@ -144,15 +144,22 @@ def runtime_batch(runtime,rows,device):
     cfg=config_of(runtime['config']);rows=rows.detach().cpu().numpy();s=runtime['scaler']
     if runtime['mode']=='mean':
         c=np.array(runtime['contexts'][rows],dtype=np.float32,copy=True)
-        c=(c-s.mean_.astype(np.float32))/s.scale_.astype(np.float32)
+        # 2026.11.20, scale_rows = the same affine scaling for a StandardScaler; a ProjectedScaler
+        # (train-fold PCA) projects raw-width rows first. 按折 PCA 时先投影再标准化。
+        # c=(c-s.mean_.astype(np.float32))/s.scale_.astype(np.float32)
+        from projected_scaler import scale_rows
+        c=scale_rows(s,c)
         return {'contexts':torch.as_tensor(c,device=device),
                 'geometry':torch.as_tensor(np.array(runtime['geometry'][rows],copy=True),device=device)}
     idx,dist=runtime['graph'];ii=idx[rows];dd=dist[rows];valid=ii>=0
     c=np.asarray(runtime['raw_X'][np.maximum(ii,0)],np.float32)
-    c=(c-s.mean_.astype(np.float32))/s.scale_.astype(np.float32)
+    # c=(c-s.mean_.astype(np.float32))/s.scale_.astype(np.float32)
+    from projected_scaler import scale_rows  # 2026.11.20, see mean mode above
+    c=scale_rows(s,c)
     # Isolated nodes fall back to the center, never to another section's first node.
     empty=~valid.any(1)
-    c[empty,0]=(runtime['raw_X'][rows[empty]]-s.mean_)/s.scale_
+    # c[empty,0]=(runtime['raw_X'][rows[empty]]-s.mean_)/s.scale_
+    if empty.any():c[empty,0]=scale_rows(s,np.asarray(runtime['raw_X'][rows[empty]],np.float32))
     valid[empty,0]=True;dd=dd.copy();dd[empty,0]=0
     return {'neighbors':torch.as_tensor(c,device=device),'mask':torch.as_tensor(valid,device=device),
             'distances':torch.as_tensor(dd,device=device)}

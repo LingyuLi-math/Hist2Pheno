@@ -91,31 +91,51 @@ def _scale_split_float32(X_f, tr_idx, va_idx, *, build_all=False):
     """Train-only StandardScaler; float32 train/val/all (no extra full-matrix float64)."""
     from sklearn.preprocessing import StandardScaler
 
-    scaler = StandardScaler()
+    # scaler = StandardScaler()
+    # 2026.11.20, HIST2PHENO_FEATURE_PROJECTION (set by the PanCancer train script for
+    # --embedder uni2_tile_lg with HIST2PHENO_TILE_PCA=fold) gives a ProjectedScaler: PCA of the
+    # global block fitted on this fold's training rows only, then StandardScaler. Unset = as before.
+    # 按折拟合 PCA：只用本折训练细胞；未设置环境变量时与原来完全相同（StandardScaler）。
+    from projected_scaler import make_scaler
+    scaler = make_scaler(int(X_f.shape[1]))
+    projected = hasattr(scaler, "fit_rows")
     tr_idx = np.asarray(tr_idx, dtype=np.int64)
     va_idx = np.asarray(va_idx, dtype=np.int64)
     # 2026.10.24, block transforms and file-backed large splits / 大矩阵分块落盘
     threshold = float(os.environ.get("HIST2PHENO_MEMMAP_THRESHOLD_MB","256"))*1024**2
     large = X_f.nbytes >= threshold
+    if projected:
+        scaler.fit_rows(X_f, tr_idx)
+        print(f"  fold PCA: columns {scaler.split}+ -> {scaler.dim} dims "
+              f"(explained {float(scaler.proj_explained_):.3f}) on {len(tr_idx):,} training rows", flush=True)
+    n_out = int(getattr(scaler, "n_features_out_", X_f.shape[1])) if projected else int(X_f.shape[1])
     if large:
         import tempfile
         folder=os.environ.get("HIST2PHENO_ARRAY_CACHE",os.environ.get("NCRT_TMPDIR","/tmp"))
         os.makedirs(folder,exist_ok=True)
-        for start in range(0,len(tr_idx),8192):scaler.partial_fit(X_f[tr_idx[start:start+8192]])
+        if not projected:
+            # 2026.11.20, blocks cast to float32 (wide tile features are pooled as float16)
+            for start in range(0,len(tr_idx),8192):scaler.partial_fit(np.asarray(X_f[tr_idx[start:start+8192]],dtype=np.float32))
         def transform(rows):
             fd,path=tempfile.mkstemp(prefix="hist2pheno_scaled_",suffix=".npy",dir=folder);os.close(fd)
             # 2026.11.16, HIST2PHENO_STORE_DTYPE=float16 halves disk/page cache; AMP casts inputs to fp16 anyway
-            out=np.lib.format.open_memmap(path,mode="w+",dtype=store_dtype(),shape=(len(rows),X_f.shape[1]))
-            for start in range(0,len(rows),8192):out[start:start+8192]=scaler.transform(X_f[rows[start:start+8192]])
+            # out=np.lib.format.open_memmap(path,mode="w+",dtype=store_dtype(),shape=(len(rows),X_f.shape[1]))
+            # 2026.11.20, n_out = output width (smaller than the input after a fold PCA)
+            out=np.lib.format.open_memmap(path,mode="w+",dtype=store_dtype(),shape=(len(rows),n_out))
+            for start in range(0,len(rows),8192):out[start:start+8192]=scaler.transform(np.asarray(X_f[rows[start:start+8192]],dtype=np.float32))
             return out
         X_tr,X_va=transform(tr_idx),transform(va_idx)
-    else:
-        X_tr=np.ascontiguousarray(scaler.fit_transform(X_f[tr_idx]),dtype=np.float32)
+    elif projected:
+        X_tr=np.ascontiguousarray(scaler.transform(X_f[tr_idx]),dtype=np.float32)
         X_va=np.ascontiguousarray(scaler.transform(X_f[va_idx]),dtype=np.float32)
+    else:
+        X_tr=np.ascontiguousarray(scaler.fit_transform(np.asarray(X_f[tr_idx],dtype=np.float32)),dtype=np.float32)
+        X_va=np.ascontiguousarray(scaler.transform(np.asarray(X_f[va_idx],dtype=np.float32)),dtype=np.float32)
     # 2026.10.24, no unused full matrix / 非空间和流式路径不复制全矩阵
     X_all = None
     if build_all:
-        X_all = np.empty(X_f.shape, dtype=np.float32)
+        # X_all = np.empty(X_f.shape, dtype=np.float32)
+        X_all = np.empty((X_f.shape[0], n_out), dtype=np.float32)  # 2026.11.20, output width
         X_all[tr_idx] = X_tr
         X_all[va_idx] = X_va
     return scaler, X_tr, X_va, X_all
@@ -2202,7 +2222,9 @@ def train_and_save_model_from_split(
         {"embedder":result.get("_cv_source",{}).get("embedder"),
          "embedding_protocol":result.get("_cv_source",{}).get("embedding_protocol"),
          "hce":[hce_w1,hce_w2,hce_w12,hce_w_l12head,hce_w_l3,hce_w_l4],
-         "implementation":digest(*[file_digest(Path(__file__).parent/name) for name in ("model.py","base.py","hierarchy_loss.py","spatial_context.py","paired_initialization.py")]),
+         "implementation":digest(*[file_digest(p) for p in
+            (Path(__file__).parent/name for name in ("model.py","base.py","hierarchy_loss.py","spatial_context.py","paired_initialization.py","projected_scaler.py","tile_context.py"))
+            if p.is_file()]),
          "epochs":max_epochs,"patience":patience,"hidden":list(hidden_dims),"dropout":dropout,
          "lr":lr,"weight_decay":weight_decay,"val_selection":val_selection_metric,
          "class_weight":class_weight_mode,"beta":class_balanced_beta,"focal":l2_focal_gamma,
@@ -2927,7 +2949,7 @@ def train_hce_group_kfold_cv(
         eval_loaders = loaders
         if fraction:
             outer_result = dict(result_fold)
-            outer_result.update(X_test_scaled=np.asarray(scaler.transform(X_f[outer_va]),dtype=np.float32),
+            outer_result.update(X_test_scaled=np.asarray(scaler.transform(np.asarray(X_f[outer_va],dtype=np.float32)),dtype=np.float32),  # 2026.11.20, float32 input
                 y_test_encoded=y_enc[outer_va],y_test_level1_encoded=y_l1_enc[outer_va],
                 y_test=y_f[outer_va],y_test_level1=y_level1_f[outer_va],val_global_indices=outer_va)
             for short in ("level12","level3","level4"):
@@ -3386,6 +3408,21 @@ def train_hce_stratified_kfold_cv(
     return summary
 
 
+def _network_input_dim(cv_data, artifact):
+    """MLP feature width, and the restored scaler.
+
+    A fold-PCA scaler (``ProjectedScaler``) stores the raw pool width in
+    ``n_features_in_`` and emits ``n_features_out_`` columns. The checkpoint
+    was trained on that reduced width, so reloading from ``X_f.shape[1]``
+    builds a network the state dict cannot load.
+    """
+    raw = int(np.shape(cv_data["X_f"])[1])
+    if not artifact:
+        return raw, None
+    scaler = restore_scaler(artifact["scaler"])
+    return int(getattr(scaler, "n_features_out_", raw)), scaler
+
+
 def run_stratified_kfold_cv_and_load_best_model(
     device,
     cv_data,
@@ -3483,11 +3520,12 @@ def run_stratified_kfold_cv_and_load_best_model(
         f"fold={best_fold.get('fold')}, "
         f"score={best_fold_score:.6f}"
     )
-    input_dim = int(cv_data["X_f"].shape[1])
     num_classes = len(class_names)
     ckpt_path = best_fold["checkpoint"]
     state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
     artifact = read_artifact(ckpt_path)
+    # 2026.11.20, fold PCA: reload at the projected width, not the raw pool
+    input_dim, fold_scaler = _network_input_dim(cv_data, artifact)
     model, use_five = build_mlp_classifier_for_state_dict(
         state_dict,
         spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
@@ -3499,9 +3537,9 @@ def run_stratified_kfold_cv_and_load_best_model(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
-    if artifact:
-        model.checkpoint_scaler=restore_scaler(artifact["scaler"])
-        model.checkpoint_metadata=artifact["metadata"]
+    if fold_scaler is not None:
+        model.checkpoint_scaler = fold_scaler
+        model.checkpoint_metadata = artifact["metadata"]
     model.eval()
 
     spatial_neighbor_index = None
@@ -3511,7 +3549,7 @@ def run_stratified_kfold_cv_and_load_best_model(
     return {
         "logo_summary": kfold_summary,  # keep key name for downstream compatibility
         "model": model,
-        "scaler": restore_scaler(artifact["scaler"]) if artifact else None,
+        "scaler": fold_scaler,
         "best_fold": best_fold,
         "best_weighted_f1": float(best_fold["l2_weighted_f1"]),
         "best_macro_f1": float(best_fold["l2_macro_f1"]),
@@ -3736,11 +3774,12 @@ def run_group_kfold_cv_and_load_best_model(
         f"fold={best_fold.get('fold')}, "
         f"score={best_fold_score:.6f}"
     )
-    input_dim = int(cv_data["X_f"].shape[1])
     num_classes = len(class_names)
     ckpt_path = best_fold["checkpoint"]
     state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
     artifact = read_artifact(ckpt_path)
+    # 2026.11.20, fold PCA: reload at the projected width, not the raw pool
+    input_dim, fold_scaler = _network_input_dim(cv_data, artifact)
     model, use_five = build_mlp_classifier_for_state_dict(
         state_dict,
         spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
@@ -3752,9 +3791,9 @@ def run_group_kfold_cv_and_load_best_model(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
-    if artifact:
-        model.checkpoint_scaler=restore_scaler(artifact["scaler"])
-        model.checkpoint_metadata=artifact["metadata"]
+    if fold_scaler is not None:
+        model.checkpoint_scaler = fold_scaler
+        model.checkpoint_metadata = artifact["metadata"]
     model.eval()
 
     spatial_neighbor_index = None
@@ -3765,7 +3804,7 @@ def run_group_kfold_cv_and_load_best_model(
         "logo_summary": group_summary,
         "group_summary": group_summary,
         "model": model,
-        "scaler": restore_scaler(artifact["scaler"]) if artifact else None,
+        "scaler": fold_scaler,
         "best_fold": best_fold,
         "best_weighted_f1": float(best_fold["l2_weighted_f1"]),
         "best_macro_f1": float(best_fold["l2_macro_f1"]),
@@ -4186,11 +4225,12 @@ def run_logo_cv_and_load_best_model(
         f"fold={best_fold.get('fold')}, "
         f"score={best_fold_score:.6f}"
     )
-    input_dim = int(cv_data["X_f"].shape[1])
     num_classes = len(class_names)
     ckpt_path = best_fold["checkpoint"]
     state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
     artifact = read_artifact(ckpt_path)
+    # 2026.11.20, fold PCA: reload at the projected width, not the raw pool
+    input_dim, fold_scaler = _network_input_dim(cv_data, artifact)
     model, use_five = build_mlp_classifier_for_state_dict(
         state_dict,
         spatial_config=artifact["metadata"].get("spatial_config") if artifact else None,
@@ -4202,15 +4242,15 @@ def run_logo_cv_and_load_best_model(
         dropout=dropout,
     )
     model.load_state_dict(_remap_legacy_five_head_state_dict(state_dict))
-    if artifact:
-        model.checkpoint_scaler=restore_scaler(artifact["scaler"])
-        model.checkpoint_metadata=artifact["metadata"]
+    if fold_scaler is not None:
+        model.checkpoint_scaler = fold_scaler
+        model.checkpoint_metadata = artifact["metadata"]
     model.eval()
 
     return {
         "logo_summary": logo_summary,
         "model": model,
-        "scaler": restore_scaler(artifact["scaler"]) if artifact else None,
+        "scaler": fold_scaler,
         "best_fold": best_fold,
         "best_weighted_f1": float(best_fold["l2_weighted_f1"]),
         "best_macro_f1": float(best_fold["l2_macro_f1"]),

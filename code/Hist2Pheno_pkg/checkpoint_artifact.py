@@ -48,12 +48,22 @@ def companion(path):return Path(str(path)+'.artifact.pt')
 
 
 def scaler_state(scaler):
-    return {k:torch.as_tensor(np.asarray(getattr(scaler,k)).copy()) for k in
+    state={k:torch.as_tensor(np.asarray(getattr(scaler,k)).copy()) for k in
             ('mean_','var_','scale_','n_samples_seen_')} | {'n_features_in_':int(scaler.n_features_in_)}
+    # 2026.11.20, train-fold PCA (projected_scaler.ProjectedScaler) is saved with the scaler
+    # 按折拟合的 PCA 投影与 scaler 一起保存，外部预测时自动使用同一投影。
+    if getattr(scaler,'proj_components_',None) is not None:
+        from projected_scaler import STATE_KEYS
+        state |= {k:torch.as_tensor(np.asarray(getattr(scaler,k)).copy()) for k in STATE_KEYS}
+    return state
 
 
 def restore_scaler(state):
     from sklearn.preprocessing import StandardScaler
+    # 2026.11.20, a state with proj_components_ restores the ProjectedScaler
+    if 'proj_components_' in state:
+        from projected_scaler import restore
+        return restore({k:(v.cpu().numpy() if isinstance(v,torch.Tensor) else v) for k,v in state.items()})
     s=StandardScaler()
     for k,v in state.items():setattr(s,k,v.cpu().numpy() if isinstance(v,torch.Tensor) else v)
     return s

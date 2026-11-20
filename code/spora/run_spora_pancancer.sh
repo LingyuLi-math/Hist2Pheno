@@ -23,6 +23,11 @@
 #   CUDA_DEVICE=0 bash code/spora/run_spora_pancancer.sh smoke
 #
 # GPUS="0 1 2 3" is the default shard. One tissue per card, round-robin.
+#
+# 2026.11.20, every UNI2 extraction here (uni2, fix-axis, refresh-schurch, uni2-mpp05) resizes the
+# 1 µm/px H&E x2, so the 14 px crop is 7 µm (0.5 µm/px) like the other cohorts. The 1 µm/px crops
+# are no longer made; an existing 1 µm/px store is moved to sc_pth_14_14_1mpp_archive_<date>.
+# 所有 UNI2 提取都统一到 0.5 µm/px。
 
 set -euo pipefail
 
@@ -53,6 +58,7 @@ Usage:
   bash code/spora/run_spora_pancancer.sh fix-axis          # verify centroid_x vs mask, swap, re-extract UNI2
   bash code/spora/run_spora_pancancer.sh segment     # StarDist, GPUs: ${GPUS[*]}
   bash code/spora/run_spora_pancancer.sh uni2        # GT UNI2 tokens, GPUs: ${GPUS[*]}
+  bash code/spora/run_spora_pancancer.sh uni2-mpp05  # 2026.11.20, same as uni2 (kept as an alias)
   CUDA_DEVICE=${CUDA_DEVICE} bash code/spora/run_spora_pancancer.sh train
   CUDA_DEVICE=${CUDA_DEVICE} bash code/spora/run_spora_pancancer.sh smoke
 
@@ -152,8 +158,10 @@ PY
   echo "UNI2 Schurch ${n} tissues on GPUs: ${GPUS[*]}"
   for gpu in "${GPUS[@]}"; do
     [[ -s "${dir}/${gpu}.txt" ]] || continue
+    # CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u code/spora/spora_uni2_worker.py \
+    #   --list "${dir}/${gpu}.txt" &
     CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u code/spora/spora_uni2_worker.py \
-      --list "${dir}/${gpu}.txt" &
+      --list "${dir}/${gpu}.txt" --target-mpp 0.5 --native-mpp 1.0 &  # 2026.11.20, 0.5 µm/px
     pids+=("$!")
   done
   if ((${#pids[@]})); then
@@ -180,8 +188,34 @@ cmd_uni2() {
   local pids=() gpu
   for gpu in "${GPUS[@]}"; do
     [[ -s "${dir}/${gpu}.txt" ]] || continue
+    # CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u code/spora/spora_uni2_worker.py \
+    #   --list "${dir}/${gpu}.txt" &
+    # 2026.11.20, 0.5 µm/px (also the worker default)
     CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u code/spora/spora_uni2_worker.py \
-      --list "${dir}/${gpu}.txt" &
+      --list "${dir}/${gpu}.txt" --target-mpp 0.5 --native-mpp 1.0 &
+    pids+=("$!")
+  done
+  if ((${#pids[@]})); then
+    wait_pids "${pids[@]}"
+  fi
+}
+
+# 2026.11.20, SPORA crops at 0.5 µm/px like every other cohort: the 1 µm/px H&E is resized x2,
+# so the 14 px UNI2 crop covers 7 µm instead of 14 µm. Old stores are moved to
+# sc_pth_14_14_1mpp_archive_<date> (kept). Afterwards retrain any uni2 arm under a new folder name
+# (run_ablation.sh l12_links_1_mpp05); the old folders were trained on the 14 µm crops.
+# SPORA 小块统一到 0.5 µm/px；旧特征保留在 archive 文件夹。
+cmd_uni2_mpp05() {
+  local dir
+  dir="$(shard_lists uni2)"
+  local n
+  n="$(cat "${dir}/count")"
+  echo "UNI2 GT ${n} tissues at 0.5 µm/px (x2) on GPUs: ${GPUS[*]}"
+  local pids=() gpu
+  for gpu in "${GPUS[@]}"; do
+    [[ -s "${dir}/${gpu}.txt" ]] || continue
+    CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON}" -u code/spora/spora_uni2_worker.py \
+      --list "${dir}/${gpu}.txt" --target-mpp 0.5 --native-mpp 1.0 &
     pids+=("$!")
   done
   if ((${#pids[@]})); then
@@ -239,6 +273,7 @@ case "${1:-}" in
   fix-axis) cmd_fix_axis ;;
   segment|stardist) cmd_segment ;;
   uni2) cmd_uni2 ;;
+  uni2-mpp05) cmd_uni2_mpp05 ;;  # 2026.11.20
   train) cmd_train ;;
   smoke) cmd_smoke ;;
   *) die "unknown step: ${1}" ;;
