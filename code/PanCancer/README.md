@@ -106,6 +106,72 @@ float32 crop features). Four arms prepare at once on 4 GPUs, each with its own p
 use `GPUS="0 1"` if RAM is short. The k=8 cache of C is built from the raw 3072-d features
 (~46 GB float16 for 7.46M nuclei) and shared by all folds.
 
+### Finished 2026-11-20, seed 42
+
+All five arms finished on the shared L2-balanced section folds
+(`fold_plan_stratsec_new1066axisfix_ivsafe.csv`), `INNER_VAL=cohort_safe`, seed 42.
+`tile_local_global` was killed on the first pass while three 3072-d pools were loading at
+once; the rerun on one GPU finished the same result directory. The comparison table was
+rebuilt after that rerun and includes all five arms:
+`data/PanCancer/tile_context_new1066axisfix_ivsafe_vs_l12_links_1_mpp05.csv`
+(per fold: `..._per_fold.csv`).
+
+Fold-mean columns are the mean of the five held-out folds. Pooled L2 AUROC is the single
+score on `oof_predictions.npz`. The selected fold is the inner-validation
+`three_tier_auc_sum`, not the external slide. These folds are not the round-robin folds of
+`l12_links_1` (pooled L2 AUROC 0.9071), so that 0.9071 is not a row of this table. The
+paired reference is `l12_links_1_mpp05`.
+
+| Arm | Best fold | Pooled L2 AUROC | Fold-mean L2 AUROC | L2 accuracy | L2 macro-F1 | Decision L2 accuracy | Decision L2 macro-F1 | Decision macro-F1 vs mpp05 |
+|--|--|--|--|--|--|--|--|--|
+| `tile_local` (A) | 1 (2.7872) | 0.9376 | 0.9316 | 0.5887 | 0.4284 | 0.6097 | 0.4433 | +0.1482, 5/5 |
+| `tile_local_global` (B) | 2 (2.7904) | 0.9388 | 0.9334 | 0.5831 | 0.4300 | 0.5980 | 0.4448 | +0.1497, 5/5 |
+| `tile_local_global_full` | 2 (2.7882) | 0.9380 | 0.9333 | 0.5851 | 0.4287 | 0.6011 | 0.4394 | +0.1443, 5/5 |
+| `tile_local_global_k8` (C) | 2 (2.7871) | 0.9376 | 0.9328 | 0.5829 | 0.4242 | 0.6002 | 0.4336 | +0.1385, 5/5 |
+| `l12_links_1_mpp05` | 2 (2.6371) | 0.8997 | 0.8944 | 0.4600 | 0.2982 | 0.4865 | 0.2951 | — |
+
+Accuracy and macro-F1 are fold means. Decision columns are cross-fitted `decision full`.
+The tile features account for the gain: about +0.04 L2 AUROC and +0.14 decision macro-F1
+against the 14 px crop, in every fold. PCA versus the full class token, and k=8 versus no
+neighbours, stay inside about 0.01. k=8 is slightly below B on decision macro-F1.
+
+Weights: `data/PanCancer/result_uni2_ablation_<arm>_stratsec_new1066axisfix_ivsafe_paired_v2_seed42/cross_dataset_cv/<arm>/best_mlp_gpu.pt`.
+OOF: `oof_predictions.npz` in the same result directory. Logs:
+`code/log/retrain_new1066axisfix_ivsafe/<arm>_seed42.out`
+(`tile_local_global_seed42_rerun.out` for B), parent log `code/log/tile_context.out`.
+
+**NPC patient1** (`20210809-C-AH4199551`, 142,184 nuclei) uses the five-fold mean of each
+arm, not `best_mlp_gpu.pt` alone. `code/External_val/NPC/predict_finished_arms.py` writes
+`data/Visium/NPC/pred_uni2_ens5_<arm>_stratsec_ivsafe_seed42/`. The same-slide comparison is
+`Pred_visual_npc_uni2_local_global.ipynb`. One notebook per tile arm, with the A2 sections,
+is `Pred_visual_npc_uni2_<arm>.ipynb`. Figures:
+`data/Visium/NPC/pred_uni2_finished_arms_ivsafe_seed42/figures/`.
+
+Whole-slide L2 argmax of that mean, largest class:
+
+| Arm | Largest class | Tumor |
+|--|--|--|
+| `tile_local` | B_cell 0.297 | 0.182 |
+| `tile_local_global` | B_cell 0.325 | 0.228 |
+| `tile_local_global_full` | CD4_T 0.462 | 0.178 |
+| `tile_local_global_k8` | CD4_T 0.369 | 0.117 |
+| `l12_links_1_mpp05` | Tumor 0.678 | 0.678 |
+
+Expert TLS, L2 softmax inside the three outlines / outside (5,262 nuclei inside). B cell is
+`P(B_cell)+P(Plasma)`; T cell is CD4_T + CD8_T + Tregs.
+
+| Arm | B cell | T cell | DC | Tumor |
+|--|--|--|--|--|
+| `tile_local` | 0.333 / 0.188 (1.77) | 0.333 / 0.235 (1.42) | 0.038 / 0.046 (0.81) | 0.056 / 0.123 (0.46) |
+| `tile_local_global` | 0.361 / 0.206 (1.75) | 0.317 / 0.241 (1.32) | 0.026 / 0.037 (0.71) | 0.069 / 0.143 (0.48) |
+| `tile_local_global_full` | 0.284 / 0.153 (1.86) | 0.433 / 0.309 (1.40) | 0.042 / 0.053 (0.81) | 0.034 / 0.106 (0.32) |
+| `tile_local_global_k8` | 0.369 / 0.222 (1.66) | 0.395 / 0.306 (1.29) | 0.034 / 0.052 (0.66) | 0.037 / 0.090 (0.41) |
+| `l12_links_1_mpp05` | 0.019 / 0.018 (1.06) | 0.079 / 0.066 (1.20) | 0.152 / 0.108 (1.41) | 0.164 / 0.339 (0.48) |
+
+On this slide the tile arms raise B and T inside the expert outline and lower Tumor there.
+Their whole-slide argmax is immune (and, for A, neutrophil 0.186) rather than Tumor. The
+14 px model stays Tumor across the slide, and its B probability inside the outline stays near 0.02.
+
 ## 2026-11-19 Tile-context features: ablation A / B / C
 
 **Why.** The UNI2 token used so far (`project_all_UNI2/.../sc_pth_14_14`) is the

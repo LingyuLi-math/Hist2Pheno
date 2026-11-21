@@ -1,7 +1,7 @@
 ## 2026.11.20, lingyu, add patient1_axisfix
 """Patient1 figures for ``Pred_visual_npc_uni2_ens5_ivsafe_seed42.ipynb``.
 
-The notebook only constructs :class:`Patient1Run` and calls its methods.
+The notebook constructs :class:`FinishedArms` and calls its methods.
 Full-resolution PDF and PNG files go to the prediction ``figures/`` directory.
 A notebook cell shows a reduced JPEG preview so the ipynb does not store the
 full raster.
@@ -1053,3 +1053,240 @@ class Patient1Run:
 
 def open_patient1(repo=None) -> Patient1Run:
     return Patient1Run(repo)
+
+
+# 2026.11.20, every arm of this training run. Each panel is that arm's five-fold mean.
+FINISHED_ARMS = (
+    ("tile_local", "A  centroid token", "pred_uni2_ens5_tile_local_stratsec_ivsafe_seed42"),
+    ("tile_local_global", "B  local + global", "pred_uni2_ens5_tile_local_global_stratsec_ivsafe_seed42"),
+    ("tile_local_global_full", "B full, no PCA", "pred_uni2_ens5_tile_local_global_full_stratsec_ivsafe_seed42"),
+    ("tile_local_global_k8", "C  local + global, k=8", "pred_uni2_ens5_tile_local_global_k8_stratsec_ivsafe_seed42"),
+    ("l12_links_1_mpp05", "14 px crop, k=8", "pred_uni2_ens5_l12_links_1_mpp05_stratsec_ivsafe_seed42"),
+)
+
+
+class FinishedArms:
+    """Patient1 comparison of every arm from the 2026-11-20 training run."""
+
+    def __init__(self, repo=None):
+        mpl.rcParams["pdf.fonttype"] = 42
+        mpl.rcParams["ps.fonttype"] = 42
+        self.repo = resolve_repo(repo)
+        npc_dir = self.repo / "code" / "External_val" / "NPC"
+        for path in (self.repo / "code", self.repo / "code" / "Hist2Pheno_pkg", npc_dir):
+            if str(path) not in sys.path:
+                sys.path.insert(0, str(path))
+        from Hist2Pheno_pkg.external_validation import ExternalCohort
+        from npc_figures import configure_figure_dpi
+
+        self.patient = PATIENT1
+        self.save = True
+        self.dpi = 200
+        self.save_dpi = 300
+        self.he_max_side = 1400
+        self.marker_px = 1.2
+        configure_figure_dpi(save_dpi=self.save_dpi, plot_dpi=self.dpi)
+        self.cohort = ExternalCohort(
+            name="NPC",
+            data_root=self.repo / "data" / "Visium" / "NPC",
+            repo=self.repo,
+            patch_size=14,
+            method="UNI2",
+            embedding_dirname="project_all_UNI2",
+            pred_dirname="pred_uni2_ens5_l12_links_1_ivsafe_seed42",
+            project_tag="project_all_UNI2",
+        )
+        self.fig_dir = self.repo / "data" / "Visium" / "NPC" / "pred_uni2_finished_arms_ivsafe_seed42" / "figures"
+        self.fig_dir.mkdir(parents=True, exist_ok=True)
+        self._tls = None
+
+    def _pair(self, dirname: str) -> tuple[Path, Path]:
+        folder = self.repo / "data" / "Visium" / "NPC" / dirname / PATIENT1
+        return folder / f"{PATIENT1}_stardist_pred.h5ad", folder / f"{PATIENT1}_l2_probs.npz"
+
+    def _require(self) -> None:
+        missing = [name for name, _title, dirname in FINISHED_ARMS if not self._pair(dirname)[0].is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "NPC predictions are not written yet for "
+                + ", ".join(missing)
+                + ". On a free GPU: CUDA_VISIBLE_DEVICES=3 "
+                + "python code/External_val/NPC/predict_finished_arms.py"
+            )
+
+    def _tls_frame(self):
+        if self._tls is not None:
+            return self._tls
+        from Hist2Pheno_pkg.panel_figures import crop_he_rectangle
+        from npc_figures import keep_leftmost_foci, load_tls_xy, tls_smooth_contours
+
+        npc_data = self.repo / "data" / "Visium" / "NPC"
+        tls_xy, _bc, pitch_px, _spot_r = load_tls_xy(
+            npc_data / "Annotation" / "TLS_spot_label.csv", npc_data / "patient1",
+        )
+        keep = keep_leftmost_foci(tls_xy, pitch_px, n_keep=3)
+        tls_xy = tls_xy[keep]
+        contours = tls_smooth_contours(tls_xy, disk_r=0.70 * pitch_px, sigma=0.45 * pitch_px)
+        paths = self.cohort.sample_paths(self.patient)
+        pad = 2.6 * pitch_px
+        thumb, full_w, full_h = self.cohort._he_thumbnail(paths["he"], max_side=self.he_max_side)
+        x0 = max(0.0, float(tls_xy[:, 0].min() - pad))
+        y0 = max(0.0, float(tls_xy[:, 1].min() - pad))
+        x1 = min(float(full_w), float(tls_xy[:, 0].max() + pad))
+        y1 = min(float(full_h), float(tls_xy[:, 1].max() + pad))
+        he_roi = crop_he_rectangle(paths["he"], x0, y0, x1, y1)
+        self._tls = {
+            "contours": contours, "x0": x0, "y0": y0, "x1": x1, "y1": y1,
+            "he_roi": he_roi, "thumb": thumb, "full_w": full_w, "full_h": full_h,
+            "he": paths["he"],
+        }
+        return self._tls
+
+    def l2_maps(self):
+        """Whole-slide L2 argmax of each arm's five-fold mean."""
+        from matplotlib.lines import Line2D
+        from npc_figures import load_aligned_l2_probs
+
+        self._require()
+        tls = self._tls_frame()
+        palette = self.cohort._palette()["L2"]
+        point_s = (float(self.marker_px) * 72.0 / float(self.dpi)) ** 2
+        aspect = tls["full_h"] / max(tls["full_w"], 1)
+        panel_w = 3.6
+        n_arms = len(FINISHED_ARMS)
+        fig, axes = plt.subplots(
+            1, n_arms, figsize=(panel_w * n_arms + 0.6, panel_w * aspect + 1.4), dpi=self.dpi,
+        )
+        axes = np.atleast_1d(axes)
+        present = set()
+        rows = []
+        for ax, (name, title, dirname) in zip(axes, FINISHED_ARMS):
+            pred, npz = self._pair(dirname)
+            xy, probs, classes = load_aligned_l2_probs(pred, npz)
+            labels = np.asarray(classes, dtype=object)[np.argmax(probs, axis=1)]
+            counts = pd.Series(labels).value_counts(normalize=True)
+            present.update(counts.index.astype(str))
+            top = f"{counts.index[0]} {counts.iloc[0]:.0%}"
+            self.cohort._scatter_on_he(
+                ax, tls["thumb"], tls["full_w"], tls["full_h"], xy, labels, palette,
+                f"{title}\n{top}", point_s, show_he=True,
+            )
+            rows.append(counts.rename(name))
+        ordered = [n for n in palette if n in present]
+        fig.legend(
+            handles=[
+                Line2D(
+                    [0], [0], linestyle="none", marker="o", markersize=8,
+                    markerfacecolor=palette.get(n, (0.5, 0.5, 0.5, 1))[:3],
+                    markeredgecolor="none", label=n,
+                )
+                for n in ordered
+            ],
+            loc="lower center", bbox_to_anchor=(0.5, -0.02), frameon=False,
+            fontsize=9, ncol=min(8, len(ordered)),
+        )
+        fig.suptitle(f"{PATIENT1}  L2 argmax of the five-fold mean", fontsize=12)
+        fig.tight_layout(rect=(0, 0.08, 1, 0.94))
+        table = pd.concat(rows, axis=1).fillna(0.0)
+        table = table.loc[table.max(axis=1).sort_values(ascending=False).index]
+        table.to_csv(self.fig_dir / f"{PATIENT1}_finished_arms_L2_fraction.csv")
+        _present(fig, self.fig_dir / f"{PATIENT1}_finished_arms_L2.pdf", save=self.save)
+        _display(table.round(3))
+        return table
+
+    def tls_abundance(self, *, gray_outside=False):
+        """B, T, DC, and Tumor L2 softmax on the expert TLS crop, one row per arm.
+
+        A column shares one color scale: the 99th percentile of that score over every arm.
+        """
+        from npc_figures import draw_tls, load_aligned_l2_probs, nuclei_in_contours
+
+        self._require()
+        tls = self._tls_frame()
+        loaded = []
+        for name, title, dirname in FINISHED_ARMS:
+            pred, npz = self._pair(dirname)
+            xy, probs, classes = load_aligned_l2_probs(pred, npz)
+            scores = {}
+            for label, members in ABUNDANCE_PANELS:
+                scores[label] = probs[:, [classes.index(m) for m in members]].sum(axis=1)
+            loaded.append((name, title, xy, scores))
+        xy0 = loaded[0][2]
+        inside = nuclei_in_contours(xy0, tls["contours"])
+        in_zoom = (
+            (xy0[:, 0] >= tls["x0"]) & (xy0[:, 0] < tls["x1"])
+            & (xy0[:, 1] >= tls["y0"]) & (xy0[:, 1] < tls["y1"])
+        )
+        vmax = {}
+        rows = []
+        for label, _members in ABUNDANCE_PANELS:
+            stacked = np.concatenate([scores[label] for _n, _t, _xy, scores in loaded])
+            vmax[label] = float(np.quantile(stacked, 0.99))
+            for name, _title, _xy, scores in loaded:
+                score = scores[label]
+                inn = float(score[inside].mean())
+                out = float(score[~inside].mean())
+                rows.append({
+                    "arm": name, "panel": label,
+                    "inside": inn, "outside": out, "inside / outside": inn / out,
+                })
+        table = pd.DataFrame(rows)
+        print(table.to_string(index=False, float_format=lambda value: f"{value:.4f}"))
+        he_roi = tls["he_roi"]
+        aspect = he_roi.shape[0] / he_roi.shape[1]
+        panel_w = 3.2
+        n_arms = len(loaded)
+        fig, axes = plt.subplots(
+            n_arms, 4,
+            figsize=(panel_w * 4 + 1.4, panel_w * aspect * n_arms + 1.8),
+            dpi=self.dpi, layout="constrained",
+        )
+        axes = np.atleast_2d(axes)
+        colored = in_zoom & inside
+        outside = in_zoom & ~inside
+        for row, (_name, title, xy, scores) in enumerate(loaded):
+            for col, (label, members) in enumerate(ABUNDANCE_PANELS):
+                ax = axes[row, col]
+                score = scores[label]
+                ax.imshow(he_roi, extent=(0, he_roi.shape[1], he_roi.shape[0], 0), interpolation="bilinear")
+                points = colored if gray_outside else in_zoom
+                if gray_outside:
+                    ax.scatter(
+                        xy[outside, 0] - tls["x0"], xy[outside, 1] - tls["y0"],
+                        c="#d0d0d0", s=4.0, linewidths=0, rasterized=True, zorder=2,
+                    )
+                scatter = ax.scatter(
+                    xy[points, 0] - tls["x0"], xy[points, 1] - tls["y0"],
+                    c=score[points], s=4.0, cmap="magma", vmin=0.0, vmax=max(vmax[label], 1e-6),
+                    linewidths=0, rasterized=True, zorder=3,
+                )
+                draw_tls(ax, tls["contours"], local=(tls["x0"], tls["y0"]), fill=False, lw=1.2)
+                ax.set_xlim(0, he_roi.shape[1])
+                ax.set_ylim(he_roi.shape[0], 0)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_aspect("equal")
+                inn = float(score[inside].mean())
+                ax.set_title(f"{title}   {label}\ninside {inn:.3f}", fontsize=9)
+                if row == 0:
+                    fig.colorbar(scatter, ax=ax, fraction=0.046, pad=0.02)
+        stem = f"{PATIENT1}_finished_arms_TLS_abundance"
+        if gray_outside:
+            stem += "_inside"
+            fig.suptitle(
+                f"{PATIENT1}  expert TLS   five-fold L2 softmax, shared 99th percentile, gray outside the outline",
+                fontsize=12,
+            )
+        else:
+            fig.suptitle(
+                f"{PATIENT1}  expert TLS   five-fold L2 softmax, shared 99th percentile",
+                fontsize=12,
+            )
+            table.to_csv(self.fig_dir / f"{stem}.csv", index=False)
+        _present(fig, self.fig_dir / f"{stem}.pdf", save=self.save)
+        _display(table)
+        return table
+
+
+def open_finished_arms(repo=None) -> FinishedArms:
+    return FinishedArms(repo)
